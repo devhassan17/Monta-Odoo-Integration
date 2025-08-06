@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <record id="view_monta_config_tree_basic" model="ir.ui.view">
-        <field name="name">monta.config.tree.basic</field>
-        <field name="model">monta.config</field>
-        <field name="arch" type="xml">
-            <tree string="Monta Config">
-                <field name="name"/>
-                <field name="endpoint"/>
-            </tree>
-        </field>
-        <field name="type">tree</field>
-    </record>
+    <data>
+        <record id="view_monta_config_tree_basic" model="ir.ui.view">
+            <field name="name">monta.config.tree.basic</field>
+            <field name="model">monta.config</field>
+            <field name="arch" type="xml">
+                <tree string="Monta Config">
+                    <field name="name"/>
+                    <field name="endpoint"/>
+                </tree>
+            </field>
+        </record>
+    </data>
 </odoo>
