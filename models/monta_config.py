@@ -2,10 +2,10 @@ from odoo import models, fields
 
 class MontaConfig(models.Model):
     _name = 'monta.config'
-    _description = 'Monta Configuration'
+    _description = 'Monta API Configuration'
 
-    name = fields.Char("Configuration Name", required=True)
-    endpoint = fields.Char("API Endpoint", required=True)
-    username = fields.Char("API Username", required=True)
-    password = fields.Char("API Password", required=True)
-    active = fields.Boolean(default=True)
+    name = fields.Char(string="Configuration Name", required=True)
+    endpoint = fields.Char(string="API Endpoint", required=True)
+    username = fields.Char(string="API Username", required=True)
+    password = fields.Char(string="API Password", required=True)
+    is_active = fields.Boolean(string="Active", default=True)
