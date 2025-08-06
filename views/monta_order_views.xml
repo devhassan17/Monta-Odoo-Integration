@@ -13,8 +13,13 @@
                             <field name="monta_order_id"/>
                             <field name="tracking_ref"/>
                             <field name="delivery_status"/>
-                            <button name="action_send_to_monta" type="object" string="Send to Monta" class="oe_highlight"/>
-                            <button name="fetch_shipment_status" type="object" string="Fetch Shipment Status"/>
+                            <button name="action_send_to_monta"
+                                    type="object"
+                                    string="Send to Monta"
+                                    class="oe_highlight"/>
+                            <button name="fetch_shipment_status"
+                                    type="object"
+                                    string="Fetch Shipment Status"/>
                         </group>
                     </page>
                 </xpath>

@@ -2,9 +2,11 @@
 <odoo>
     <data>
 
+        <!-- Form View -->
         <record id="view_monta_config_form" model="ir.ui.view">
             <field name="name">monta.config.form</field>
             <field name="model">monta.config</field>
+            <field name="type">form</field> <!-- Added this line -->
             <field name="arch" type="xml">
                 <form string="Monta Configuration">
                     <sheet>
@@ -20,9 +22,11 @@
             </field>
         </record>
 
+        <!-- Tree View -->
         <record id="view_monta_config_tree" model="ir.ui.view">
             <field name="name">monta.config.tree</field>
             <field name="model">monta.config</field>
+            <field name="type">tree</field> <!-- Added this line -->
             <field name="arch" type="xml">
                 <tree string="Monta Configuration">
                     <field name="name"/>
@@ -33,6 +37,7 @@
             </field>
         </record>
 
+        <!-- Action -->
         <record id="action_monta_config" model="ir.actions.act_window">
             <field name="name">Monta Configurations</field>
             <field name="res_model">monta.config</field>
@@ -44,6 +49,7 @@
             </field>
         </record>
 
+        <!-- Menus -->
         <menuitem id="menu_monta_root" name="Monta Integration" sequence="10"/>
         <menuitem id="menu_monta_config" name="Configuration"
                   parent="menu_monta_root"
