@@ -1,50 +1,54 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <record id="view_monta_config_form" model="ir.ui.view">
-        <field name="name">monta.config.form</field>
-        <field name="model">monta.config</field>
-        <field name="arch" type="xml">
-            <form string="Monta Configuration">
-                <sheet>
-                    <group>
-                        <field name="name"/>
-                        <field name="endpoint"/>
-                        <field name="username"/>
-                        <field name="password"/>
-                        <field name="is_active"/>
-                    </group>
-                </sheet>
-            </form>
-        </field>
-    </record>
+    <data>
 
-    <record id="view_monta_config_tree" model="ir.ui.view">
-        <field name="name">monta.config.tree</field>
-        <field name="model">monta.config</field>
-        <field name="arch" type="xml">
-            <tree string="Monta Configuration">
-                <field name="name"/>
-                <field name="endpoint"/>
-                <field name="username"/>
-                <field name="is_active"/>
-            </tree>
-        </field>
-    </record>
+        <record id="view_monta_config_form" model="ir.ui.view">
+            <field name="name">monta.config.form</field>
+            <field name="model">monta.config</field>
+            <field name="arch" type="xml">
+                <form string="Monta Configuration">
+                    <sheet>
+                        <group>
+                            <field name="name"/>
+                            <field name="endpoint"/>
+                            <field name="username"/>
+                            <field name="password"/>
+                            <field name="is_active"/>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
 
-    <record id="action_monta_config" model="ir.actions.act_window">
-        <field name="name">Monta Configurations</field>
-        <field name="res_model">monta.config</field>
-        <field name="view_mode">tree,form</field>
-        <field name="help" type="html">
-            <p class="o_view_nocontent_smiling_face">
-                Configure your Monta API credentials here.
-            </p>
-        </field>
-    </record>
+        <record id="view_monta_config_tree" model="ir.ui.view">
+            <field name="name">monta.config.tree</field>
+            <field name="model">monta.config</field>
+            <field name="arch" type="xml">
+                <tree string="Monta Configuration">
+                    <field name="name"/>
+                    <field name="endpoint"/>
+                    <field name="username"/>
+                    <field name="is_active"/>
+                </tree>
+            </field>
+        </record>
 
-    <menuitem id="menu_monta_root" name="Monta Integration" sequence="10"/>
-    <menuitem id="menu_monta_config" name="Configuration"
-              parent="menu_monta_root"
-              action="action_monta_config"
-              sequence="20"/>
+        <record id="action_monta_config" model="ir.actions.act_window">
+            <field name="name">Monta Configurations</field>
+            <field name="res_model">monta.config</field>
+            <field name="view_mode">tree,form</field>
+            <field name="help" type="html">
+                <p class="o_view_nocontent_smiling_face">
+                    Configure your Monta API credentials here.
+                </p>
+            </field>
+        </record>
+
+        <menuitem id="menu_monta_root" name="Monta Integration" sequence="10"/>
+        <menuitem id="menu_monta_config" name="Configuration"
+                  parent="menu_monta_root"
+                  action="action_monta_config"
+                  sequence="20"/>
+
+    </data>
 </odoo>

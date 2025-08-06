@@ -1,20 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <odoo>
-    <record id="view_sale_order_form_monta" model="ir.ui.view">
-        <field name="name">sale.order.form.monta</field>
-        <field name="model">sale.order</field>
-        <field name="inherit_id" ref="sale.view_order_form"/>
-        <field name="arch" type="xml">
-            <xpath expr="//sheet/notebook" position="inside">
-                <page string="Monta Shipment">
-                    <group>
-                        <field name="monta_order_id"/>
-                        <field name="tracking_ref"/>
-                        <field name="delivery_status"/>
-                        <button name="action_send_to_monta" type="object" string="Send to Monta" class="oe_highlight"/>
-                        <button name="fetch_shipment_status" type="object" string="Fetch Shipment Status"/>
-                    </group>
-                </page>
-            </xpath>
-        </field>
-    </record>
+    <data>
+
+        <record id="view_sale_order_form_monta" model="ir.ui.view">
+            <field name="name">sale.order.form.monta</field>
+            <field name="model">sale.order</field>
+            <field name="inherit_id" ref="sale.view_order_form"/>
+            <field name="arch" type="xml">
+                <xpath expr="//sheet/notebook" position="inside">
+                    <page string="Monta Shipment">
+                        <group>
+                            <field name="monta_order_id"/>
+                            <field name="tracking_ref"/>
+                            <field name="delivery_status"/>
+                            <button name="action_send_to_monta" type="object" string="Send to Monta" class="oe_highlight"/>
+                            <button name="fetch_shipment_status" type="object" string="Fetch Shipment Status"/>
+                        </group>
+                    </page>
+                </xpath>
+            </field>
+        </record>
+
+    </data>
 </odoo>
