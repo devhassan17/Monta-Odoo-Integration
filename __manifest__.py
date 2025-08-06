@@ -1,5 +1,5 @@
 {
-    "name": "Monta Odoo Integration",
+    "name": "Monta-Odoo-Integration",
     "version": "1.0",
     "summary": "Integrates Odoo with Monta API for order syncing and shipment tracking",
     "author": "Ali Raza Jamil",
