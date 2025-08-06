@@ -11,7 +11,6 @@
     "depends": ["base", "sale", "stock"],
     "data": [
         "security/ir.model.access.csv",
-        "models/monta_config.py",
         "views/monta_config_views.xml",
         "views/monta_order_views.xml",
     ],
