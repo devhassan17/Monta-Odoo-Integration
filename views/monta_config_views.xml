@@ -2,30 +2,49 @@
 <odoo>
     <data>
         <!-- Tree View -->
-        <record id="view_monta_config_tree_basic" model="ir.ui.view">
-            <field name="name">monta.config.tree.basic</field>
+        <record id="view_monta_config_tree" model="ir.ui.view">
+            <field name="name">monta.config.tree</field>
             <field name="model">monta.config</field>
-            <field name="type">tree</field>  <!-- Add this line -->
             <field name="arch" type="xml">
-                <tree string="Monta Config">
+                <tree>
                     <field name="name"/>
                     <field name="endpoint"/>
+                    <field name="is_active" widget="boolean_button"/>
                 </tree>
             </field>
         </record>
 
-        <!-- Action -->
-        <record id="action_monta_config_basic" model="ir.actions.act_window">
-            <field name="name">Monta Configs</field>
-            <field name="res_model">monta.config</field>
-            <field name="view_mode">tree,form</field>  <!-- Consider adding form view too -->
+        <!-- Form View -->
+        <record id="view_monta_config_form" model="ir.ui.view">
+            <field name="name">monta.config.form</field>
+            <field name="model">monta.config</field>
+            <field name="arch" type="xml">
+                <form>
+                    <sheet>
+                        <group>
+                            <field name="name"/>
+                            <field name="endpoint"/>
+                            <field name="username"/>
+                            <field name="password" password="True"/>
+                            <field name="is_active"/>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
         </record>
 
-        <!-- Menu -->
-        <menuitem id="menu_monta_root_basic" name="Monta Test" sequence="10"/>
-        <menuitem id="menu_monta_config_basic" name="Basic Config"
-                  parent="menu_monta_root_basic"
-                  action="action_monta_config_basic"
+        <!-- Action -->
+        <record id="action_monta_config" model="ir.actions.act_window">
+            <field name="name">Monta Configurations</field>
+            <field name="res_model">monta.config</field>
+            <field name="view_mode">tree,form</field>
+        </record>
+
+        <!-- Menu Structure -->
+        <menuitem id="menu_monta_root" name="Monta Integration" sequence="10"/>
+        <menuitem id="menu_monta_config" name="Configurations"
+                  parent="menu_monta_root"
+                  action="action_monta_config"
                   sequence="20"/>
     </data>
 </odoo>

@@ -1,15 +1,21 @@
 {
     "name": "Monta-Odoo-Integration",
     "version": "1.0",
-    "summary": "Integrates Odoo with Monta API for order syncing and shipment tracking",
+    "summary": "Integrates Odoo with Monta API",
+    "description": """
+        Integration between Odoo and Monta API
+        for order synchronization and shipment tracking
+    """,
     "author": "Ali Raza Jamil",
     "category": "Warehouse",
     "depends": ["base", "sale", "stock"],
     "data": [
+        "security/ir.model.access.csv",
+        "models/monta_config.py",
         "views/monta_config_views.xml",
         "views/monta_order_views.xml",
-        "security/ir.model.access.csv"
     ],
     "installable": True,
     "application": True,
+    "license": "LGPL-3",
 }
