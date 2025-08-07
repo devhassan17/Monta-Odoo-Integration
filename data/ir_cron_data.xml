@@ -1,0 +1,37 @@
+<odoo>
+    <record id="ir_cron_sync_monta_shipments" model="ir.cron">
+        <field name="name">Monta: Sync Shipments</field>
+        <field name="model_id" ref="model_monta_integration"/>
+        <field name="state">code</field>
+        <field name="code">model.sync_shipments()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">hours</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False"/>
+        <field name="active" eval="True"/>
+    </record>
+
+    <record id="ir_cron_sync_monta_inventory" model="ir.cron">
+        <field name="name">Monta: Sync Inventory</field>
+        <field name="model_id" ref="model_monta_integration"/>
+        <field name="state">code</field>
+        <field name="code">model.sync_inventory()</field>
+        <field name="interval_number">4</field>
+        <field name="interval_type">hours</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False"/>
+        <field name="active" eval="True"/>
+    </record>
+
+    <record id="ir_cron_sync_monta_returns" model="ir.cron">
+        <field name="name">Monta: Sync Returns</field>
+        <field name="model_id" ref="model_monta_integration"/>
+        <field name="state">code</field>
+        <field name="code">model.sync_returns()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False"/>
+        <field name="active" eval="True"/>
+    </record>
+</odoo>
