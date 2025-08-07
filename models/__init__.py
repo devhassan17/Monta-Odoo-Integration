@@ -1,2 +1,2 @@
 from . import monta_config
-from . import monta_order
+from . import monta_sync
