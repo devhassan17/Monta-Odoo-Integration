@@ -22,12 +22,12 @@ class MontaConfig(models.Model):
     username = fields.Char(
         string='API Username',
         required=True,
-        default='your_test_username'  # Replace with actual test username
+        default='testmoyeeMONTAODOOCONNECTOR'  # Replace with actual test username
     )
     password = fields.Char(
         string='API Password',
         required=True,
-        default='your_test_password'  # Replace with actual test password
+        default='91C4%@$=VL42'  # Replace with actual test password
     )
     webhook_secret = fields.Char(
         string='Webhook Secret'

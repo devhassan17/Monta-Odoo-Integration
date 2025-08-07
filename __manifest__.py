@@ -10,5 +10,4 @@
     'installable': True,
     'application': True,
     'license': 'LGPL-3',
-    'post_init_hook': '_initialize_monta_config',
 }
