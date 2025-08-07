@@ -4,53 +4,58 @@
         <field name="model">res.config.settings</field>
         <field name="inherit_id" ref="base.res_config_settings_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//form" position="inside">
-                <h2>Monta Integration</h2>
-                <div class="row mt16">
-                    <div class="col-md-12">
-                        <div class="alert alert-info">
-                            <i class="fa fa-info-circle"/> Configure your Monta API credentials for integration.
+            <!-- Target the sheet element which definitely exists -->
+            <xpath expr="//div[@class='settings']/div[hasclass('o_setting_container')]" position="inside">
+                <t groups="base.group_system">
+                    <div class="app_settings_block" data-string="Monta Integration" string="Monta Integration">
+                        <h2>Monta Integration</h2>
+                        <div class="row mt16">
+                            <div class="col-md-12">
+                                <div class="alert alert-info">
+                                    <i class="fa fa-info-circle"/> Configure your Monta API credentials for integration.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt16">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="monta_endpoint" class="col-form-label">API Endpoint</label>
+                                    <field name="monta_endpoint" class="form-control" placeholder="https://api-v6.monta.nl/"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt16">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="monta_username" class="col-form-label">Username</label>
+                                    <field name="monta_username" class="form-control"/>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="monta_password" class="col-form-label">Password</label>
+                                    <field name="monta_password" class="form-control" password="True"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt16">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="monta_webhook_secret" class="col-form-label">Webhook Secret</label>
+                                    <field name="monta_webhook_secret" class="form-control" password="True"/>
+                                    <small class="form-text text-muted">
+                                        Webhook URL: https://your-odoo.com/monta/webhook
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mt16">
+                            <div class="col-md-12">
+                                <button name="test_monta_connection" type="object" string="Test Connection" class="btn btn-primary"/>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="row mt16">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label for="monta_endpoint" class="col-form-label">API Endpoint</label>
-                            <field name="monta_endpoint" class="form-control" placeholder="https://api-v6.monta.nl/"/>
-                        </div>
-                    </div>
-                </div>
-                <div class="row mt16">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label for="monta_username" class="col-form-label">Username</label>
-                            <field name="monta_username" class="form-control"/>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label for="monta_password" class="col-form-label">Password</label>
-                            <field name="monta_password" class="form-control" password="True"/>
-                        </div>
-                    </div>
-                </div>
-                <div class="row mt16">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label for="monta_webhook_secret" class="col-form-label">Webhook Secret</label>
-                            <field name="monta_webhook_secret" class="form-control" password="True"/>
-                            <small class="form-text text-muted">
-                                Webhook URL: https://your-odoo.com/monta/webhook
-                            </small>
-                        </div>
-                    </div>
-                </div>
-                <div class="row mt16">
-                    <div class="col-md-12">
-                        <button name="test_monta_connection" type="object" string="Test Connection" class="btn btn-primary"/>
-                    </div>
-                </div>
+                </t>
             </xpath>
         </field>
     </record>
