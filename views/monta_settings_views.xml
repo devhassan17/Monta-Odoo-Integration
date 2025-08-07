@@ -7,14 +7,19 @@
             <field name="name">monta.config.form</field>
             <field name="model">monta.config</field>
             <field name="arch" type="xml">
-                <form string="Monta Config">
+                <form string="Monta Configuration">
                     <sheet>
                         <group>
-                            <field name="name"/>
-                            <field name="api_key"/>
-                            <field name="endpoint"/>
-                            <field name="active"/>
+                            <field name="name" string="Configuration Name"/>
+                            <field name="monta_endpoint" string="API Endpoint" placeholder="https://api-v6.monta.nl/"/>
+                            <field name="monta_username" string="API Username"/>
+                            <field name="monta_password" string="API Password" password="True"/>
+                            <field name="monta_webhook_secret" string="Webhook Secret" password="True"/>
                         </group>
+                        <footer>
+                            <button name="test_monta_connection" string="Test Connection" type="object" class="btn-primary"/>
+                            <field name="active" widget="boolean_button" string="Active"/>
+                        </footer>
                     </sheet>
                 </form>
             </field>
