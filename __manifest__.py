@@ -1,22 +1,14 @@
 {
     'name': 'Monta-Odoo-Integration',
     'version': '1.0',
-    'summary': 'Two-way integration with Monta API v6',
-    'description': """
-        Integrates Odoo with Monta for order management, shipment tracking, and inventory synchronization.
-        Provides two-way communication between Odoo and Monta.
-    """,
-    'author': 'Your Company',
-    'website': 'https://www.yourcompany.com',
-    'category': 'Inventory/Delivery',
+    'summary': 'Integrates Odoo v18 with Monta WMS',
+    'author': 'Ali Raza Jamil',
+    'category': 'Inventory',
     'depends': ['sale_management', 'stock'],
     'data': [
         'security/ir.model.access.csv',
-        'views/monta_settings_views.xml',
-        'views/sale_order_views.xml',
-        'data/ir_cron_data.xml',
+        'views/monta_config_view.xml',
     ],
     'installable': True,
     'application': True,
-    'license': 'LGPL-3',
 }
