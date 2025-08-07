@@ -1,8 +1,8 @@
 {
     'name': 'Monta-Odoo-Integration',
     'version': '1.0',
-    'summary': 'Two-way integration with Monta API',
-    'description': 'Handles order synchronization and inventory updates with Monta',
+    'summary': 'Monta API Integration',
+    'description': 'Two-way integration with Monta API',
     'author': 'Your Company',
     'depends': ['base'],
     'data': [],
@@ -10,4 +10,5 @@
     'installable': True,
     'application': True,
     'license': 'LGPL-3',
+    'post_init_hook': '_initialize_monta_config',
 }
