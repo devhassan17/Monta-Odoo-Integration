@@ -1,14 +1,13 @@
 {
     'name': 'Monta-Odoo-Integration',
     'version': '1.0',
-    'summary': 'Integrates Odoo v18 with Monta WMS',
-    'author': 'Ali Raza Jamil',
-    'category': 'Inventory',
-    'depends': ['sale_management', 'stock'],
-    'data': [
-        'security/ir.model.access.csv',
-        'views/monta_config_view.xml',
-    ],
+    'summary': 'Two-way integration with Monta API',
+    'description': 'Handles order synchronization and inventory updates with Monta',
+    'author': 'Your Company',
+    'depends': ['base'],
+    'data': [],
+    'demo': [],
     'installable': True,
     'application': True,
+    'license': 'LGPL-3',
 }
