@@ -1,10 +1,12 @@
 {
-    'name': 'Monta-Odoo-Integration',
-    'version': '1.0',
+    'name': 'Monta-Odoo Integration',
+    'version': '1.0.0',
+    'author': 'Ali Raza Jamil',
+    'category': 'Sales',
+    'summary': 'Step 1: Log order creation for Monta integration',
     'depends': ['sale_management'],
-    'data': [
-        'views/monta_order_log_views.xml',
-    ],
     'installable': True,
+    'auto_install': False,
     'application': False,
+    'license': 'LGPL-3',
 }

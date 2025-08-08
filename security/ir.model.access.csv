@@ -1,2 +1,0 @@
-id,name,model_id:id,group_id,perm_read,perm_write,perm_create,perm_unlink
-access_monta_order_log_user,monta.order.log,model_monta_order_log,,1,1,1,0
