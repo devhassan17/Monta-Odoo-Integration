@@ -1,3 +1,2 @@
-from . import monta_config
-from . import sale_order
-from . import monta_integration
+from . import monta_order_log
+from . import inherit_sale_order

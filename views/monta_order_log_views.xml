@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_monta_order_log_tree" model="ir.ui.view">
+        <field name="name">monta.order.log.tree</field>
+        <field name="model">monta.order.log</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="sale_order_id"/>
+                <field name="customer_name"/>
+                <field name="email"/>
+                <field name="order_total"/>
+                <field name="created_at"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_monta_order_log" model="ir.actions.act_window">
+        <field name="name">Monta Order Logs</field>
+        <field name="res_model">monta.order.log</field>
+        <field name="view_mode">tree</field>
+    </record>
+
+    <menuitem id="menu_monta_root" name="Monta Integration"/>
+    <menuitem id="menu_monta_logs" name="Order Logs" parent="menu_monta_root" action="action_monta_order_log"/>
+</odoo>
