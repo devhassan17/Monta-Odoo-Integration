@@ -102,57 +102,66 @@ class SaleOrder(models.Model):
         else:
             _logger.error(json.dumps(payload, indent=2, default=str))
 
-    # Store credentials in Odoo's system parameters
-    def _init_monta_credentials(self):
-        """Initialize Monta credentials in system parameters"""
-        ICPSudo = self.env['ir.config_parameter'].sudo()
-        if not ICPSudo.get_param('monta.username'):
-            ICPSudo.set_param('monta.username', 'testmoyeeMONTAODOOCONNECTOR')
-        if not ICPSudo.get_param('monta.password'):
-            ICPSudo.set_param('monta.password', '91C4%@$=VL42')
-
-    def _get_monta_credentials(self):
-        """Retrieve Monta credentials securely"""
-        return {
-            'username': self.env['ir.config_parameter'].sudo().get_param('monta.username'),
-            'password': self.env['ir.config_parameter'].sudo().get_param('monta.password')
-        }
-
     def _send_to_monta(self, payload):
-        """Send order to Monta API with secure credential handling"""
-        # Initialize credentials if not set
-        self._init_monta_credentials()
+        """Direct implementation with logging for testing"""
+        _logger.info("=== Starting Monta API Request ===")
         
-        # Get credentials
-        creds = self._get_monta_credentials()
-        
+        # API Configuration
         monta_url = "https://api-v6.monta.nl/order"
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-
+        
+        # Credentials (for testing only)
+        username = "testmoyeeMONTAODOOCONNECTOR"
+        password = "91C4%@$=VL42"  # Will be masked in logs
+        
         try:
+            _logger.info(f"Preparing request to: {monta_url}")
+            _logger.debug(f"Request payload: {json.dumps(payload, indent=2)}")
+            
+            # Mask password in logs
+            _logger.info(f"Using username: {username}")
+            _logger.info("Using password: [REDACTED]")
+            
+            start_time = fields.Datetime.now()
             response = requests.post(
                 monta_url,
                 headers=headers,
                 json=payload,
-                auth=HTTPBasicAuth(creds['username'], creds['password']),
+                auth=HTTPBasicAuth(username, password),
                 timeout=10
             )
+            response_time = (fields.Datetime.now() - start_time).total_seconds()
+            
+            _logger.info(f"Response received in {response_time:.2f}s")
+            _logger.info(f"HTTP Status: {response.status_code}")
+            _logger.debug(f"Response content: {response.text[:500]}")  # First 500 chars
             
             if response.status_code == 201:
+                _logger.info("Monta API request successful")
                 return response.json()
             else:
-                _logger.error(f"Monta API Error {response.status_code}: {response.text}")
+                _logger.error(f"API Error {response.status_code}: {response.text}")
                 return {
                     "error": f"API Error {response.status_code}",
                     "details": response.text
                 }
 
-        except Exception as e:
-            _logger.error(f"Failed to send to Monta: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            _logger.error(f"Request failed: {type(e).__name__}")
+            _logger.error(f"Error details: {str(e)}")
             return {"error": str(e)}
+        
+        except Exception as e:
+            _logger.error("Unexpected error in _send_to_monta")
+            _logger.error(f"Error type: {type(e).__name__}")
+            _logger.error(f"Error details: {str(e)}")
+            return {"error": str(e)}
+        
+        finally:
+            _logger.info("=== Monta API Request Completed ===")
 
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
