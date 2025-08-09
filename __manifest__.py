@@ -4,14 +4,7 @@
     'author': 'Ali Raza Jamil',
     'category': 'Sales',
     'summary': 'Step 1: Log order creation for Monta integration',
-    'description': """
-Logs sale order data in Monta API-compatible format upon confirmation.
-First step towards full Odoo ↔ Monta NL integration.
-""",
     'depends': ['sale_management'],
-    'data': [
-        'security/ir.model.access.csv',
-    ],
     'installable': True,
     'auto_install': False,
     'application': False,
