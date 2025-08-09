@@ -48,7 +48,7 @@ class SaleOrder(models.Model):
         payload = {
             "WebshopOrderId": self.name,
             "Reference": self.client_order_ref or "",
-            "Origin": "odoo",
+            "Origin": "Moyee_Odoo",
             "ConsumerDetails": {
                 "DeliveryAddress": {
                     "Company": partner.company_name or partner.name or "",
