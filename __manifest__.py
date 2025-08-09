@@ -12,4 +12,5 @@
     'auto_install': False,
     'application': False,
     'license': 'LGPL-3',
+    'post_init_hook': '_initialize_monta_credentials',
 }

@@ -102,49 +102,57 @@ class SaleOrder(models.Model):
         else:
             _logger.error(json.dumps(payload, indent=2, default=str))
 
+    # Store credentials in Odoo's system parameters
+    def _init_monta_credentials(self):
+        """Initialize Monta credentials in system parameters"""
+        ICPSudo = self.env['ir.config_parameter'].sudo()
+        if not ICPSudo.get_param('monta.username'):
+            ICPSudo.set_param('monta.username', 'testmoyeeMONTAODOOCONNECTOR')
+        if not ICPSudo.get_param('monta.password'):
+            ICPSudo.set_param('monta.password', '91C4%@$=VL42')
+
+    def _get_monta_credentials(self):
+        """Retrieve Monta credentials securely"""
+        return {
+            'username': self.env['ir.config_parameter'].sudo().get_param('monta.username'),
+            'password': self.env['ir.config_parameter'].sudo().get_param('monta.password')
+        }
+
     def _send_to_monta(self, payload):
-        """Send payload to Monta with enhanced error handling"""
-        endpoints_to_try = [
-            "https://api-v6.monta.nl/v6/orders",
-            "https://api-v6.monta.nl/api/orders",
-            "https://api-v6.monta.nl/orders"
-        ]
+        """Send order to Monta API with secure credential handling"""
+        # Initialize credentials if not set
+        self._init_monta_credentials()
         
-        monta_username = "testmoyeeMONTAODOOCONNECTOR"
-        monta_password = "<91C4%@$=VL42"
+        # Get credentials
+        creds = self._get_monta_credentials()
+        
+        monta_url = "https://api-v6.monta.nl/order"
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
 
-        for endpoint in endpoints_to_try:
-            try:
-                _logger.info(f"🔍 Trying endpoint: {endpoint}")
-                response = requests.post(
-                    endpoint,
-                    headers=headers,
-                    json=payload,
-                    auth=HTTPBasicAuth(monta_username, monta_password),
-                    timeout=10
-                )
-                
-                _logger.info(f"📤 Response from {endpoint}: {response.status_code}")
-                
-                if response.status_code == 405:
-                    _logger.warning(f"⚠️ 405 Method Not Allowed at {endpoint}")
-                    continue  # Try next endpoint
-                    
-                response.raise_for_status()
+        try:
+            response = requests.post(
+                monta_url,
+                headers=headers,
+                json=payload,
+                auth=HTTPBasicAuth(creds['username'], creds['password']),
+                timeout=10
+            )
+            
+            if response.status_code == 201:
                 return response.json()
-                
-            except requests.exceptions.RequestException as e:
-                _logger.error(f"❌ Failed at {endpoint}: {str(e)}")
-                continue
+            else:
+                _logger.error(f"Monta API Error {response.status_code}: {response.text}")
+                return {
+                    "error": f"API Error {response.status_code}",
+                    "details": response.text
+                }
 
-        # If all endpoints fail
-        error_msg = "All Monta API endpoints failed (tried: {})".format(", ".join(endpoints_to_try))
-        _logger.error(error_msg)
-        return {"error": error_msg}
+        except Exception as e:
+            _logger.error(f"Failed to send to Monta: {str(e)}")
+            return {"error": str(e)}
 
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
