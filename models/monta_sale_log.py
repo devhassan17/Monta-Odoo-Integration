@@ -103,26 +103,101 @@ class SaleOrder(models.Model):
             _logger.error(json.dumps(payload, indent=2, default=str))
 
     def _send_to_monta(self, payload):
-        """Send payload to Monta using Basic Auth."""
-        monta_url = "https://api-v6.monta.nl/orders"  # adjust if different
-        monta_username = "testmoyeeMONTAODOOCONNECTOR"
-        monta_password = "<91C4%@$=VL42"
-        headers = {"Content-Type": "application/json"}
+        """Send payload to Monta using Basic Auth with enhanced error handling."""
+        monta_url = "https://api-v6.monta.nl/orders"
+        monta_username = "testmoyeeMONTAODOOCONNECTOR"  # TODO: Move to config parameters
+        monta_password = "<91C4%@$=VL42"  # TODO: Move to config parameters
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Odoo-Monta-Integration/1.0"
+        }
 
         try:
+            # Pre-request logging
+            _logger.info("🌐 Initiating Monta API Connection...")
+            _logger.info(f"🔗 Endpoint: {monta_url}")
+            _logger.info(f"📦 Payload Size: {len(json.dumps(payload))} bytes")
+            
+            # API Request
+            start_time = fields.Datetime.now()
             response = requests.post(
                 monta_url,
                 headers=headers,
                 json=payload,
-                auth=HTTPBasicAuth(monta_username, monta_password)
+                auth=HTTPBasicAuth(monta_username, monta_password),
+                timeout=(5, 10)  # Connect timeout 5s, read timeout 10s
             )
-            _logger.info(f"📤 Monta API Status: {response.status_code}")
-            _logger.info(f"📤 Monta API Response: {response.text}")
-            response.raise_for_status()
+            response_time = (fields.Datetime.now() - start_time).total_seconds()
+            
+            # Response logging
+            _logger.info(f"📤 Monta API Response: HTTP {response.status_code}")
+            _logger.info(f"⏱️ Response Time: {response_time:.2f}s")
+            _logger.debug(f"📄 Response Content: {response.text[:500]}...")  # Log first 500 chars
+            
+            # Handle non-2xx responses
+            if not response.ok:
+                _logger.warning(f"⚠️ Monta API Warning: {response.status_code} - {response.reason}")
+                return {
+                    "error": f"API Error {response.status_code}",
+                    "details": response.text,
+                    "status_code": response.status_code
+                }
+            
             return response.json()
+            
+        except requests.exceptions.Timeout as e:
+            _logger.error("⏱️ Monta API Timeout: The request timed out")
+            return {
+                "error": "Connection Timeout",
+                "details": str(e),
+                "suggestion": "Check your network connection or increase timeout"
+            }
+            
+        except requests.exceptions.SSLError as e:
+            _logger.error("🔐 SSL Certificate Error: Failed to verify Monta's SSL certificate")
+            _logger.error(f"SSL Error Details: {str(e)}")
+            return {
+                "error": "SSL Verification Failed",
+                "details": str(e),
+                "suggestion": "Verify Monta's SSL certificate or add exception"
+            }
+            
+        except requests.exceptions.ConnectionError as e:
+            _logger.error("🔌 Connection Error: Failed to establish connection")
+            _logger.error(f"Connection Error Details: {str(e)}")
+            return {
+                "error": "Connection Failed",
+                "details": str(e),
+                "suggestion": "Check network connectivity, firewall rules, and DNS resolution"
+            }
+            
         except requests.exceptions.RequestException as e:
-            _logger.error(f"❌ Failed to send to Monta: {e}")
-            return {"error": str(e)}
+            _logger.error("🚨 General Request Exception")
+            _logger.error(f"Error Details: {str(e)}")
+            return {
+                "error": "API Request Failed",
+                "details": str(e),
+                "suggestion": "Review request parameters and try again"
+            }
+            
+        except json.JSONDecodeError as e:
+            _logger.error("📄 JSON Decode Error: Failed to parse Monta's response")
+            _logger.error(f"JSON Error: {str(e)}")
+            return {
+                "error": "Invalid API Response",
+                "details": str(e),
+                "suggestion": "Verify Monta API is returning valid JSON"
+            }
+            
+        except Exception as e:
+            _logger.error("💥 Unexpected Error in _send_to_monta")
+            _logger.error(f"Error Type: {type(e).__name__}")
+            _logger.error(f"Error Details: {str(e)}")
+            return {
+                "error": "Unexpected Error",
+                "details": str(e),
+                "type": type(e).__name__
+            }
 
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
