@@ -1,7 +1,9 @@
-from odoo import models, fields
+from odoo import models, fields, api
 import logging
 import json
 import re
+import requests
+from requests.auth import HTTPBasicAuth
 
 _logger = logging.getLogger(__name__)
 
@@ -12,7 +14,7 @@ class MontaSaleLog(models.Model):
     name = fields.Char('Log Name')
     sale_order_id = fields.Many2one('sale.order', string='Sale Order', ondelete='cascade')
     log_data = fields.Text('Log JSON')
-    level = fields.Selection([('info', 'Info'), ('error', 'Error')], default='info')
+    level = fields.Selection([('info','Info'),('error','Error')], default='info')
     create_date = fields.Datetime('Created on', readonly=True)
 
 
@@ -20,26 +22,28 @@ class SaleOrder(models.Model):
     _inherit = 'sale.order'
 
     def _split_street(self, street, street2=''):
-        _logger.debug(f"🔍 Splitting street: street='{street}', street2='{street2}'")
+        """Split street + house number (Dutch style)."""
         full = (street or '') + ' ' + (street2 or '')
         full = full.strip()
         m = re.match(r'^(?P<street>.*?)[\s,]+(?P<number>\d+)(?P<suffix>\s*\w*)$', full)
         if m:
-            _logger.debug(f"✅ Split result: street='{m.group('street').strip()}', number='{m.group('number').strip()}', suffix='{(m.group('suffix') or '').strip()}'")
             return m.group('street').strip(), m.group('number').strip(), (m.group('suffix') or '').strip()
-        _logger.debug("⚠️ Could not split street, returning full string without number")
         return full, '', ''
 
     def _prepare_monta_order_payload(self):
-        _logger.debug(f"📦 Preparing Monta payload for order: {self.name}")
+        """Prepare payload for Monta NL API."""
         self.ensure_one()
+        partner = self.partner_id
+        street, house_number, house_suffix = self._split_street(partner.street or '', partner.street2 or '')
 
-        shipping_partner = self.partner_shipping_id or self.partner_id
-        invoice_partner = self.partner_invoice_id or self.partner_id
-        _logger.debug(f"📍 Shipping Partner: {shipping_partner.name}, Invoice Partner: {invoice_partner.name}")
+        # Compute total weight
+        total_weight = sum([(l.product_id.weight or 0.0) * (l.product_uom_qty or 0.0) for l in self.order_line]) or 0.5
 
-        ship_street, ship_number, ship_suffix = self._split_street(shipping_partner.street or '', shipping_partner.street2 or '')
-        inv_street, inv_number, inv_suffix = self._split_street(invoice_partner.street or '', invoice_partner.street2 or '')
+        # Order lines
+        lines = [{
+            "Sku": l.product_id.default_code or f"product_{l.product_id.id}",
+            "OrderedQuantity": int(l.product_uom_qty or 0)
+        } for l in self.order_line]
 
         payload = {
             "WebshopOrderId": self.name,
@@ -47,73 +51,85 @@ class SaleOrder(models.Model):
             "Origin": "odoo",
             "ConsumerDetails": {
                 "DeliveryAddress": {
-                    "Company": shipping_partner.company_name or "",
-                    "FirstName": shipping_partner.name.split(" ")[0],
-                    "LastName": " ".join(shipping_partner.name.split(" ")[1:]) or "",
-                    "Street": ship_street,
-                    "HouseNumber": ship_number,
-                    "HouseNumberAddition": ship_suffix,
-                    "PostalCode": shipping_partner.zip or "",
-                    "City": shipping_partner.city or "",
-                    "CountryCode": shipping_partner.country_id.code or "",
-                    "PhoneNumber": shipping_partner.phone or shipping_partner.mobile or "",
-                    "EmailAddress": shipping_partner.email or ""
+                    "Company": partner.company_name or partner.name or "",
+                    "FirstName": partner.name.split(' ')[0] if partner.name else "",
+                    "LastName": " ".join(partner.name.split(' ')[1:]) if len((partner.name or "").split(' ')) > 1 else "",
+                    "Street": street,
+                    "HouseNumber": house_number,
+                    "HouseNumberAddition": house_suffix,
+                    "PostalCode": partner.zip or "",
+                    "City": partner.city or "",
+                    "CountryCode": partner.country_id.code if partner.country_id else "",
+                    "PhoneNumber": partner.phone or "",
+                    "EmailAddress": partner.email or ""
                 },
                 "InvoiceAddress": {
-                    "Company": invoice_partner.company_name or "",
-                    "FirstName": invoice_partner.name.split(" ")[0],
-                    "LastName": " ".join(invoice_partner.name.split(" ")[1:]) or "",
-                    "Street": inv_street,
-                    "HouseNumber": inv_number,
-                    "HouseNumberAddition": inv_suffix,
-                    "PostalCode": invoice_partner.zip or "",
-                    "City": invoice_partner.city or "",
-                    "CountryCode": invoice_partner.country_id.code or "",
-                    "PhoneNumber": invoice_partner.phone or invoice_partner.mobile or "",
-                    "EmailAddress": invoice_partner.email or ""
+                    "Company": partner.company_name or partner.name or "",
+                    "FirstName": partner.name.split(' ')[0] if partner.name else "",
+                    "LastName": " ".join(partner.name.split(' ')[1:]) if len((partner.name or "").split(' ')) > 1 else "",
+                    "Street": street,
+                    "HouseNumber": house_number,
+                    "HouseNumberAddition": house_suffix,
+                    "PostalCode": partner.zip or "",
+                    "City": partner.city or "",
+                    "CountryCode": partner.country_id.code if partner.country_id else "",
+                    "PhoneNumber": partner.phone or "",
+                    "EmailAddress": partner.email or ""
                 }
             },
-            "Lines": [
-                {
-                    "Sku": line.product_id.default_code or f"product_{line.product_id.id}",
-                    "OrderedQuantity": int(line.product_uom_qty)
-                } for line in self.order_line
-            ],
+            "Lines": lines,
             "Invoice": {
                 "PaymentMethodDescription": self.payment_term_id.name if self.payment_term_id else "",
-                "AmountInclTax": float(self.amount_total),
-                "TotalTax": float(self.amount_tax),
+                "AmountInclTax": float(self.amount_total or 0.0),
+                "TotalTax": float(sum(line.price_tax for line in self.order_line)),
                 "WebshopFactuurID": f"INV-{self.name}",
                 "Currency": self.currency_id.name
             }
         }
-
-        _logger.debug(f"✅ Monta Payload Prepared: {json.dumps(payload, indent=2, default=str)}")
         return payload
 
     def _create_monta_log(self, payload, level='info'):
-        _logger.debug(f"💾 Creating Monta log for order {self.name}, level={level}")
+        """Create a log entry for Monta API payload or response."""
         vals = {
             'sale_order_id': self.id,
-            'log_data': json.dumps(payload, default=str),
+            'log_data': json.dumps(payload, indent=2, default=str),
             'level': level,
             'name': f'Monta {self.name} - {level}',
         }
-        self.env['monta.sale.log'].create(vals)
-        _logger.debug(f"✅ Monta log created in DB for order {self.name}")
+        self.env['monta.sale.log'].sudo().create(vals)  # sudo to bypass ACLs if needed
         if level == 'info':
             _logger.info(json.dumps(payload, indent=2, default=str))
         else:
             _logger.error(json.dumps(payload, indent=2, default=str))
 
-    def action_confirm(self):
-        _logger.debug(f"🚀 action_confirm triggered for order(s): {[o.name for o in self]}")
-        res = super(SaleOrder, self).action_confirm()
-        _logger.debug("✅ Default Odoo action_confirm executed")
+    def _send_to_monta(self, payload):
+        """Send payload to Monta using Basic Auth."""
+        monta_url = "https://api-v6.monta.nl/orders"  # adjust if different
+        monta_username = "testmoyeeMONTAODOOCONNECTOR"
+        monta_password = "<91C4%@$=VL42"
+        headers = {"Content-Type": "application/json"}
 
+        try:
+            response = requests.post(
+                monta_url,
+                headers=headers,
+                json=payload,
+                auth=HTTPBasicAuth(monta_username, monta_password)
+            )
+            _logger.info(f"📤 Monta API Status: {response.status_code}")
+            _logger.info(f"📤 Monta API Response: {response.text}")
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            _logger.error(f"❌ Failed to send to Monta: {e}")
+            return {"error": str(e)}
+
+    def action_confirm(self):
+        res = super(SaleOrder, self).action_confirm()
         for order in self:
             partner = order.partner_id
 
+            # Log basic order info
             _logger.info("✅ Order Confirmed:")
             _logger.info(f"📄 Order: {order.name}")
             _logger.info(f"👤 Customer: {partner.name}")
@@ -121,20 +137,12 @@ class SaleOrder(models.Model):
             _logger.info(f"💰 Total: {order.amount_total}")
             _logger.info(f"🛍️ Order Lines: {[(l.product_id.name, l.product_uom_qty) for l in order.order_line]}")
 
-            try:
-                payload = order._prepare_monta_order_payload()
-                _logger.info("📦 Monta Payload Details:")
-                _logger.info(f"🔹 WebshopOrderId: {payload.get('WebshopOrderId')}")
-                _logger.info(f"🔹 Reference: {payload.get('Reference')}")
-                _logger.info(f"🔹 Origin: {payload.get('Origin')}")
-                _logger.info(f"📬 Delivery Address: {payload['ConsumerDetails']['DeliveryAddress']}")
-                _logger.info(f"📮 Invoice Address: {payload['ConsumerDetails']['InvoiceAddress']}")
-                _logger.info(f"📦 Order Lines: {payload.get('Lines')}")
-                _logger.info(f"🧾 Invoice: {payload.get('Invoice')}")
+            # Prepare Monta payload
+            payload = order._prepare_monta_order_payload()
+            order._create_monta_log(payload, level='info')
 
-                order._create_monta_log(payload, level='info')
-            except Exception as e:
-                _logger.error(f"❌ Error preparing Monta payload for order {order.name}: {str(e)}", exc_info=True)
-                raise
+            # Send to Monta
+            monta_response = order._send_to_monta(payload)
+            order._create_monta_log(monta_response, level='info' if 'error' not in monta_response else 'error')
 
         return res
