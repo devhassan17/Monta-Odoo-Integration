@@ -31,19 +31,23 @@ class SaleOrder(models.Model):
         return full, '', ''
 
     def _prepare_monta_order_payload(self):
-        """Prepare payload for Monta NL API."""
         self.ensure_one()
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or '', partner.street2 or '')
 
-        # Compute total weight
-        total_weight = sum([(l.product_id.weight or 0.0) * (l.product_uom_qty or 0.0) for l in self.order_line]) or 0.5
-
-        # Order lines
-        lines = [{
-            "Sku": l.product_id.default_code or f"product_{l.product_id.id}",
-            "OrderedQuantity": int(l.product_uom_qty or 0)
-        } for l in self.order_line]
+        lines = []
+        for l in self.order_line:
+            if not l.product_id.default_code:
+                # For testing, send a dummy SKU
+                lines.append({
+                    "Sku": f"TESTSKU-{l.product_id.id}",
+                    "OrderedQuantity": int(l.product_uom_qty or 0)
+                })
+            else:
+                lines.append({
+                    "Sku": l.product_id.default_code,
+                    "OrderedQuantity": int(l.product_uom_qty or 0)
+                })
 
         payload = {
             "WebshopOrderId": self.name,
@@ -55,38 +59,39 @@ class SaleOrder(models.Model):
                     "FirstName": partner.name.split(' ')[0] if partner.name else "",
                     "LastName": " ".join(partner.name.split(' ')[1:]) if len((partner.name or "").split(' ')) > 1 else "",
                     "Street": street,
-                    "HouseNumber": house_number,
-                    "HouseNumberAddition": house_suffix,
-                    "PostalCode": partner.zip or "",
-                    "City": partner.city or "",
-                    "CountryCode": partner.country_id.code if partner.country_id else "",
-                    "PhoneNumber": partner.phone or "",
-                    "EmailAddress": partner.email or ""
+                    "HouseNumber": house_number or "1",
+                    "HouseNumberAddition": house_suffix or "",
+                    "PostalCode": partner.zip or "0000AA",  # dummy for testing
+                    "City": partner.city or "TestCity",
+                    "CountryCode": partner.country_id.code if partner.country_id else "NL",
+                    "PhoneNumber": partner.phone or "0000000000",
+                    "EmailAddress": partner.email or "test@example.com"
                 },
                 "InvoiceAddress": {
                     "Company": partner.company_name or partner.name or "",
                     "FirstName": partner.name.split(' ')[0] if partner.name else "",
                     "LastName": " ".join(partner.name.split(' ')[1:]) if len((partner.name or "").split(' ')) > 1 else "",
                     "Street": street,
-                    "HouseNumber": house_number,
-                    "HouseNumberAddition": house_suffix,
-                    "PostalCode": partner.zip or "",
-                    "City": partner.city or "",
-                    "CountryCode": partner.country_id.code if partner.country_id else "",
-                    "PhoneNumber": partner.phone or "",
-                    "EmailAddress": partner.email or ""
+                    "HouseNumber": house_number or "1",
+                    "HouseNumberAddition": house_suffix or "",
+                    "PostalCode": partner.zip or "0000AA",
+                    "City": partner.city or "TestCity",
+                    "CountryCode": partner.country_id.code if partner.country_id else "NL",
+                    "PhoneNumber": partner.phone or "0000000000",
+                    "EmailAddress": partner.email or "test@example.com"
                 }
             },
             "Lines": lines,
             "Invoice": {
-                "PaymentMethodDescription": self.payment_term_id.name if self.payment_term_id else "",
+                "PaymentMethodDescription": "Odoo Test Order",
                 "AmountInclTax": float(self.amount_total or 0.0),
                 "TotalTax": float(sum(line.price_tax for line in self.order_line)),
-                "WebshopFactuurID": f"INV-{self.name}",
-                "Currency": self.currency_id.name
+                "WebshopFactuurID": int(re.sub(r'\D', '', self.name)) or 9999,
+                "Currency": self.currency_id.name or "EUR"
             }
         }
         return payload
+
 
     def _create_monta_log(self, payload, level='info'):
         """Create a log entry for Monta API payload or response."""
