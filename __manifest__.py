@@ -4,7 +4,7 @@
     'author': 'Ali Raza Jamil',
     'category': 'Sales',
     'summary': 'Step 1: Log order creation for Monta integration',
-    'depends': ['sale_management'],
+    'depends': ['sale_management', 'queue_job'],
     'data': [
         'security/ir.model.access.csv',
     ],
