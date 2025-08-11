@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields, api
-import logging, json, re, requests
+import logging, json, re, requests, time
 from requests.auth import HTTPBasicAuth
 
 _logger = logging.getLogger(__name__)
@@ -8,10 +8,11 @@ _logger = logging.getLogger(__name__)
 # =========================
 # MONTA CONFIG (one place)
 # =========================
-MONTA_BASE_URL = "https://api-v6.monta.nl"  # change to param later if needed
+MONTA_BASE_URL = "https://api-v6.monta.nl"   # TODO: move to ir.config_parameter
 MONTA_USERNAME = "testmoyeeMONTAODOOCONNECTOR"  # TODO: move to ir.config_parameter
-MONTA_PASSWORD = "91C4%@$=VL42"               # TODO: move to ir.config_parameter
+MONTA_PASSWORD = "91C4%@$=VL42"                 # TODO: move to ir.config_parameter
 MONTA_TIMEOUT  = 20
+
 
 # =========================
 # LOG MODEL
@@ -71,7 +72,7 @@ class SaleOrder(models.Model):
             lines.append({"Sku": sku, "OrderedQuantity": qty})
 
         payload = {
-            "WebshopOrderId": self.name,  # Monta's path id equals our SO name
+            "WebshopOrderId": self.name,  # Monta path id equals our SO name
             "Reference": self.client_order_ref or "",
             "Origin": "Moyee_Odoo",
             "ConsumerDetails": {
@@ -107,34 +108,49 @@ class SaleOrder(models.Model):
                 "PaymentMethodDescription": "Odoo Order",
                 "AmountInclTax": float(self.amount_total or 0.0),
                 "TotalTax": float(sum(line.price_tax for line in self.order_line)),
-                # just a numeric for test; Monta doesn't require uniqueness here
                 "WebshopFactuurID": int(re.sub(r'\D', '', self.name)) or 9999,
                 "Currency": self.currency_id.name or "EUR"
             }
         }
         return payload
 
-    def _create_monta_log(self, payload, level='info'):
+    def _create_monta_log(self, payload, level='info', tag='Monta API', console_summary=None):
+        """Save payload to DB log table and also emit a concise console log line."""
         self.ensure_one()
         vals = {
             'sale_order_id': self.id,
             'log_data': json.dumps(payload, indent=2, default=str),
             'level': level,
-            'name': f'Monta {self.name} - {level}',
+            'name': f'{tag} {self.name} - {level}',
         }
         self.env['monta.sale.log'].sudo().create(vals)
-        if level == 'info':
-            _logger.info(vals['log_data'])
+
+        # concise console message
+        if console_summary:
+            msg = console_summary
         else:
-            _logger.error(vals['log_data'])
+            if isinstance(payload, dict) and payload:
+                top_key = next(iter(payload.keys()))
+                msg = f"{tag}: {top_key}"
+            else:
+                msg = f"{tag}: log entry"
+        (_logger.info if level == 'info' else _logger.error)(msg)
 
     def _monta_request(self, method, path, payload=None, headers=None):
-        """Low-level HTTP with basic auth + logging."""
+        """Low-level HTTP with basic auth + readable logging."""
         base = MONTA_BASE_URL.rstrip('/')
         url = f"{base}/{path.lstrip('/')}"
         headers = headers or {"Content-Type": "application/json", "Accept": "application/json"}
 
-        self._create_monta_log({'request': {'method': method, 'url': url, 'payload': payload or {}}}, 'info')
+        masked_user = MONTA_USERNAME
+        start_time = time.time()
+        _logger.info(f"[Monta API] {method.upper()} {url} | User: {masked_user}")
+
+        # full request details saved to DB log
+        self._create_monta_log(
+            {'request': {'method': method.upper(), 'url': url, 'headers': headers, 'auth_user': masked_user, 'payload': payload or {}}},
+            'info', console_summary=f"[Monta API] queued request log for {method.upper()} {url}"
+        )
 
         try:
             resp = requests.request(
@@ -145,14 +161,29 @@ class SaleOrder(models.Model):
                 auth=HTTPBasicAuth(MONTA_USERNAME, MONTA_PASSWORD),
                 timeout=MONTA_TIMEOUT
             )
+            elapsed = time.time() - start_time
+
             try:
                 body = resp.json()
             except Exception:
                 body = {'raw': (resp.text or '')[:1000]}
-            self._create_monta_log({'response': {'status': resp.status_code, 'body': body}}, 'info' if resp.ok else 'error')
+
+            # concise console line
+            log_line = f"[Monta API] {method.upper()} {url} | Status: {resp.status_code} | Time: {elapsed:.2f}s"
+            (_logger.info if resp.ok else _logger.error)(log_line)
+
+            # persist full response
+            self._create_monta_log(
+                {'response': {'status': resp.status_code, 'time_seconds': round(elapsed, 2), 'body': body}},
+                'info' if resp.ok else 'error',
+                console_summary=f"[Monta API] saved response log for {method.upper()} {url}"
+            )
             return resp.status_code, body
+
         except requests.RequestException as e:
-            self._create_monta_log({'exception': str(e)}, 'error')
+            elapsed = time.time() - start_time
+            _logger.error(f"[Monta API] {method.upper()} {url} | Request failed after {elapsed:.2f}s | {str(e)}")
+            self._create_monta_log({'exception': str(e)}, 'error', console_summary="[Monta API] saved exception log")
             return 0, {'error': str(e)}
 
     # -------------------------
@@ -195,7 +226,7 @@ class SaleOrder(models.Model):
     def _monta_delete(self, note="Cancelled from Odoo"):
         """
         DELETE /order/{webshoporderid} with JSON body:
-        { "Note": "Cancelled" } and Content-Type: application/json-patch+json
+        { "Note": "Cancelled" }  and  Content-Type: application/json-patch+json
         """
         self.ensure_one()
         webshop_id = self.monta_order_id or self.name
@@ -211,7 +242,7 @@ class SaleOrder(models.Model):
         if status in (200, 204):
             self.write({'monta_sync_state': 'cancelled'})
         else:
-            self._create_monta_log({'delete_failed': body}, 'error')
+            self._create_monta_log({'delete_failed': body}, 'error', console_summary="[Monta API] delete failed (logged)")
         return status, body
 
     # -------------------------
@@ -220,7 +251,7 @@ class SaleOrder(models.Model):
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
         for order in self:
-            # first push to Monta (create)
+            # first push to Monta (create). If already has an ID, update.
             if not order.monta_order_id:
                 order._monta_create()
             else:
@@ -253,10 +284,10 @@ class SaleOrder(models.Model):
         return super(SaleOrder, self).unlink()
 
     # -------------------------
-    # Your original direct sender (kept for reference; not used now)
+    # Legacy sender (kept for testing)
     # -------------------------
     def _send_to_monta(self, payload):
-        """Kept for compatibility/testing – use _monta_create/_monta_update/_monta_delete instead."""
+        """Kept for compatibility/testing – prefer _monta_create/_monta_update/_monta_delete."""
         monta_url = f"{MONTA_BASE_URL.rstrip('/')}/order"
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         try:
