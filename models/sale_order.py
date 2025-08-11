@@ -3,14 +3,22 @@ import json
 import logging
 
 from odoo import models, fields
-from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
 
-class SaleOrder(models.Model):
-    _inherit = ["sale.order", "monta.api.mixin"]
+class SaleOrder(models.Model,):
+    # Python-inherit the mixin by importing the class and adding it as a parent
+    #   from .monta_api import MontaAPIMixin   <-- import below
+    _inherit = 'sale.order'
 
+
+# Import after class definition to avoid circular imports in some loaders
+from .monta_api import MontaAPIMixin
+
+
+class SaleOrder(SaleOrder, MontaAPIMixin):
+    # No _inherit here (already extended above); this class just adds behavior
     # Track Monta state (simple flags)
     monta_sent = fields.Boolean(string="Sent to Monta", default=False)
     monta_cancelled = fields.Boolean(string="Cancelled on Monta", default=False)
@@ -61,7 +69,6 @@ class SaleOrder(models.Model):
         for order in self:
             partner = order.partner_id
 
-            # Basic order info
             _logger.info("✅ Order Confirmed:")
             _logger.info(f"📄 Order: {order.name}")
             _logger.info(f"👤 Customer: {partner.name}")
@@ -71,7 +78,6 @@ class SaleOrder(models.Model):
                 f"🛍️ Order Lines: {[(l.product_id.name, l.product_uom_qty) for l in order.order_line]}"
             )
 
-            # Prepare + log payload
             payload = order._prepare_monta_order_payload()
             order._create_monta_log(payload, level="info")
 
@@ -98,17 +104,14 @@ class SaleOrder(models.Model):
     def action_cancel(self):
         res = super(SaleOrder, self).action_cancel()
         for order in self:
-            # Only attempt delete if it was sent to Monta
             if not order.monta_sent:
                 _logger.info(f"Skipping Monta delete for {order.name}: not sent yet.")
                 continue
 
-            # Reason to send to Monta
             note = self.env["ir.config_parameter"].sudo().get_param(
                 "monta_api.delete_note", default="Cancelled"
             )
 
-            # Async if queue_job installed; else sync
             if order.env["ir.module.module"]._is_installed("queue_job"):
                 order.with_delay(
                     priority=5,
