@@ -1,7 +1,7 @@
 import logging
 import json
 from odoo import models
-from odoo.addons.queue_job.job import job
+from odoo.addons.queue_job.decorators import job
 
 _logger = logging.getLogger(__name__)
 
