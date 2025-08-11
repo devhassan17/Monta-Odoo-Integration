@@ -1,13 +1,20 @@
 import logging
 import json
 from odoo import models
-from odoo.addons.queue_job.decorators import job
+
 
 _logger = logging.getLogger(__name__)
 
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
     _inherit = ['sale.order', 'monta.api.mixin']  # Include Monta API methods
+# Robust import that works across OCA queue_job versions/branches
+try:
+    # Newer queue_job (18.0/master on OCA)
+    from odoo.addons.queue_job.decorators import job  # preferred
+except Exception:  # ModuleNotFoundError or ImportError
+    # Older queue_job branches
+    from odoo.addons.queue_job.job import job
 
     @job
     def job_send_to_monta(self, payload):
