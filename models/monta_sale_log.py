@@ -58,18 +58,86 @@ class SaleOrder(models.Model):
             return m.group('street').strip(), m.group('number').strip(), (m.group('suffix') or '').strip()
         return full, '', ''
 
+    # -------- PACK / BUNDLE EXPANSION --------
+    def _get_pack_components_from_bom(self, product, qty):
+        """Return [(product, qty)] for phantom BoM components, else [].
+        Works only if mrp is installed and a phantom BoM exists."""
+        components = []
+        try:
+            Bom = self.env['mrp.bom']
+            bom = Bom._bom_find(product=product, company_id=self.company_id.id)
+            if bom and bom.type == 'phantom':
+                # explode returns (components, operations)
+                bom_lines, _ops = bom.explode(product, qty, picking_type=False)
+                for line, line_data in bom_lines:
+                    comp = line.product_id
+                    comp_qty = line_data.get('qty', 0.0)
+                    if comp and comp_qty:
+                        components.append((comp, comp_qty))
+        except Exception:
+            # mrp may not be installed or explode not available; ignore gracefully
+            pass
+        return components
+
+    def _get_pack_components_from_oca_pack(self, product, qty):
+        """Return [(product, qty)] for OCA product packs, else []."""
+        components = []
+        try:
+            tmpl = product.product_tmpl_id
+            # OCA module: product.template has pack_line_ids; each line has product_id & quantity
+            if hasattr(tmpl, 'pack_line_ids') and tmpl.pack_line_ids:
+                for pl in tmpl.pack_line_ids:
+                    if pl.product_id and pl.quantity:
+                        components.append((pl.product_id, pl.quantity * qty))
+        except Exception:
+            pass
+        return components
+
+    def _expand_line_into_components(self, line):
+        """Return list of (product, qty) for a sale order line, expanding packs if applicable."""
+        product = line.product_id
+        qty = line.product_uom_qty or 0.0
+        if qty <= 0:
+            return []
+
+        # 1) Phantom BoM packs
+        comps = self._get_pack_components_from_bom(product, qty)
+        if comps:
+            return comps
+
+        # 2) OCA product packs
+        comps = self._get_pack_components_from_oca_pack(product, qty)
+        if comps:
+            return comps
+
+        # 3) Not a pack — return the product itself
+        return [(product, qty)]
+
+    def _prepare_monta_lines(self):
+        """Build Monta 'Lines' from order lines, expanding packs and merging by SKU."""
+        sku_qty = {}
+        for l in self.order_line:
+            for prod, q in self._expand_line_into_components(l):
+                if q <= 0:
+                    continue
+                sku = prod.default_code or f"TESTSKU-{prod.id}"
+                sku_qty[sku] = sku_qty.get(sku, 0) + q
+
+        # Monta typically expects integers; adjust if you truly use fractional units
+        lines = [{"Sku": sku, "OrderedQuantity": int(qty)} for sku, qty in sku_qty.items() if int(qty) > 0]
+        return lines
+
     def _prepare_monta_order_payload(self):
         self.ensure_one()
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or '', partner.street2 or '')
 
-        lines = []
-        for l in self.order_line:
-            qty = int(l.product_uom_qty or 0)
-            if qty <= 0:
-                continue
-            sku = l.product_id.default_code or f"TESTSKU-{l.product_id.id}"
-            lines.append({"Sku": sku, "OrderedQuantity": qty})
+        # Build lines with pack expansion
+        lines = self._prepare_monta_lines()
+
+        # Safe numeric fallback for invoice id
+        invoice_id_digits = re.sub(r'\D', '', self.name or '')
+        webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
 
         payload = {
             "WebshopOrderId": self.name,  # Monta path id equals our SO name
@@ -107,8 +175,8 @@ class SaleOrder(models.Model):
             "Invoice": {
                 "PaymentMethodDescription": "Odoo Order",
                 "AmountInclTax": float(self.amount_total or 0.0),
-                "TotalTax": float(sum(line.price_tax for line in self.order_line)),
-                "WebshopFactuurID": int(re.sub(r'\D', '', self.name)) or 9999,
+                "TotalTax": float(sum((line.price_tax or 0.0) for line in self.order_line)),
+                "WebshopFactuurID": webshop_factuur_id,
                 "Currency": self.currency_id.name or "EUR"
             }
         }
