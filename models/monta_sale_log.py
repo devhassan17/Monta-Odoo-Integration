@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields, api
+from odoo.exceptions import ValidationError
 import logging, json, re, requests, time
 from requests.auth import HTTPBasicAuth
 
@@ -12,6 +13,58 @@ MONTA_BASE_URL = "https://api-v6.monta.nl"   # TODO: move to ir.config_parameter
 MONTA_USERNAME = "testmoyeeMONTAODOOCONNECTOR"  # TODO: move to ir.config_parameter
 MONTA_PASSWORD = "91C4%@$=VL42"                 # TODO: move to ir.config_parameter
 MONTA_TIMEOUT  = 20
+
+
+# =========================
+# PRODUCT EXTENSION (SKU MAP + auto-resync)
+# =========================
+class ProductProduct(models.Model):
+    _inherit = 'product.product'
+
+    monta_sku = fields.Char(
+        string="Monta SKU",
+        help="Explicit SKU used when sending orders to Monta. "
+             "If empty, connector tries: default_code → first supplier code → barcode."
+    )
+
+    def write(self, vals):
+        res = super().write(vals)
+
+        # If identifiers changed, trigger resync for related open orders
+        sku_related = {'monta_sku', 'default_code', 'barcode', 'seller_ids'}
+        if sku_related.intersection(vals.keys()):
+            try:
+                self._trigger_monta_resync_for_open_orders()
+            except Exception as e:
+                _logger.error(f"[Monta Resync] Failed to trigger resync after product write: {e}")
+        return res
+
+    def _trigger_monta_resync_for_open_orders(self):
+        """Mark related open orders for sync and push update immediately."""
+        if not self:
+            return
+        SOL = self.env['sale.order.line']
+        # find sale/done orders (not cancelled) that include these products
+        lines = SOL.search([
+            ('product_id', 'in', self.ids),
+            ('order_id.state', 'in', ('sale', 'done')),
+        ])
+        orders = lines.mapped('order_id').filtered(lambda o: o.state != 'cancel')
+        if not orders:
+            return
+
+        # avoid hammering: update flag in batch, then push with small debounce at order level
+        orders.write({'monta_needs_sync': True})
+        for o in orders:
+            try:
+                if hasattr(o, '_should_push_now'):
+                    # respect debounce if defined
+                    if o._should_push_now():
+                        o._monta_update()
+                else:
+                    o._monta_update()
+            except Exception as e:
+                _logger.error(f"[Monta Resync] Order {o.name} update after SKU fix failed: {e}")
 
 
 # =========================
@@ -58,16 +111,47 @@ class SaleOrder(models.Model):
             return m.group('street').strip(), m.group('number').strip(), (m.group('suffix') or '').strip()
         return full, '', ''
 
+    # Optional debounce to avoid many rapid PUTs
+    def _should_push_now(self, min_gap_seconds=2):
+        if not self.monta_last_push:
+            return True
+        delta = fields.Datetime.now() - self.monta_last_push
+        try:
+            return delta.total_seconds() >= min_gap_seconds
+        except Exception:
+            return True
+
+    # -------- SKU RESOLUTION --------
+    def _get_sku_for_monta(self, product):
+        """
+        Resolve Monta SKU with fallbacks:
+        1) product.monta_sku
+        2) product.default_code
+        3) first supplierinfo code
+        4) product.barcode
+        Returns (sku or '', source_str)
+        """
+        sku = getattr(product, 'monta_sku', False)
+        if sku:
+            return sku.strip(), 'monta_sku'
+        if product.default_code:
+            return product.default_code.strip(), 'default_code'
+        # supplier code (first)
+        seller = product.seller_ids[:1]
+        if seller and seller.product_code:
+            return seller.product_code.strip(), 'supplier_code'
+        if product.barcode:
+            return product.barcode.strip(), 'barcode'
+        return '', 'missing'
+
     # -------- PACK / BUNDLE EXPANSION --------
     def _get_pack_components_from_bom(self, product, qty):
-        """Return [(product, qty)] for phantom BoM components, else [].
-        Works only if mrp is installed and a phantom BoM exists."""
+        """Return [(product, qty)] for phantom BoM components, else [] (MRP)."""
         components = []
         try:
             Bom = self.env['mrp.bom']
             bom = Bom._bom_find(product=product, company_id=self.company_id.id)
             if bom and bom.type == 'phantom':
-                # explode returns (components, operations)
                 bom_lines, _ops = bom.explode(product, qty, picking_type=False)
                 for line, line_data in bom_lines:
                     comp = line.product_id
@@ -75,7 +159,6 @@ class SaleOrder(models.Model):
                     if comp and comp_qty:
                         components.append((comp, comp_qty))
         except Exception:
-            # mrp may not be installed or explode not available; ignore gracefully
             pass
         return components
 
@@ -84,7 +167,6 @@ class SaleOrder(models.Model):
         components = []
         try:
             tmpl = product.product_tmpl_id
-            # OCA module: product.template has pack_line_ids; each line has product_id & quantity
             if hasattr(tmpl, 'pack_line_ids') and tmpl.pack_line_ids:
                 for pl in tmpl.pack_line_ids:
                     if pl.product_id and pl.quantity:
@@ -94,37 +176,100 @@ class SaleOrder(models.Model):
         return components
 
     def _expand_line_into_components(self, line):
-        """Return list of (product, qty) for a sale order line, expanding packs if applicable."""
+        """
+        Return (components, pack_info)
+        components: list[(product, qty)]
+        pack_info: None OR dict describing pack & its components (for logging)
+        """
         product = line.product_id
         qty = line.product_uom_qty or 0.0
         if qty <= 0:
-            return []
+            return [], None
 
         # 1) Phantom BoM packs
         comps = self._get_pack_components_from_bom(product, qty)
-        if comps:
-            return comps
+        source = 'mrp_phantom'
+        if not comps:
+            # 2) OCA packs
+            comps = self._get_pack_components_from_oca_pack(product, qty)
+            source = 'oca_pack' if comps else None
 
-        # 2) OCA product packs
-        comps = self._get_pack_components_from_oca_pack(product, qty)
         if comps:
-            return comps
+            # build pack_info for logging with resolved SKUs
+            comp_list = []
+            for p, q in comps:
+                sku, _src = self._get_sku_for_monta(p)
+                comp_list.append({
+                    'product_id': p.id,
+                    'name': p.display_name or p.name,
+                    'qty': q,
+                    'sku': sku or '',
+                })
+            pack_info = {
+                'line_id': line.id,
+                'pack_product_id': product.id,
+                'pack_name': product.display_name or product.name,
+                'qty': qty,
+                'source': source,
+                'components': comp_list,
+            }
+            return comps, pack_info
 
-        # 3) Not a pack — return the product itself
-        return [(product, qty)]
+        # 3) Not a pack
+        return [(product, qty)], None
 
     def _prepare_monta_lines(self):
-        """Build Monta 'Lines' from order lines, expanding packs and merging by SKU."""
+        """Build Monta 'Lines' from order lines, expanding packs and merging by SKU.
+        - Validates SKU presence.
+        - Logs pack expansion with component SKUs.
+        """
         sku_qty = {}
+        missing = []
+        pack_logs = []
+
         for l in self.order_line:
-            for prod, q in self._expand_line_into_components(l):
+            comps, pack_info = self._expand_line_into_components(l)
+            if pack_info:
+                pack_logs.append(pack_info)
+
+            for prod, q in comps:
                 if q <= 0:
                     continue
-                sku = prod.default_code or f"TESTSKU-{prod.id}"
+                sku, source = self._get_sku_for_monta(prod)
+                if not sku:
+                    missing.append({
+                        'product_id': prod.id,
+                        'product_display_name': prod.display_name or prod.name or f'ID {prod.id}',
+                        'line_id': l.id,
+                    })
+                    continue
                 sku_qty[sku] = sku_qty.get(sku, 0) + q
 
-        # Monta typically expects integers; adjust if you truly use fractional units
+        if pack_logs:
+            self._create_monta_log(
+                {'pack_expansion': pack_logs},
+                level='info',
+                tag='Monta Pack Expansion',
+                console_summary=f"[Monta Pack Expansion] {len(pack_logs)} pack line(s) expanded"
+            )
+
+        if missing:
+            self._create_monta_log(
+                {'missing_skus': missing},
+                level='error',
+                tag='Monta SKU check',
+                console_summary=f"[Monta SKU check] {len(missing)} product(s) missing SKU mapping"
+            )
+            names = ", ".join(m['product_display_name'] for m in missing[:5])
+            more = "" if len(missing) <= 5 else f" (+{len(missing)-5} more)"
+            raise ValidationError(
+                "Cannot push to Monta: some products have no mapped SKU.\n"
+                f"Fix 'Monta SKU' or default_code/supplier code/barcode for: {names}{more}"
+            )
+
         lines = [{"Sku": sku, "OrderedQuantity": int(qty)} for sku, qty in sku_qty.items() if int(qty) > 0]
+        if not lines:
+            raise ValidationError("Cannot push to Monta: order lines expanded to empty/zero quantities.")
         return lines
 
     def _prepare_monta_order_payload(self):
@@ -132,7 +277,6 @@ class SaleOrder(models.Model):
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or '', partner.street2 or '')
 
-        # Build lines with pack expansion
         lines = self._prepare_monta_lines()
 
         # Safe numeric fallback for invoice id
@@ -140,7 +284,7 @@ class SaleOrder(models.Model):
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
 
         payload = {
-            "WebshopOrderId": self.name,  # Monta path id equals our SO name
+            "WebshopOrderId": self.name,
             "Reference": self.client_order_ref or "",
             "Origin": "Moyee_Odoo",
             "ConsumerDetails": {
@@ -236,11 +380,9 @@ class SaleOrder(models.Model):
             except Exception:
                 body = {'raw': (resp.text or '')[:1000]}
 
-            # concise console line
             log_line = f"[Monta API] {method.upper()} {url} | Status: {resp.status_code} | Time: {elapsed:.2f}s"
             (_logger.info if resp.ok else _logger.error)(log_line)
 
-            # persist full response
             self._create_monta_log(
                 {'response': {'status': resp.status_code, 'time_seconds': round(elapsed, 2), 'body': body}},
                 'info' if resp.ok else 'error',
@@ -264,7 +406,7 @@ class SaleOrder(models.Model):
         status, body = self._monta_request('POST', '/order', payload)
         if status in (200, 201):
             self.write({
-                'monta_order_id': self.name,  # WebshopOrderId is our SO name
+                'monta_order_id': self.name,
                 'monta_sync_state': 'sent',
                 'monta_last_push': fields.Datetime.now(),
                 'monta_needs_sync': False,
@@ -319,7 +461,6 @@ class SaleOrder(models.Model):
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
         for order in self:
-            # first push to Monta (create). If already has an ID, update.
             if not order.monta_order_id:
                 order._monta_create()
             else:
@@ -336,7 +477,8 @@ class SaleOrder(models.Model):
 
         # auto-push updates for confirmed orders
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
-            order._monta_update()
+            if order._should_push_now():
+                order._monta_update()
         return res
 
     def action_cancel(self):
