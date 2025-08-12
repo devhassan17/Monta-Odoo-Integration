@@ -36,32 +36,100 @@ class SaleOrder(models.Model):
         except Exception:
             return True
 
-    # -------- PACK / BUNDLE EXPANSION --------
+    # -------------------------
+    # PACK / BUNDLE EXPANSION
+    # -------------------------
+
     def _get_pack_components_from_bom(self, product, qty):
+        """Prefer phantom BoM expansion with robust fallback to direct bom lines."""
         return get_pack_components_from_bom(self.env, self.company_id.id, product, qty)
 
     def _get_pack_components_from_oca_pack(self, product, qty):
-        """Hook for OCA product_pack modules. Returns [] when not installed/used."""
-        return []
+        """
+        Expand components via OCA product_pack, handling common schemas:
+
+        - product.template.pack_line_ids -> product_id / (qty|quantity|product_qty)
+        - product.product.pack_line_ids  -> product_id / (qty|quantity|product_qty)
+        - product.pack.line model behind either relation
+
+        Returns list[(product.product, qty)].
+        """
+        comps = []
+
+        def _extract_lines(owner):
+            # try common field names
+            for field_name in ('pack_line_ids', 'pack_lines', 'pack_line_ids_variant'):
+                lines = getattr(owner, field_name, False)
+                if lines:
+                    return lines
+            return False
+
+        # look on template first, then on variant
+        lines = _extract_lines(product.product_tmpl_id) or _extract_lines(product)
+        if not lines:
+            return comps
+
+        for line in lines:
+            cprod = getattr(line, 'product_id', False) or getattr(line, 'item_id', False)
+            # qty field variations
+            q = (
+                getattr(line, 'qty', False) or
+                getattr(line, 'quantity', False) or
+                getattr(line, 'product_qty', False) or
+                getattr(line, 'uom_qty', False) or
+                0.0
+            )
+            if cprod and q:
+                comps.append((cprod, (q or 0.0) * (qty or 1.0)))
+        return comps
+
+    def _is_pack_like(self, product):
+        """Heuristic: product looks like a pack if it has phantom BoM or OCA pack lines."""
+        # quick checks without DB cost: presence of related fields
+        if getattr(product.product_tmpl_id, 'pack_line_ids', False) or getattr(product, 'pack_line_ids', False):
+            return True
+        # light DB check: is there a phantom BoM?
+        Bom = self.env['mrp.bom']
+        bom = Bom.search([
+            ('product_tmpl_id', '=', product.product_tmpl_id.id),
+            ('type', '=', 'phantom'),
+            '|', ('product_id', '=', product.id), ('product_id', '=', False),
+            '|', ('company_id', '=', self.company_id.id), ('company_id', '=', False),
+        ], limit=1)
+        return bool(bom)
 
     def _expand_line_into_components(self, line):
+        """
+        Expand a sale.order.line into component (product, qty) pairs.
+        STRICT component mode for packs:
+          - If product is pack-like but no components resolved, raise a clear ValidationError
+            (we never fall back to the pack SKU).
+        """
         product = line.product_id
         qty = line.product_uom_qty or 0.0
         if qty <= 0:
             return [], None
 
+        # Try BoM expansion first
         comps = self._get_pack_components_from_bom(product, qty)
         source = 'mrp_phantom'
+
+        # Then try OCA pack expansion
         if not comps:
-            oca_fun = getattr(self, '_get_pack_components_from_oca_pack', None)
-            comps = oca_fun(product, qty) if callable(oca_fun) else []
+            comps = self._get_pack_components_from_oca_pack(product, qty)
             source = 'oca_pack' if comps else None
 
+        # If we resolved components, log & return
         if comps:
             comp_list = []
             for p, q in comps:
                 sku, _src = resolve_sku(p, env=self.env)
-                comp_list.append({'product_id': p.id, 'name': p.display_name or p.name, 'qty': q, 'sku': sku or ''})
+                comp_list.append({
+                    'product_id': p.id,
+                    'name': p.display_name or p.name,
+                    'qty': q,
+                    'sku': sku or '',
+                })
             pack_info = {
                 'line_id': line.id,
                 'pack_product_id': product.id,
@@ -71,8 +139,22 @@ class SaleOrder(models.Model):
                 'components': comp_list,
             }
             return comps, pack_info
+
+        # No components resolved
+        if self._is_pack_like(product):
+            # strict mode: never send pack SKU if it looks like a pack
+            raise ValidationError(
+                f"Pack '{product.display_name}' has no resolvable components.\n"
+                f"Please add a PHANTOM BoM or OCA pack lines for this VARIANT (e.g. Espresso Grind), "
+                f"so Monta receives component SKUs."
+            )
+
+        # Not a pack → treat as simple product
         return [(product, qty)], None
 
+    # -------------------------
+    # Lines → Monta format
+    # -------------------------
     def _prepare_monta_lines(self):
         sku_qty, missing, pack_logs = {}, [], []
 
@@ -80,6 +162,7 @@ class SaleOrder(models.Model):
             comps, pack_info = self._expand_line_into_components(l)
             if pack_info:
                 pack_logs.append(pack_info)
+
             for prod, q in comps:
                 if q <= 0:
                     continue
@@ -97,14 +180,18 @@ class SaleOrder(models.Model):
                 sku_qty[sku] = sku_qty.get(sku, 0) + q
 
         if pack_logs:
-            self._create_monta_log({'pack_expansion': pack_logs}, level='info',
-                                   tag='Monta Pack Expansion',
-                                   console_summary=f"[Monta Pack Expansion] {len(pack_logs)} pack line(s) expanded")
+            self._create_monta_log(
+                {'pack_expansion': pack_logs}, level='info',
+                tag='Monta Pack Expansion',
+                console_summary=f"[Monta Pack Expansion] {len(pack_logs)} pack line(s) expanded"
+            )
 
         if missing:
-            self._create_monta_log({'missing_skus': missing}, level='error',
-                                   tag='Monta SKU check',
-                                   console_summary=f"[Monta SKU check] {len(missing)} missing SKU(s)")
+            self._create_monta_log(
+                {'missing_skus': missing}, level='error',
+                tag='Monta SKU check',
+                console_summary=f"[Monta SKU check] {len(missing)} missing SKU(s)"
+            )
             msg_lines = ["Cannot push to Monta: some products have no mapped SKU."]
             for m in missing:
                 msg_lines.append(f"- {m['component_name']} (from pack: {m['pack_product']}) → SKU: {m['resolved_sku']}")
@@ -116,6 +203,9 @@ class SaleOrder(models.Model):
             raise ValidationError("Cannot push to Monta: order lines expanded to empty/zero quantities.")
         return lines
 
+    # -------------------------
+    # Payload / API plumbing (unchanged)
+    # -------------------------
     def _prepare_monta_order_payload(self):
         self.ensure_one()
         partner = self.partner_id
@@ -177,10 +267,9 @@ class SaleOrder(models.Model):
             'name': f'{tag} {self.name} - {level}',
         }
         self.env['monta.sale.log'].sudo().create(vals)
-        # optional: console summary kept as-is (omitted here)
 
     # -------------------------
-    # CREATE / UPDATE / DELETE
+    # API calls (unchanged)
     # -------------------------
     def _monta_request(self, method, path, payload=None, headers=None):
         client = MontaClient(self.env)
@@ -230,9 +319,7 @@ class SaleOrder(models.Model):
             self._create_monta_log({'delete_failed': body}, 'error', console_summary="[Monta API] delete failed (logged)")
         return status, body
 
-    # -------------------------
     # Optional: preflight SKU check
-    # -------------------------
     def action_monta_check_skus(self):
         self.ensure_one()
         try:
@@ -273,10 +360,3 @@ class SaleOrder(models.Model):
             if order.state in ('sale', 'done') and (order.monta_order_id or order.name):
                 order._monta_delete(note="Deleted from Odoo (unlink)")
         return super(SaleOrder, self).unlink()
-
-    # Legacy sender (testing)
-    def _send_to_monta(self, payload):
-        status, body = self._monta_request('POST', '/order', payload)
-        if status in (200, 201):
-            return body
-        return {"error": f"API Error {status}", "details": body}
