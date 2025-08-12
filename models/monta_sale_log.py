@@ -265,11 +265,14 @@ class SaleOrder(models.Model):
         components = []
         Bom = self.env['mrp.bom']
 
+        # 1) Try legacy API (v16/17); Odoo 18 will raise TypeError
         bom = False
         try:
             bom = Bom._bom_find(product=product, company_id=self.company_id.id)
         except TypeError:
             bom = False
+
+        # 2) Odoo 18+: manual search, prefer variant-specific phantom, else template phantom
         if not bom:
             bom = Bom.search([
                 ('product_tmpl_id', '=', product.product_tmpl_id.id),
@@ -288,19 +291,24 @@ class SaleOrder(models.Model):
                         components.append((comp, comp_qty))
             except Exception as e:
                 _logger.error(f"[Monta] BoM explode failed for {product.display_name}: {e}")
-        return components
 
-    def _get_pack_components_from_oca_pack(self, product, qty):
-        """Return [(product, qty)] for OCA product packs, else []."""
-        components = []
-        try:
-            tmpl = product.product_tmpl_id
-            if hasattr(tmpl, 'pack_line_ids') and tmpl.pack_line_ids:
-                for pl in tmpl.pack_line_ids:
-                    if pl.product_id and pl.quantity:
-                        components.append((pl.product_id, pl.quantity * qty))
-        except Exception:
-            pass
+        # Optional: if still no components, log why we will treat it as a simple product
+        if not components:
+            try:
+                self._create_monta_log(
+                    {'pack_no_bom_found': {
+                        'product_id': product.id,
+                        'product_name': product.display_name,
+                        'company_id': self.company_id.id,
+                        'note': 'No phantom BoM resolved; pack will be treated as a simple line and thus needs its own SKU.'
+                    }},
+                    level='info',
+                    tag='Monta Pack Expansion',
+                    console_summary=f"[Monta Pack Expansion] no phantom BoM for {product.display_name}"
+                )
+            except Exception:
+                pass
+
         return components
 
     def _expand_line_into_components(self, line):
