@@ -58,7 +58,6 @@ class ProductProduct(models.Model):
         for o in orders:
             try:
                 if hasattr(o, '_should_push_now'):
-                    # respect debounce if defined
                     if o._should_push_now():
                         o._monta_update()
                 else:
@@ -220,7 +219,7 @@ class SaleOrder(models.Model):
 
     def _prepare_monta_lines(self):
         """Build Monta 'Lines' from order lines, expanding packs and merging by SKU.
-        - Validates SKU presence.
+        - Validates SKU presence and shows the resolved SKU (or EMPTY) in ValidationError.
         - Logs pack expansion with component SKUs.
         """
         sku_qty = {}
@@ -240,9 +239,11 @@ class SaleOrder(models.Model):
                     missing.append({
                         'product_id': prod.id,
                         'product_display_name': prod.display_name or prod.name or f'ID {prod.id}',
+                        'resolved_sku': sku or 'EMPTY',
                         'line_id': l.id,
                     })
                     continue
+                # aggregate by sku
                 sku_qty[sku] = sku_qty.get(sku, 0) + q
 
         if pack_logs:
@@ -254,19 +255,20 @@ class SaleOrder(models.Model):
             )
 
         if missing:
+            # Save full detail to logs
             self._create_monta_log(
                 {'missing_skus': missing},
                 level='error',
                 tag='Monta SKU check',
                 console_summary=f"[Monta SKU check] {len(missing)} product(s) missing SKU mapping"
             )
-            names = ", ".join(m['product_display_name'] for m in missing[:5])
-            more = "" if len(missing) <= 5 else f" (+{len(missing)-5} more)"
-            raise ValidationError(
-                "Cannot push to Monta: some products have no mapped SKU.\n"
-                f"Fix 'Monta SKU' or default_code/supplier code/barcode for: {names}{more}"
-            )
+            # Build a readable error including resolved SKU values
+            msg_lines = ["Cannot push to Monta: some products have no mapped SKU."]
+            for m in missing:
+                msg_lines.append(f"- {m['product_display_name']} → SKU: {m['resolved_sku']}")
+            raise ValidationError("\n".join(msg_lines))
 
+        # Monta typically expects integers; remove int() if you use fractional UoM
         lines = [{"Sku": sku, "OrderedQuantity": int(qty)} for sku, qty in sku_qty.items() if int(qty) > 0]
         if not lines:
             raise ValidationError("Cannot push to Monta: order lines expanded to empty/zero quantities.")
