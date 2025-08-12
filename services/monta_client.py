@@ -1,0 +1,67 @@
+# -*- coding: utf-8 -*-
+import logging, time, requests
+from requests.auth import HTTPBasicAuth
+
+_logger = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT = 20
+
+class MontaClient:
+    """
+    Thin HTTP client for Monta with basic auth and structured logging.
+    Credentials & base URL are read from ir.config_parameter at call-time.
+    """
+
+    def __init__(self, env):
+        self.env = env
+
+    def _conf(self):
+        ICP = self.env['ir.config_parameter'].sudo()
+        base = (ICP.get_param('monta.base_url') or 'https://api-v6.monta.nl').rstrip('/')
+        user = ICP.get_param('monta.username') or ''
+        pwd  = ICP.get_param('monta.password') or ''
+        to   = int(ICP.get_param('monta.timeout') or DEFAULT_TIMEOUT)
+        return base, user, pwd, to
+
+    def request(self, order, method, path, payload=None, headers=None):
+        """
+        Execute HTTP request and write compact request/response to monta.sale.log via order._create_monta_log.
+        """
+        base, user, pwd, timeout = self._conf()
+        url = f"{base}/{path.lstrip('/')}"
+        headers = headers or {"Content-Type": "application/json", "Accept": "application/json"}
+
+        start_time = time.time()
+        _logger.info(f"[Monta API] {method.upper()} {url} | User: {user}")
+
+        order._create_monta_log(
+            {'request': {'method': method.upper(), 'url': url, 'headers': headers, 'auth_user': user, 'payload': payload or {}}},
+            'info', console_summary=f"[Monta API] queued request log for {method.upper()} {url}"
+        )
+
+        try:
+            resp = requests.request(
+                method=method, url=url, headers=headers, json=payload,
+                auth=HTTPBasicAuth(user, pwd), timeout=timeout
+            )
+            elapsed = time.time() - start_time
+            try:
+                body = resp.json()
+            except Exception:
+                body = {'raw': (resp.text or '')[:1000]}
+
+            log_line = f"[Monta API] {method.upper()} {url} | Status: {resp.status_code} | Time: {elapsed:.2f}s"
+            (_logger.info if resp.ok else _logger.error)(log_line)
+
+            order._create_monta_log(
+                {'response': {'status': resp.status_code, 'time_seconds': round(elapsed, 2), 'body': body}},
+                'info' if resp.ok else 'error',
+                console_summary=f"[Monta API] saved response log for {method.upper()} {url}"
+            )
+            return resp.status_code, body
+
+        except requests.RequestException as e:
+            elapsed = time.time() - start_time
+            _logger.error(f"[Monta API] {method.upper()} {url} | Request failed after {elapsed:.2f}s | {str(e)}")
+            order._create_monta_log({'exception': str(e)}, 'error', console_summary="[Monta API] saved exception log")
+            return 0, {'error': str(e)}
