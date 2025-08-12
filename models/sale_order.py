@@ -41,7 +41,7 @@ class SaleOrder(models.Model):
         return get_pack_components_from_bom(self.env, self.company_id.id, product, qty)
 
     def _get_pack_components_from_oca_pack(self, product, qty):
-        """If you use OCA product_pack modules, implement here. Currently returns []."""
+        """Hook for OCA product_pack modules. Returns [] when not installed/used."""
         return []
 
     def _expand_line_into_components(self, line):
