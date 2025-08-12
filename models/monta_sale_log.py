@@ -29,7 +29,6 @@ class ProductProduct(models.Model):
 
     def write(self, vals):
         res = super().write(vals)
-
         # If identifiers changed, trigger resync for related open orders
         sku_related = {'monta_sku', 'default_code', 'barcode', 'seller_ids'}
         if sku_related.intersection(vals.keys()):
@@ -52,7 +51,6 @@ class ProductProduct(models.Model):
         orders = lines.mapped('order_id').filtered(lambda o: o.state != 'cancel')
         if not orders:
             return
-
         # avoid hammering: update flag in batch, then push with small debounce at order level
         orders.write({'monta_needs_sync': True})
         for o in orders:
@@ -78,6 +76,125 @@ class MontaSaleLog(models.Model):
     log_data = fields.Text('Log JSON')
     level = fields.Selection([('info','Info'),('error','Error')], default='info')
     create_date = fields.Datetime('Created on', readonly=True)
+
+
+# =========================
+# PRODUCT TEMPLATE UTIL: log pack component SKUs (for many packs)
+# =========================
+class ProductTemplate(models.Model):
+    _inherit = 'product.template'
+
+    # ---- helpers ----
+    def _monta_resolve_sku(self, product):
+        sku = getattr(product, 'monta_sku', False)
+        if sku:
+            return sku.strip(), 'monta_sku'
+        if product.default_code:
+            return product.default_code.strip(), 'default_code'
+        seller = product.seller_ids[:1]
+        if seller and seller.product_code:
+            return seller.product_code.strip(), 'supplier_code'
+        if product.barcode:
+            return product.barcode.strip(), 'barcode'
+        return '', 'missing'
+
+    def _monta_find_phantom_bom_for_variant(self, variant, company_id):
+        """Odoo 18 safe: prefer variant-specific phantom BoM, else template phantom."""
+        Bom = self.env['mrp.bom']
+        bom = False
+        # Old API (v16/17) had _bom_find(product=...), keep a try just in case
+        try:
+            bom = Bom._bom_find(product=variant, company_id=company_id)
+        except TypeError:
+            bom = False
+        if not bom:
+            bom = Bom.search([
+                ('product_tmpl_id', '=', variant.product_tmpl_id.id),
+                ('type', '=', 'phantom'),
+                '|', ('product_id', '=', variant.id), ('product_id', '=', False),
+                '|', ('company_id', '=', company_id), ('company_id', '=', False),
+            ], order='product_id desc', limit=1)
+        return bom
+
+    def _monta_explode_variant_components(self, variant, qty=1.0):
+        """Return list of (component_product, qty) for THIS variant using phantom BoM."""
+        comps = []
+        bom = self._monta_find_phantom_bom_for_variant(variant, self.env.company.id)
+        if not bom or bom.type != 'phantom':
+            return comps, bom
+        try:
+            b_lines, _ops = bom.explode(variant, qty, picking_type=False)
+            for bl, data in b_lines:
+                cprod = bl.product_id
+                cqty = data.get('qty', 0.0)
+                if cprod and cqty:
+                    comps.append((cprod, cqty))
+        except Exception as e:
+            _logger.error(f"[Monta Pack Scan] explode failed for {variant.display_name}: {e}")
+        return comps, bom
+
+    # ---- public entrypoint ----
+    def action_monta_log_pack_variant_skus(self, per_pack_qty=1.0):
+        """
+        For each template in self:
+          - Iterate all variants
+          - Explode their phantom BoM
+          - Log component products with resolved SKUs (Monta SKU → default_code → supplier code → barcode)
+        Creates a 'Monta Pack Scan' entry in monta.sale.log for UI visibility.
+        """
+        Log = self.env['monta.sale.log'].sudo()
+        for tmpl in self:
+            header = f"Template: {tmpl.display_name} (ID {tmpl.id}) — Variants: {len(tmpl.product_variant_ids)}"
+            _logger.info(f"[Monta Pack Scan] {header}")
+
+            pack_report = {
+                'template': {'id': tmpl.id, 'name': tmpl.display_name},
+                'variants': []
+            }
+
+            for v in tmpl.product_variant_ids:
+                attrs = ", ".join(v.product_template_attribute_value_ids.mapped('name')) or "-"
+                vsku, vsrc = self._monta_resolve_sku(v)
+                v_info = {
+                    'variant_id': v.id,
+                    'variant_name': v.display_name,
+                    'attributes': attrs,
+                    'variant_sku': vsku or 'EMPTY',
+                    'variant_sku_source': vsrc,
+                    'components': [],
+                }
+
+                comps, bom = self._monta_explode_variant_components(v, qty=per_pack_qty)
+                if not bom:
+                    _logger.info(f"[Monta Pack Scan]  Variant: {v.display_name} | No phantom BoM found.")
+                else:
+                    owner = bom.product_id.display_name if bom.product_id else "TEMPLATE"
+                    _logger.info(f"[Monta Pack Scan]  Variant: {v.display_name} | BoM {bom.id} ({owner})")
+
+                for comp, q in comps:
+                    csku, csrc = self._monta_resolve_sku(comp)
+                    v_info['components'].append({
+                        'component_id': comp.id,
+                        'component_name': comp.display_name,
+                        'qty_per_pack': q,
+                        'sku': csku or 'EMPTY',
+                        'sku_source': csrc,
+                    })
+                    _logger.info(
+                        f"[Monta Pack Scan]    -> {comp.display_name} | qty={q} | SKU={(csku or 'EMPTY')} ({csrc})"
+                    )
+
+                pack_report['variants'].append(v_info)
+
+            # save one compact JSON log entry per template (visible in Technical → Monta API logs)
+            Log.create({
+                'name': f"Monta Pack Scan - {tmpl.display_name}",
+                'sale_order_id': False,
+                'level': 'info',
+                'log_data': json.dumps(pack_report, indent=2, default=str),
+            })
+
+        return True
 
 
 # =========================
@@ -135,7 +252,6 @@ class SaleOrder(models.Model):
             return sku.strip(), 'monta_sku'
         if product.default_code:
             return product.default_code.strip(), 'default_code'
-        # supplier code (first)
         seller = product.seller_ids[:1]
         if seller and seller.product_code:
             return seller.product_code.strip(), 'supplier_code'
@@ -145,20 +261,33 @@ class SaleOrder(models.Model):
 
     # -------- PACK / BUNDLE EXPANSION --------
     def _get_pack_components_from_bom(self, product, qty):
-        """Return [(product, qty)] for phantom BoM components, else [] (MRP)."""
+        """Return [(product, qty)] for phantom BoM components (Odoo 18-safe), else []."""
         components = []
+        Bom = self.env['mrp.bom']
+
+        bom = False
         try:
-            Bom = self.env['mrp.bom']
             bom = Bom._bom_find(product=product, company_id=self.company_id.id)
-            if bom and bom.type == 'phantom':
+        except TypeError:
+            bom = False
+        if not bom:
+            bom = Bom.search([
+                ('product_tmpl_id', '=', product.product_tmpl_id.id),
+                ('type', '=', 'phantom'),
+                '|', ('product_id', '=', product.id), ('product_id', '=', False),
+                '|', ('company_id', '=', self.company_id.id), ('company_id', '=', False),
+            ], order='product_id desc', limit=1)
+
+        if bom and bom.type == 'phantom':
+            try:
                 bom_lines, _ops = bom.explode(product, qty, picking_type=False)
                 for line, line_data in bom_lines:
                     comp = line.product_id
                     comp_qty = line_data.get('qty', 0.0)
                     if comp and comp_qty:
                         components.append((comp, comp_qty))
-        except Exception:
-            pass
+            except Exception as e:
+                _logger.error(f"[Monta] BoM explode failed for {product.display_name}: {e}")
         return components
 
     def _get_pack_components_from_oca_pack(self, product, qty):
