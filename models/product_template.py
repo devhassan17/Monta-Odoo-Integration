@@ -11,9 +11,7 @@ class ProductTemplate(models.Model):
 
     def action_monta_log_pack_variant_skus(self, per_pack_qty=1.0):
         """
-        For each template in self:
-          - Iterate all variants, explode phantom BoM
-          - Log component products with resolved SKUs
+        Iterate variants, explode phantom BoM, log component products with resolved SKUs.
         """
         Log = self.env['monta.sale.log'].sudo()
         for tmpl in self:
@@ -24,7 +22,7 @@ class ProductTemplate(models.Model):
             }
             for v in tmpl.product_variant_ids:
                 attrs = ", ".join(v.product_template_attribute_value_ids.mapped('name')) or "-"
-                vsku, vsrc = resolve_sku(v)
+                vsku, vsrc = resolve_sku(v, env=self.env)
                 v_info = {
                     'variant_id': v.id,
                     'variant_name': v.display_name,
@@ -40,7 +38,7 @@ class ProductTemplate(models.Model):
                     owner = bom.product_id.display_name if bom.product_id else "TEMPLATE"
                     _logger.info(f"[Monta Pack Scan]  Variant: {v.display_name} | BoM {bom.id} ({owner})")
                 for comp, q in comps:
-                    csku, csrc = resolve_sku(comp)
+                    csku, csrc = resolve_sku(comp, env=self.env)
                     v_info['components'].append({
                         'component_id': comp.id,
                         'component_name': comp.display_name,

@@ -60,7 +60,7 @@ class SaleOrder(models.Model):
         if comps:
             comp_list = []
             for p, q in comps:
-                sku, _src = resolve_sku(p)
+                sku, _src = resolve_sku(p, env=self.env)
                 comp_list.append({'product_id': p.id, 'name': p.display_name or p.name, 'qty': q, 'sku': sku or ''})
             pack_info = {
                 'line_id': line.id,
@@ -83,7 +83,7 @@ class SaleOrder(models.Model):
             for prod, q in comps:
                 if q <= 0:
                     continue
-                sku, _source = resolve_sku(prod)
+                sku, _source = resolve_sku(prod, env=self.env)
                 if not sku:
                     missing.append({
                         'line_id': l.id,
@@ -177,19 +177,10 @@ class SaleOrder(models.Model):
             'name': f'{tag} {self.name} - {level}',
         }
         self.env['monta.sale.log'].sudo().create(vals)
-
-        if console_summary:
-            msg = console_summary
-        else:
-            if isinstance(payload, dict) and payload:
-                top_key = next(iter(payload.keys()))
-                msg = f"{tag}: {top_key}"
-            else:
-                msg = f"{tag}: log entry"
-        # optional: keep console behavior as before
+        # optional: console summary kept as-is (omitted here)
 
     # -------------------------
-    # CREATE / UPDATE / DELETE (via services.MontaClient)
+    # CREATE / UPDATE / DELETE
     # -------------------------
     def _monta_request(self, method, path, payload=None, headers=None):
         client = MontaClient(self.env)

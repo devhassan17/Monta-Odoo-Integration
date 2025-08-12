@@ -33,8 +33,7 @@ def explode_variant_components(env, variant, qty=1.0):
                 comps.append((cprod, cqty))
     except Exception as e:
         _logger.error(f"[Monta Pack Scan] explode failed for {variant.display_name}: {e}")
-    # Fallback to direct BoM lines if explode returns nothing
-    if not comps:
+    if not comps:  # fallback to direct BoM lines
         for bl in bom.bom_line_ids:
             cprod = bl.product_id
             cqty  = (bl.product_qty or 0.0) * (qty or 1.0)
@@ -44,20 +43,18 @@ def explode_variant_components(env, variant, qty=1.0):
 
 def get_pack_components_from_bom(env, company_id, product, qty):
     """
-    Return components [(product, qty)] for phantom BoM (Odoo 18-safe).
-    Uses explode() first, then falls back to direct bom_line_ids if needed.
+    Return components [(product, qty)] for phantom BoM.
+    Uses explode() first, then falls back to direct bom_line_ids.
     """
     components = []
     Bom = env['mrp.bom']
 
-    # legacy finder (v16/17)
     bom = False
     try:
         bom = Bom._bom_find(product=product, company_id=company_id)
     except TypeError:
         bom = False
 
-    # manual search (prefer variant BoM, else template BoM)
     if not bom:
         bom = Bom.search([
             ('product_tmpl_id', '=', product.product_tmpl_id.id),
@@ -81,7 +78,7 @@ def get_pack_components_from_bom(env, company_id, product, qty):
     except Exception as e:
         _logger.error(f"[Monta] BoM explode failed for {product.display_name}: {e}")
 
-    if not exploded_ok:
+    if not exploded_ok:  # fallback
         for bl in bom.bom_line_ids:
             comp = bl.product_id
             comp_qty = (bl.product_qty or 0.0) * (qty or 1.0)
