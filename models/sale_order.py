@@ -10,6 +10,66 @@ from ..utils.pack import get_pack_components_from_bom
 class SaleOrder(models.Model):
     _inherit = 'sale.order'
 
+    # --- DEBUG: log pack variant → component SKUs to Odoo.sh logs ---
+    def _log_pack_variant_skus_for_order(self):
+        """
+        For each order line that looks like a pack, log:
+        Pack (product) -> Variant -> Component products (with real SKUs)
+        Output goes to Odoo.sh logs via _logger.info().
+        """
+        for line in self.order_line:
+            product = line.product_id
+            qty = line.product_uom_qty or 0.0
+
+            # Only care about pack-like products
+            if not is_pack_like(self.env, product, self.company_id.id):
+                continue
+
+            # Expand components (phantom BoM first, then OCA pack)
+            comps, source = expand_pack_components(self.env, product, qty, company_id=self.company_id.id)
+
+            # Header
+            _logger.info(
+                "[Monta Pack Debug] ORDER %s | PACK %s | VARIANT %s | Source=%s | Qty=%s",
+                self.name,
+                product.product_tmpl_id.display_name,
+                product.display_name,
+                (source or "none"),
+                qty,
+            )
+
+            if not comps:
+                _logger.info(
+                    "[Monta Pack Debug]  -> No components resolved. Add a PHANTOM BoM for this VARIANT or OCA pack lines."
+                )
+                continue
+
+            # Components
+            _logger.info("[Monta Pack Debug]  Components (product → qty → SKU → source):")
+            for comp_prod, comp_qty in comps:
+                sku, sku_src = resolve_sku(comp_prod, env=self.env, allow_synthetic=False)
+                _logger.info(
+                    "[Monta Pack Debug]    - %s  | qty=%s  | sku=%s  | src=%s",
+                    comp_prod.display_name,
+                    comp_qty,
+                    (sku or "EMPTY"),
+                    sku_src,
+                )
+
+    # Call this before building the payload (so every confirm logs the details)
+    def action_confirm(self):
+        res = super(SaleOrder, self).action_confirm()
+        for order in self:
+            try:
+                order._log_pack_variant_skus_for_order()
+            except Exception as e:
+                _logger.error("[Monta Pack Debug] Failed to log pack SKUs for %s: %s", order.name, e)
+            if not order.monta_order_id:
+                order._monta_create()
+            else:
+                order._monta_update()
+        return res
+
     monta_order_id = fields.Char('Monta WebshopOrderId', copy=False, index=True)
     monta_sync_state = fields.Selection([
         ('draft', 'Draft'),
@@ -360,3 +420,4 @@ class SaleOrder(models.Model):
             if order.state in ('sale', 'done') and (order.monta_order_id or order.name):
                 order._monta_delete(note="Deleted from Odoo (unlink)")
         return super(SaleOrder, self).unlink()
+    
