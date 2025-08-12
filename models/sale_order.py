@@ -53,7 +53,8 @@ class SaleOrder(models.Model):
         comps = self._get_pack_components_from_bom(product, qty)
         source = 'mrp_phantom'
         if not comps:
-            comps = self._get_pack_components_from_oca_pack(product, qty)
+            oca_fun = getattr(self, '_get_pack_components_from_oca_pack', None)
+            comps = oca_fun(product, qty) if callable(oca_fun) else []
             source = 'oca_pack' if comps else None
 
         if comps:
@@ -85,10 +86,12 @@ class SaleOrder(models.Model):
                 sku, _source = resolve_sku(prod)
                 if not sku:
                     missing.append({
-                        'product_id': prod.id,
-                        'product_display_name': prod.display_name or prod.name or f'ID {prod.id}',
-                        'resolved_sku': 'EMPTY',
                         'line_id': l.id,
+                        'pack_product': l.product_id.display_name,
+                        'component_id': prod.id,
+                        'component_name': prod.display_name or prod.name or f'ID {prod.id}',
+                        'resolved_sku': 'EMPTY',
+                        'qty': q,
                     })
                     continue
                 sku_qty[sku] = sku_qty.get(sku, 0) + q
@@ -101,10 +104,10 @@ class SaleOrder(models.Model):
         if missing:
             self._create_monta_log({'missing_skus': missing}, level='error',
                                    tag='Monta SKU check',
-                                   console_summary=f"[Monta SKU check] {len(missing)} product(s) missing SKU mapping")
+                                   console_summary=f"[Monta SKU check] {len(missing)} missing SKU(s)")
             msg_lines = ["Cannot push to Monta: some products have no mapped SKU."]
             for m in missing:
-                msg_lines.append(f"- {m['product_display_name']} → SKU: {m['resolved_sku']}")
+                msg_lines.append(f"- {m['component_name']} (from pack: {m['pack_product']}) → SKU: {m['resolved_sku']}")
             raise ValidationError("\n".join(msg_lines))
 
         lines = [{"Sku": sku, "OrderedQuantity": int(qty)}
@@ -183,7 +186,7 @@ class SaleOrder(models.Model):
                 msg = f"{tag}: {top_key}"
             else:
                 msg = f"{tag}: log entry"
-        (self.env['ir.logging'] and None)  # no-op; keep similar shape
+        # optional: keep console behavior as before
 
     # -------------------------
     # CREATE / UPDATE / DELETE (via services.MontaClient)
@@ -237,8 +240,18 @@ class SaleOrder(models.Model):
         return status, body
 
     # -------------------------
-    # Hooks
+    # Optional: preflight SKU check
     # -------------------------
+    def action_monta_check_skus(self):
+        self.ensure_one()
+        try:
+            _ = self._prepare_monta_lines()
+            self.message_post(body="Monta SKU check passed. All lines/components have SKUs.")
+        except ValidationError as e:
+            self.message_post(body=f"<pre>{e.name or str(e)}</pre>")
+        return True
+
+    # Hooks
     def action_confirm(self):
         res = super(SaleOrder, self).action_confirm()
         for order in self:
@@ -270,7 +283,7 @@ class SaleOrder(models.Model):
                 order._monta_delete(note="Deleted from Odoo (unlink)")
         return super(SaleOrder, self).unlink()
 
-    # Legacy sender (testing only)
+    # Legacy sender (testing)
     def _send_to_monta(self, payload):
         status, body = self._monta_request('POST', '/order', payload)
         if status in (200, 201):
