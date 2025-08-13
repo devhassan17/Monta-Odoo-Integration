@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from odoo import models, fields
 import logging
+from odoo import models, fields
+
 _logger = logging.getLogger(__name__)
 
 class ProductProduct(models.Model):
@@ -19,7 +20,7 @@ class ProductProduct(models.Model):
             try:
                 self._trigger_monta_resync_for_open_orders()
             except Exception as e:
-                _logger.error(f"[Monta Resync] Failed to trigger resync after product write: {e}")
+                _logger.error("[Monta Resync] Failed to trigger resync after product write: %s", e, exc_info=True)
         return res
 
     def _trigger_monta_resync_for_open_orders(self):
@@ -37,10 +38,7 @@ class ProductProduct(models.Model):
         orders.write({'monta_needs_sync': True})
         for o in orders:
             try:
-                if hasattr(o, '_should_push_now'):
-                    if o._should_push_now():
-                        o._monta_update()
-                else:
+                if hasattr(o, '_should_push_now') and o._should_push_now():
                     o._monta_update()
             except Exception as e:
-                _logger.error(f"[Monta Resync] Order {o.name} update after SKU fix failed: {e}")
+                _logger.error("[Monta Resync] Order %s update after SKU fix failed: %s", o.name, e, exc_info=True)

@@ -32,11 +32,11 @@ class MontaClient:
         headers = headers or {"Content-Type": "application/json", "Accept": "application/json"}
 
         start_time = time.time()
-        _logger.info(f"[Monta API] {method.upper()} {url} | User: {user}")
+        _logger.info("[Monta API] %s %s | User: %s", method.upper(), url, user)
 
         order._create_monta_log(
             {'request': {'method': method.upper(), 'url': url, 'headers': headers, 'auth_user': user, 'payload': payload or {}}},
-            'info', console_summary=f"[Monta API] queued request log for {method.upper()} {url}"
+            'info', tag='Monta API', console_summary=f"[Monta API] queued request log for {method.upper()} {url}"
         )
 
         try:
@@ -50,18 +50,19 @@ class MontaClient:
             except Exception:
                 body = {'raw': (resp.text or '')[:1000]}
 
-            log_line = f"[Monta API] {method.upper()} {url} | Status: {resp.status_code} | Time: {elapsed:.2f}s"
+            log_line = "[Monta API] %s %s | Status: %s | Time: %.2fs" % (method.upper(), url, resp.status_code, elapsed)
             (_logger.info if resp.ok else _logger.error)(log_line)
 
             order._create_monta_log(
                 {'response': {'status': resp.status_code, 'time_seconds': round(elapsed, 2), 'body': body}},
                 'info' if resp.ok else 'error',
-                console_summary=f"[Monta API] saved response log for {method.upper()} {url}"
+                tag='Monta API', console_summary=f"[Monta API] saved response log for {method.upper()} {url}"
             )
             return resp.status_code, body
 
         except requests.RequestException as e:
             elapsed = time.time() - start_time
-            _logger.error(f"[Monta API] {method.upper()} {url} | Request failed after {elapsed:.2f}s | {str(e)}")
-            order._create_monta_log({'exception': str(e)}, 'error', console_summary="[Monta API] saved exception log")
+            _logger.error("[Monta API] %s %s | Request failed after %.2fs | %s", method.upper(), url, elapsed, str(e))
+            order._create_monta_log({'exception': str(e)}, 'error', tag='Monta API',
+                                    console_summary="[Monta API] saved exception log")
             return 0, {'error': str(e)}
