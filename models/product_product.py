@@ -9,7 +9,7 @@ class ProductProduct(models.Model):
 
     monta_sku = fields.Char(
         string="Monta SKU",
-        help="Explicit SKU used when sending orders to Monta. If empty, connector tries: default_code → first supplier code → barcode."
+        help="Explicit SKU for Monta. If empty, connector tries: default_code → first supplier code → barcode → template.default_code."
     )
 
     def write(self, vals):
@@ -20,11 +20,10 @@ class ProductProduct(models.Model):
             try:
                 self._trigger_monta_resync_for_open_orders()
             except Exception as e:
-                _logger.error("[Monta Resync] Failed to trigger resync after product write: %s", e, exc_info=True)
+                _logger.error("[Monta Resync] Failed after product write: %s", e, exc_info=True)
         return res
 
     def _trigger_monta_resync_for_open_orders(self):
-        """Mark related open orders for sync and push update immediately."""
         if not self:
             return
         SOL = self.env['sale.order.line']
