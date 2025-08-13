@@ -139,3 +139,12 @@ def get_pack_components_from_bom(env, company_id, product, qty) -> List[tuple]:
     Backward compatible: only phantom BoM (no OCA fallback).
     """
     return _explode_bom(env, product, qty, company_id)
+
+# ---- Emergency compatibility shim (keeps registry from crashing) ----
+def explode_variant_components(env, variant, qty=1.0, company_id=None):
+    """
+    Backward-compat shim so older imports don't crash the registry.
+    Returns no components and no BoM; just enough to let Odoo boot.
+    """
+    return [], False
+
