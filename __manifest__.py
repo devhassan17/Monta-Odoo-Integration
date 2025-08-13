@@ -4,7 +4,7 @@
     'author': 'Ali Hassan Mudasar',
     'category': 'Sales',
     'summary': 'Step 1: Log order creation for Monta integration',
-    'depends': ['sale_management'],
+
     'data': [
         'security/ir.model.access.csv',
     ],
