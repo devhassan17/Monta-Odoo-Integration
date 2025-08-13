@@ -4,13 +4,6 @@ Pack / kit expansion helpers
 - Prefer phantom BoM on the variant
 - Fall back to OCA product_pack
 - Recursively flatten packs until only leaf (non-pack) products remain
-
-Exports (backward compatible):
-- is_pack_like(env, product, company_id) -> bool
-- get_pack_components(env, company_id, product, qty) -> [(product, qty)]
-- expand_to_leaf_components(env, company_id, product, qty) -> [(leaf_product, qty)]
-- explode_variant_components(env, variant, qty=1.0, company_id=None) -> ([(product, qty)], bom)
-- get_pack_components_from_bom(env, company_id, product, qty) -> [(product, qty)]
 """
 from typing import List, Tuple
 import logging
@@ -18,7 +11,6 @@ import logging
 _logger = logging.getLogger(__name__)
 
 
-# ---------------- internal helpers ----------------
 def _find_phantom_bom_for_variant(env, variant, company_id):
     """Return a phantom mrp.bom for the given variant (or False)."""
     Bom = env['mrp.bom']
@@ -84,7 +76,6 @@ def _oca_components(product, qty) -> List[Tuple[object, float]]:
     return comps
 
 
-# ---------------- public helpers ----------------
 def is_pack_like(env, product, company_id) -> bool:
     """Heuristic: has OCA pack lines or phantom BoM."""
     if getattr(product.product_tmpl_id, 'pack_line_ids', False) or getattr(product, 'pack_line_ids', False):
@@ -120,31 +111,3 @@ def expand_to_leaf_components(env, company_id, product, qty, depth=0, seen=None)
             continue
         leaves.extend(expand_to_leaf_components(env, company_id, c, q, depth + 1, seen))
     return leaves
-
-
-# ---------------- backward-compatible exports ----------------
-def explode_variant_components(env, variant, qty=1.0, company_id=None):
-    """
-    Backward compatible: return (components, bom)
-    Uses _find_phantom_bom_for_variant + _explode_bom.
-    """
-    company_id = company_id or env.company.id
-    comps = _explode_bom(env, variant, qty, company_id)
-    bom = _find_phantom_bom_for_variant(env, variant, company_id)
-    return comps, bom
-
-
-def get_pack_components_from_bom(env, company_id, product, qty) -> List[tuple]:
-    """
-    Backward compatible: only phantom BoM (no OCA fallback).
-    """
-    return _explode_bom(env, product, qty, company_id)
-
-# ---- Emergency compatibility shim (keeps registry from crashing) ----
-def explode_variant_components(env, variant, qty=1.0, company_id=None):
-    """
-    Backward-compat shim so older imports don't crash the registry.
-    Returns no components and no BoM; just enough to let Odoo boot.
-    """
-    return [], False
-
