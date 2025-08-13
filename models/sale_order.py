@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json, re, logging
+from collections import defaultdict
 from odoo import models, fields
 from odoo.exceptions import ValidationError
 
@@ -10,7 +11,6 @@ from ..utils.pack import get_pack_components_from_bom
 
 _logger = logging.getLogger(__name__)
 
-# Only this instance is allowed to send to Monta
 ALLOWED_INSTANCE_URL = "https://moyeecoffee-03-july-2025-22548764.dev.odoo.com/"
 
 class SaleOrder(models.Model):
@@ -23,12 +23,11 @@ class SaleOrder(models.Model):
         ('updated', 'Updated'),
         ('cancelled', 'Cancelled'),
         ('error', 'Error'),
-        ('blocked_pack', 'Blocked (Pack)'),
     ], default='draft', copy=False)
     monta_last_push = fields.Datetime('Last Push to Monta', copy=False)
     monta_needs_sync = fields.Boolean('Needs Monta Sync', default=False, copy=False)
 
-    # Helpers
+    # ---------- helpers ----------
     def _split_street(self, street, street2=''):
         return split_street(street, street2)
 
@@ -47,14 +46,13 @@ class SaleOrder(models.Model):
         allowed = (ALLOWED_INSTANCE_URL or '').strip().rstrip('/') + '/'
         ok = web_url.lower() == allowed.lower()
         if not ok:
-            _logger.warning("[Monta Guard] Not sending order %s. web.base.url=%s expected=%s",
-                            self.name, web_url, allowed)
+            _logger.warning("[Monta Guard] Not sending order %s. web.base.url=%s expected=%s", self.name, web_url, allowed)
             self._create_monta_log({'guard': {'web_base_url': web_url, 'allowed': allowed, 'blocked': True}},
                                    level='info', tag='Monta Guard',
                                    console_summary='[Monta Guard] blocked by instance URL')
         return ok
 
-    # Pack detection
+    # ---------- pack heuristics ----------
     def _is_pack_like(self, product):
         if getattr(product.product_tmpl_id, 'pack_line_ids', False) or getattr(product, 'pack_line_ids', False):
             return True
@@ -67,86 +65,112 @@ class SaleOrder(models.Model):
         ], limit=1)
         return bool(bom)
 
-    def _order_has_pack(self):
-        return any(self._is_pack_like(l.product_id) for l in self.order_line if l.product_id)
-
-    # Pack logging (components only)
+    # ---------- logging ----------
     def _log_pack_variant_skus_for_order(self):
+        """
+        Always log pack expansion (components + real SKUs).
+        """
+        packs_scanned = 0
         for line in self.order_line:
-            product = line.product_id
-            if not product:
+            p = line.product_id
+            if not p or not self._is_pack_like(p):
                 continue
             qty = line.product_uom_qty or 0.0
-            if not self._is_pack_like(product):
-                continue
-
-            comps = get_pack_components_from_bom(self.env, self.company_id.id, product, qty)
-            _logger.info("[SKU_TEST] ORDER %s | PACK %s (VARIANT %s) | Qty=%s | comps=%s",
-                         self.name, product.product_tmpl_id.display_name, product.display_name, qty, len(comps))
-            if not comps:
-                _logger.info("[SKU_TEST]  -> No components resolved for %s", product.display_name)
-
+            comps = get_pack_components_from_bom(self.env, self.company_id.id, p, qty)
+            _logger.info("[Monta Pack Debug] ORDER %s | PACK %s | VARIANT %s | Qty=%s | comps=%s",
+                         self.name, p.product_tmpl_id.display_name, p.display_name, qty, len(comps))
             for comp, cqty in comps:
-                sku, _ = resolve_sku(comp, env=self.env, allow_synthetic=False)
-                _logger.info("[SKU_TEST]    - Component %s | qty=%s | SKU=%s",
-                             comp.display_name, cqty, sku or 'EMPTY')
-                self.env["sku_test.log"].create({
-                    "order_id": self.id,
-                    "order_line_id": line.id,
-                    "pack_product_id": product.id,
-                    "component_product_id": comp.id,
-                    "sku": sku or "",
+                sku, src = resolve_sku(comp, env=self.env, allow_synthetic=False)
+                _logger.info("[Monta Pack Debug]    - %s | qty=%s | sku=%s | src=%s",
+                             comp.display_name, cqty, sku or 'EMPTY', src)
+                self.env['sku_test.log'].create({
+                    'order_id': self.id,
+                    'order_line_id': line.id,
+                    'pack_product_id': p.id,
+                    'component_product_id': comp.id,
+                    'sku': sku or '',
                 })
+            packs_scanned += 1
+        _logger.info("[Monta Pack Debug] %s pack line(s) scanned", packs_scanned)
 
-    # Log all SKUs (strict)
     def _log_all_skus_now(self):
+        """
+        Log every SKU we will send (incl. packs exploded to components).
+        """
         rows = []
         for l in self.order_line:
-            product = l.product_id
-            if not product:
+            p = l.product_id
+            if not p:
                 continue
-
-            if self._is_pack_like(product):
-                comps = get_pack_components_from_bom(self.env, self.company_id.id, product, l.product_uom_qty or 0.0)
+            if self._is_pack_like(p):
+                comps = get_pack_components_from_bom(self.env, self.company_id.id, p, l.product_uom_qty or 0.0)
                 for comp, q in comps:
                     sku, _ = resolve_sku(comp, env=self.env, allow_synthetic=False)
-                    _logger.info("[Monta SKU LOG] %s → PACK %s comp %s | qty=%s | sku=%s",
-                                 self.name, product.display_name, comp.display_name, q, sku or 'EMPTY')
+                    _logger.info("[Monta Order SKUs] Order %s → PACK %s comp %s | Qty %s | SKU %s",
+                                 self.name, p.display_name, comp.display_name, q, sku or 'EMPTY')
                     rows.append({'line_id': l.id, 'product_id': comp.id, 'qty': q, 'sku': sku or 'EMPTY'})
             else:
-                sku, _ = resolve_sku(product, env=self.env, allow_synthetic=False)
-                _logger.info("[Monta SKU LOG] %s → SIMPLE %s | qty=%s | sku=%s",
-                             self.name, product.display_name, l.product_uom_qty or 0.0, sku or 'EMPTY')
-                rows.append({'line_id': l.id, 'product_id': product.id, 'qty': l.product_uom_qty or 0.0, 'sku': sku or 'EMPTY'})
-
+                sku, _ = resolve_sku(p, env=self.env, allow_synthetic=False)
+                _logger.info("[Monta Order SKUs] Order %s → SKU %s Qty %s (product %s)",
+                             self.name, sku or 'EMPTY', l.product_uom_qty or 0.0, p.display_name)
+                rows.append({'line_id': l.id, 'product_id': p.id, 'qty': l.product_uom_qty or 0.0, 'sku': sku or 'EMPTY'})
         self._create_monta_log({'sku_log': rows}, level='info', tag='Monta SKU Log',
                                console_summary=f"[Monta] Logged {len(rows)} SKU row(s)")
 
-    # Build Monta lines (non-pack only, strict SKU)
+    # ---------- build Lines for Monta (expand packs to array of component SKUs) ----------
     def _prepare_monta_lines(self):
-        sku_qty = {}
+        """
+        Returns a list of dicts: [{"Sku": <real sku>, "OrderedQuantity": <int>}]
+        - Pack lines are expanded via phantom BoM into their components
+        - All SKUs must be REAL (no synthetic); else we raise a single ValidationError listing them
+        - Quantities are aggregated per SKU across all lines/components
+        """
+        sku_qty = defaultdict(float)
+        missing = []
+
         for l in self.order_line:
-            product = l.product_id
-            if not product:
+            p = l.product_id
+            if not p:
                 continue
-            if self._is_pack_like(product):
-                continue  # never send packs
+            line_qty = l.product_uom_qty or 0.0
+            if line_qty <= 0:
+                continue
 
-            sku, _ = resolve_sku(product, env=self.env, allow_synthetic=False)
-            if not sku:
-                raise ValidationError(f"Product '{product.display_name}' has no real SKU.")
-            qty = int(l.product_uom_qty or 0)
-            if qty > 0:
-                sku_qty[sku] = sku_qty.get(sku, 0) + qty
+            if self._is_pack_like(p):
+                comps = get_pack_components_from_bom(self.env, self.company_id.id, p, line_qty)
+                if not comps:
+                    missing.append(f"Pack '{p.display_name}' has no resolvable components (phantom BoM missing).")
+                    continue
+                for comp, cqty in comps:
+                    sku, _ = resolve_sku(comp, env=self.env, allow_synthetic=False)
+                    if not sku:
+                        missing.append(f"Component '{comp.display_name}' (from pack '{p.display_name}') is missing a real SKU.")
+                        continue
+                    sku_qty[sku] += float(cqty or 0.0)
+            else:
+                sku, _ = resolve_sku(p, env=self.env, allow_synthetic=False)
+                if not sku:
+                    missing.append(f"Product '{p.display_name}' is missing a real SKU.")
+                else:
+                    sku_qty[sku] += float(line_qty)
 
+        if missing:
+            # Log & raise a readable error
+            self._create_monta_log({'missing_skus': missing}, level='error', tag='Monta SKU check',
+                                   console_summary=f"[Monta SKU check] {len(missing)} missing SKU(s)")
+            raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+
+        # Build lines (floats aggregated → send as int Monta wants whole quantities)
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
+
         if not lines:
-            raise ValidationError("No non-pack products to send to Monta. Pack lines are log-only.")
+            raise ValidationError("Order lines expanded to empty/zero quantities.")
+
         self._create_monta_log({'lines': lines}, level='info', tag='Monta Lines',
-                               console_summary=f"[Monta] Prepared {len(lines)} line(s) for send")
+                               console_summary=f"[Monta] Prepared {len(lines)} line(s)")
         return lines
 
-    # Payload / API plumbing
+    # ---------- payload / logging ----------
     def _prepare_monta_order_payload(self):
         self.ensure_one()
         partner = self.partner_id
@@ -197,6 +221,8 @@ class SaleOrder(models.Model):
                 "Currency": self.currency_id.name or "EUR"
             }
         }
+        # Extra visibility in server log:
+        _logger.info("[Monta Payload] %s -> Lines: %s", self.name, json.dumps(lines))
         return payload
 
     def _create_monta_log(self, payload, level='info', tag='Monta API', console_summary=None):
@@ -208,21 +234,15 @@ class SaleOrder(models.Model):
             'name': f'{tag} {self.name} - {level}',
         }
         self.env['monta.sale.log'].sudo().create(vals)
-        ( _logger.info if level == 'info' else _logger.error )(f"[{tag}] {console_summary or vals['name']}")
+        (_logger.info if level == 'info' else _logger.error)(f"[{tag}] {console_summary or vals['name']}")
 
     def _monta_request(self, method, path, payload=None, headers=None):
         if not self._is_allowed_instance():
             return 0, {'note': 'Blocked by instance URL guard'}
-        if self._order_has_pack():
-            self._create_monta_log({'blocked': 'order contains pack lines (log-only policy)'},
-                                   level='info', tag='Monta Block',
-                                   console_summary='[Monta] send blocked: pack order')
-            self.write({'monta_sync_state': 'blocked_pack', 'monta_needs_sync': False})
-            return 0, {'note': 'Pack order blocked from sending; SKUs logged only'}
         client = MontaClient(self.env)
         return client.request(self, method, path, payload=payload, headers=headers)
 
-    # API calls with update->create fallback
+    # ---------- API calls (update→create fallback) ----------
     def _monta_create(self):
         self.ensure_one()
         _logger.info("[Monta] Creating order %s", self.name)
@@ -238,6 +258,11 @@ class SaleOrder(models.Model):
         else:
             self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
             self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Create', console_summary='[Monta] create failed')
+            # Post Monta error to chatter for quick debugging
+            try:
+                self.message_post(body=f"<b>Monta create failed.</b><br/><pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>")
+            except Exception:
+                pass
         return status, body
 
     def _monta_update(self):
@@ -273,6 +298,10 @@ class SaleOrder(models.Model):
         self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
         self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Update',
                                console_summary='[Monta] update failed (will retry)')
+        try:
+            self.message_post(body=f"<b>Monta update failed.</b><br/><pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>")
+        except Exception:
+            pass
         return status, body
 
     def _monta_delete(self, note="Cancelled from Odoo"):
@@ -290,15 +319,14 @@ class SaleOrder(models.Model):
             self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Delete', console_summary='[Monta] delete failed (logged)')
         return status, body
 
-    # Actions / Hooks
+    # ---------- actions / hooks ----------
     def action_monta_check_skus(self):
         self.ensure_one()
         try:
             self._log_pack_variant_skus_for_order()
             self._log_all_skus_now()
-            if not self._order_has_pack():
-                _ = self._prepare_monta_lines()
-            self.message_post(body="Monta SKU check complete. SKUs logged. Non-pack lines build OK.")
+            _ = self._prepare_monta_lines()
+            self.message_post(body="Monta SKU check complete. All SKUs logged and lines built (packs expanded).")
         except ValidationError as e:
             self.message_post(body=f"<pre>{e.name or str(e)}</pre>")
         return True
@@ -311,11 +339,6 @@ class SaleOrder(models.Model):
                 order._log_all_skus_now()
             except Exception as e:
                 _logger.error("[Monta] SKU logging failed for %s: %s", order.name, e, exc_info=True)
-
-            if order._order_has_pack():
-                order.write({'monta_sync_state': 'blocked_pack', 'monta_needs_sync': False})
-                order.message_post(body="Pack order detected: component SKUs logged; sending to Monta is blocked by policy.")
-                continue
 
             if not order.monta_order_id:
                 order._monta_create()
@@ -331,10 +354,8 @@ class SaleOrder(models.Model):
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
             try:
                 order._log_all_skus_now()
-                if not order._order_has_pack() and order._should_push_now():
+                if order._should_push_now():
                     order._monta_update()
-                elif order._order_has_pack():
-                    order.write({'monta_sync_state': 'blocked_pack', 'monta_needs_sync': False})
             except Exception as e:
                 _logger.error("[Monta Sync] Order %s write-sync failed: %s", order.name, e, exc_info=True)
         return res
