@@ -5,3 +5,4 @@ from . import product_template
 from . import sale_order
 from . import sale_order_line
 from . import sku_test_log
+from . import sale_order_inbound

@@ -1,26 +1,21 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "1.1.0",  # bumped because we added new inbound features
-    "author": "Ali Hassan Mudassar",
+    "version": "1.1.1",
+    "author": "Ali Hassan ",
     "category": "Sales",
-    "summary": "Bi-directional Monta ↔ Odoo integration (orders out + inbound tracking/status)",
-    "license": "LGPL-3",
+    "summary": "Bi-directional Monta ↔ Odoo integration (no XML views)",
     "website": "",
+    "license": "LGPL-3",
     "depends": [
         "sale_management",
         "mrp",
     ],
     "data": [
-        # security
+        # keep your existing ACLs only
         "security/ir.model.access.csv",
-
-        # views (NEW)
-        "views/sale_order_inbound_views.xml",
-
-        # cron/scheduled actions (NEW)
-        "data/ir_cron_monta_inbound.xml",
     ],
+    # no 'views' or 'data' items at all
     "installable": True,
     "application": False,
     "auto_install": False,

@@ -2,6 +2,7 @@
 import json
 import logging
 from typing import Dict, Tuple, Any, Optional
+
 from .monta_client import MontaClient  # reuse your existing client
 
 _logger = logging.getLogger(__name__)
@@ -9,28 +10,36 @@ _logger = logging.getLogger(__name__)
 
 class MontaInbound:
     """
-    Small service layer for GET /order/{webshoporderid} and mapping → sale.order fields.
-    Designed to be tolerant to response shape differences across accounts.
+    Service for GET /order/{webshoporderid} and mapping response → sale.order fields.
+    Robust to minor response shape changes.
     """
 
     def __init__(self, env):
         self.env = env
 
-    # -------- http --------
-    def fetch_order(self, order, webshop_id: str) -> Tuple[int, Dict[str, Any]]:
-        """Call Monta GET /order/{webshoporderid} and persist request/response logs."""
+    # -------- HTTP --------
+    def fetch_order(self, order, webshop_id: str, channel: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+        """
+        Calls Monta:
+          GET /order/{webshoporderid}[?channel=...]
+        """
         path = f"/order/{webshop_id}"
+        if channel:
+            # simple query param support, e.g. ?channel=bol or ?channel=shopify
+            path = f"{path}?channel={channel}"
+
         client = MontaClient(self.env)
-        # will auto-log request/response via MontaClient and sale log
         status, body = client.request(order, "GET", path, payload=None, headers={"Accept": "application/json"})
-        # also put a concise service-level log
-        order._create_monta_log({'pull': {'status': status, 'webshop_id': webshop_id, 'body_excerpt': (body if isinstance(body, dict) else {})}},
-                                level='info' if (200 <= (status or 0) < 300) else 'error',
-                                tag='Monta Pull',
-                                console_summary=f"[Monta Pull] GET {path} -> {status}")
+
+        order._create_monta_log(
+            {'pull': {'status': status, 'webshop_id': webshop_id, 'channel': channel, 'body_excerpt': (body if isinstance(body, dict) else {})}},
+            level='info' if (200 <= (status or 0) < 300) else 'error',
+            tag='Monta Pull',
+            console_summary=f"[Monta Pull] GET {path} -> {status}"
+        )
         return status, body or {}
 
-    # -------- mapping helpers --------
+    # -------- Mapping helpers --------
     @staticmethod
     def _safe_get(d: dict, *keys, default=None):
         cur = d or {}
@@ -48,61 +57,48 @@ class MontaInbound:
                 return v.strip()
         return None
 
-    def _extract_tracking(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _extract_tracking(self, payload: Dict[str, Any]):
         """
-        Try multiple common shapes:
-
-        - payload["TrackTraceUrl"]
-        - payload["Carrier"]["Name"] or ["CarrierName"]
-        - payload["Shipments"][0].TrackingNumber / TrackTraceUrl / CarrierName
-        - payload["Shipment"]["TrackAndTrace"]...
+        Support both sample schema and common variants.
+        Sample spec shows:
+          TrackAndTraceLink, TrackAndTraceCode, ShipperDescription
+        Also try nested Shipments/Carrier forms.
         """
-        # top-level
-        url = self._safe_get(payload, 'TrackTraceUrl') or self._safe_get(payload, 'TrackAndTraceUrl')
-        carrier = self._safe_get(payload, 'Carrier', 'Name') or self._safe_get(payload, 'CarrierName')
+        url = self._safe_get(payload, 'TrackAndTraceLink') or self._safe_get(payload, 'TrackTraceUrl')
+        number = self._safe_get(payload, 'TrackAndTraceCode') or self._safe_get(payload, 'TrackingNumber')
+        carrier = self._safe_get(payload, 'ShipperDescription') or self._safe_get(payload, 'CarrierName')
 
-        number = self._safe_get(payload, 'TrackingNumber') \
-                 or self._safe_get(payload, 'TrackAndTrace', 'Number')
-
-        # common array form
         ships = payload.get('Shipments') or payload.get('ShipmentList') or []
         if isinstance(ships, list) and ships:
             first = ships[0] or {}
-            url = self._first_nonempty(url,
-                                       first.get('TrackTraceUrl'),
-                                       self._safe_get(first, 'TrackAndTrace', 'Url'))
-            number = self._first_nonempty(number,
-                                          first.get('TrackingNumber'),
-                                          self._safe_get(first, 'TrackAndTrace', 'Number'))
-            carrier = self._first_nonempty(carrier,
-                                           first.get('CarrierName'),
-                                           self._safe_get(first, 'Carrier', 'Name'))
+            url = self._first_nonempty(url, first.get('TrackAndTraceLink'), first.get('TrackTraceUrl'))
+            number = self._first_nonempty(number, first.get('TrackAndTraceCode'), first.get('TrackingNumber'))
+            carrier = self._first_nonempty(carrier, first.get('ShipperDescription'), first.get('CarrierName'))
 
         return number, url, carrier
 
-    def _extract_status_and_dates(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_status_and_dates(self, payload: Dict[str, Any]):
         """
-        Pull a readable status and a delivered timestamp if present.
-        Tries: Status/State/OrderState/DeliveredAt/ShipmentDate/CompletedAt.
+        From sample JSON: Delivered/Received/Picked/Shipped, DeliveryStatusDescription/Code.
+        We build a human-readable status string and extract a delivered timestamp if present.
         """
         status = (
-            self._safe_get(payload, 'Status') or
-            self._safe_get(payload, 'State') or
-            self._safe_get(payload, 'OrderState') or
-            self._safe_get(payload, 'OrderStatus')
+            self._safe_get(payload, 'DeliveryStatusDescription') or
+            self._safe_get(payload, 'DeliveryStatusCode') or
+            self._safe_get(payload, 'ActionCode')
         )
         delivered = (
-            self._safe_get(payload, 'DeliveredAt') or
-            self._safe_get(payload, 'Delivery', 'DeliveredAt') or
-            self._safe_get(payload, 'CompletedAt') or
-            self._safe_get(payload, 'ShipmentDate')
+            self._safe_get(payload, 'DeliveryDate') or
+            self._safe_get(payload, 'Received') or
+            self._safe_get(payload, 'Shipped') or
+            self._safe_get(payload, 'Picked')
         )
         return status, delivered
 
-    # -------- application --------
-    def apply_to_sale_order(self, order, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    # -------- Apply to Odoo --------
+    def apply_to_sale_order(self, order, payload: Dict[str, Any]):
         """
-        Return (changes, human_summary). Only returns changes for fields actually different.
+        Returns (changes_dict, human_readable_summary_json).
         """
         number, url, carrier = self._extract_tracking(payload)
         status, delivered_at = self._extract_status_and_dates(payload)
@@ -116,21 +112,23 @@ class MontaInbound:
         if delivered_at:
             proposed['monta_delivered_at'] = delivered_at
 
-        # compute only diffs
+        # Only changed values
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
-        # readable summary for chatter/log
-        summary = json.dumps({
-            'status': status,
-            'delivered_at': delivered_at,
-            'tracking_number': number,
-            'tracking_url': url,
-            'carrier': carrier,
-            'diff_keys': list(changes.keys()),
-        }, indent=2, ensure_ascii=False, default=str)
+        summary = json.dumps(
+            {
+                'remote_status': status,
+                'delivered_at': delivered_at,
+                'tracking_number': number,
+                'tracking_url': url,
+                'carrier': carrier,
+                'diff_keys': list(changes.keys()),
+            },
+            indent=2, ensure_ascii=False, default=str
+        )
 
-        _logger.info("[Monta Pull] Mapping summary for %s -> keys changed: %s", order.name, list(changes.keys()))
+        _logger.info("[Monta Pull] %s -> changed keys: %s", order.name, list(changes.keys()))
         return changes, summary
