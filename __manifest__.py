@@ -2,7 +2,7 @@
 {
     "name": "Monta-Odoo Integration",
     "version": "1.1.0",  # bumped because we added new inbound features
-    "author": "Ali Hassan",
+    "author": "Ali Hassan Mudassar",
     "category": "Sales",
     "summary": "Bi-directional Monta ↔ Odoo integration (orders out + inbound tracking/status)",
     "license": "LGPL-3",
