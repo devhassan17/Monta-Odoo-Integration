@@ -2,7 +2,7 @@
 {
     "name": "Monta-Odoo Integration",
     "version": "1.1.3",  # bumped to ensure reload
-    "author": "Ali Hassan",
+    "author": "Ali Hassan Mudasar",
     "category": "Sales",
     "summary": "Bi-directional Monta ↔ Odoo integration (orders out + inbound, no XML)",
     "website": "",
