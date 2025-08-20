@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "1.1.2",  # bump so Odoo reloads
-    "author": "Ali Hassan Hassan",
+    "version": "1.1.3",  # bumped to ensure reload
+    "author": "Ali Hassan",
     "category": "Sales",
-    "summary": "Bi-directional Monta ↔ Odoo integration (no XML views or data)",
+    "summary": "Bi-directional Monta ↔ Odoo integration (orders out + inbound, no XML)",
     "website": "",
     "license": "LGPL-3",
     "depends": ["sale_management", "mrp"],
     "data": [
-        "security/ir.model.access.csv",   # keep only this if you already had it
+        # keep your existing ACLs only; no new XML files
+        "security/ir.model.access.csv",
     ],
     "installable": True,
     "application": False,
