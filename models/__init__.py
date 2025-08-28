@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from . import monta_sale_log
 from . import product_product
 from . import product_template
