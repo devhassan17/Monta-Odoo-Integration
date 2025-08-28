@@ -1,7 +1,7 @@
 {
     'name': 'Monta-Odoo Integration',
     'version': '1.0.0',
-    'author': 'Ali Hassan Muddassir',
+    'author': 'Ali Hassan Malik',
     'category': 'Sales',
     'summary': 'Step 1: Log order creation for Monta integration',
     'depends': ['sale_management', "mrp"],
