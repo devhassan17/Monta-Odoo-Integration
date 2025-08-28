@@ -1,0 +1,12 @@
+<odoo>
+  <record id="ir_cron_monta_inbound_edd" model="ir.cron">
+    <field name="name">Monta: Sync Inbound EDD (daily)</field>
+    <field name="model_id" ref="base.model_ir_actions_server"/>
+    <field name="state">code</field>
+    <field name="code">env['monta.job.inbound_edd'].run_daily()</field>
+    <field name="interval_number">1</field>
+    <field name="interval_type">days</field>
+    <field name="numbercall">-1</field>
+    <field name="active">True</field>
+  </record>
+</odoo>

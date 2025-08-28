@@ -4,6 +4,8 @@ import logging
 from typing import Dict, Tuple, Any, Optional
 
 from .monta_client import MontaClient  # reuse your existing client
+from .monta_status_normalizer import MontaStatusNormalizer  # NEW
+from .monta_inbound_batches import MontaInboundBatches      # NEW
 
 _logger = logging.getLogger(__name__)
 
@@ -14,6 +16,7 @@ class MontaInbound:
     - Supports `channel` query param
     - Robust to schema differences across tenants
     - Derives readable status when Monta omits one
+    - NEW: Normalizes status and persists batch/expiry rows
     """
 
     def __init__(self, env):
@@ -177,6 +180,9 @@ class MontaInbound:
     def apply_to_sale_order(self, order, payload: Dict[str, Any]):
         """
         Returns (changes_dict, human_summary_json).
+        Also (NEW):
+          - sets monta_status_normalized via MontaStatusNormalizer
+          - writes batch/expiry rows into monta.order.batch.trace
         """
         number, url, carrier = self._extract_tracking(payload)
         status, delivered_at = self._extract_status_and_dates(payload)
@@ -190,14 +196,26 @@ class MontaInbound:
         if delivered_at:
             proposed['monta_delivered_at'] = delivered_at
 
+        # NEW: normalized status
+        normalized = MontaStatusNormalizer.normalize(status)
+        if normalized:
+            proposed['monta_status_normalized'] = normalized
+
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
+        # NEW: persist batches/expiry rows (non-blocking; errors only logged)
+        try:
+            MontaInboundBatches(self.env).sync_for_order(order, payload if isinstance(payload, dict) else {})
+        except Exception as e:
+            _logger.error("[Monta Pull] Batch sync failed for %s: %s", order.name, e, exc_info=True)
+
         summary = json.dumps(
             {
                 'remote_status': status,
+                'status_normalized': normalized,  # NEW
                 'delivered_at': delivered_at,
                 'tracking_number': number,
                 'tracking_url': url,

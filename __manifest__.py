@@ -11,6 +11,8 @@
     "data": [
         # keep your existing ACLs only; no new XML files
         "security/ir.model.access.csv",
+        "data/cron_inbound_expected_delivery.xml",
+        "data/cron_stock_sync.xml",
     ],
     "installable": True,
     "application": False,
