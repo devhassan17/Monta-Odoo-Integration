@@ -1,3 +1,3 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_monta_order_batch_trace,access_monta_order_batch_trace,model_monta_order_batch_trace,base.group_user,1,1,1,1
+access_monta_sale_log,monta.sale.log,model_monta_sale_log,base.group_user,1,1,1,1
 

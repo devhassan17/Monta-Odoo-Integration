@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
 {
-    "name": "Monta-Odoo Integration",
-    "version": "1.1.3",  # bumped to ensure reload
-    "author": "Ali Hassan Mudasar",
-    "category": "Sales",
-    "summary": "Bi-directional Monta ↔ Odoo integration (orders out + inbound, no XML)",
-    "website": "",
-    "license": "LGPL-3",
-    "depends": ["sale_management", "mrp"],
-    "data": [
-        # keep your existing ACLs only; no new XML files
-        "security/ir.model.access.csv",
+    'name': 'Monta-Odoo Integration',
+    'version': '1.0.0',
+    'author': 'Ali Hassan',
+    'category': 'Sales',
+    'summary': 'Step 1: Log order creation for Monta integration',
+    'depends': ['sale_management', "mrp"],
+    'data': [
+        'security/ir.model.access.csv',
     ],
-    "installable": True,
-    "application": False,
-    "auto_install": False,
+    'installable': True,
+    'auto_install': False,
+    'application': False,
+    'license': 'LGPL-3',
+    
 }
