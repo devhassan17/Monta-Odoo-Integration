@@ -12,7 +12,7 @@ from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_compo
 _logger = logging.getLogger(__name__)
 
 # Only send orders from this instance (guards against staging/live duplicates)
-ALLOWED_INSTANCE_URL = "https://moyeecoffee-03-july-2025-22548764.dev.odoo.com/"
+ALLOWED_INSTANCE_URL = "https://moyeecoffee-odoo-monta-plugin-22993258.dev.odoo.com/"
 
 
 class SaleOrder(models.Model):
