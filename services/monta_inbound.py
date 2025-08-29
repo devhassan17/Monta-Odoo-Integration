@@ -2,12 +2,10 @@
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Dict, Tuple, Any, Optional
 
 from .monta_client import MontaClient  # reuse your existing client
-# If you already added these in your project, you may keep them imported.
-# from .monta_status_normalizer import MontaStatusNormalizer
-# from .monta_inbound_batches import MontaInboundBatches
 
 _logger = logging.getLogger(__name__)
 
@@ -18,7 +16,7 @@ class MontaInbound:
     - Supports `channel` query param
     - Robust to schema differences across tenants
     - Derives readable status when Monta omits one
-    - Extracts Expected Delivery as datetime and/or text ("Unknown")
+    - Stores Expected Delivery into sale.order.commitment_date
     """
 
     def __init__(self, env):
@@ -168,7 +166,6 @@ class MontaInbound:
             else:
                 status = 'Processing'
 
-        # Prefer a concrete 'delivered' timestamp
         delivered = (
             ts['delivered_at']
             or ts['completed_at']
@@ -231,8 +228,7 @@ class MontaInbound:
 
         s = str(raw).strip()
         if self._ISO_LIKE.match(s):
-            # normalize to 'YYYY-MM-DD HH:MM:SS'; model will convert to Datetime
-            from datetime import datetime
+            # normalize to 'YYYY-MM-DD HH:MM:SS'
             if s.endswith('Z'):
                 s = s[:-1] + '+00:00'
             try:
@@ -248,7 +244,7 @@ class MontaInbound:
                     return dt.strftime('%Y-%m-%d %H:%M:%S'), None
                 except Exception:
                     return None, s
-        # not a datetime → text
+        # not a datetime → treat as text
         return None, s
 
     # -------- Apply to Odoo --------
@@ -268,36 +264,28 @@ class MontaInbound:
         }
         if delivered_at:
             proposed['monta_delivered_at'] = delivered_at
+        # Store ETA into Odoo's standard Delivery Date on sale.order
         if eta_dt:
-            proposed['monta_expected_delivery_at'] = eta_dt
-        if eta_text:
-            proposed['monta_expected_delivery_text'] = eta_text
-
-        # Optional normalized status support:
-        # try:
-        #     normalized = MontaStatusNormalizer.normalize(status)
-        #     if normalized:
-        #         proposed['monta_status_normalized'] = normalized
-        # except Exception:
-        #     pass
+            proposed['commitment_date'] = eta_dt
+        elif eta_text:
+            # keep a log so you can see e.g. "Unknown" without custom fields
+            try:
+                order._create_monta_log({'eta_text': eta_text}, level='info', tag='Monta ETA',
+                                        console_summary=f"[Monta ETA] {eta_text}")
+            except Exception:
+                pass
 
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
-        # Optional: persist batches (if you added that service)
-        # try:
-        #     MontaInboundBatches(self.env).sync_for_order(order, payload if isinstance(payload, dict) else {})
-        # except Exception:
-        #     pass
-
         summary = json.dumps(
             {
                 'remote_status': status,
                 'delivered_at': delivered_at,
-                'eta_dt': eta_dt,
-                'eta_text': eta_text,
+                'eta_dt->commitment_date': eta_dt,
+                'eta_text_logged': eta_text if (eta_text and not eta_dt) else None,
                 'tracking_number': number,
                 'tracking_url': url,
                 'carrier': carrier,
