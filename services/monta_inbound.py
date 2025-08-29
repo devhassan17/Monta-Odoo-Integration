@@ -3,31 +3,19 @@ import json
 import logging
 from typing import Dict, Tuple, Any, Optional
 
-from .monta_client import MontaClient  # reuse your existing client
-from .monta_status_normalizer import MontaStatusNormalizer  # NEW
-from .monta_inbound_batches import MontaInboundBatches      # NEW
+from .monta_client import MontaClient
+from .monta_status_normalizer import MontaStatusNormalizer  # if you already added it
+from .monta_inbound_batches import MontaInboundBatches      # safe to leave; optional for batches
 
 _logger = logging.getLogger(__name__)
 
 
 class MontaInbound:
-    """
-    Service for GET /order/{webshoporderid} and mapping response → sale.order fields.
-    - Supports `channel` query param
-    - Robust to schema differences across tenants
-    - Derives readable status when Monta omits one
-    - NEW: Normalizes status and persists batch/expiry rows
-    """
-
     def __init__(self, env):
         self.env = env
 
     # -------- HTTP --------
     def fetch_order(self, order, webshop_id: str, channel: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
-        """
-        Calls Monta:
-          GET /order/{webshoporderid}[?channel=...]
-        """
         path = f"/order/{webshop_id}"
         if channel:
             path = f"{path}?channel={channel}"
@@ -69,19 +57,6 @@ class MontaInbound:
         return None
 
     def _extract_tracking(self, payload: Dict[str, Any]):
-        """
-        Tracking fields differ per tenant. Try several shapes:
-
-        Top-level (sample and variants):
-          - TrackAndTraceLink / TrackTraceUrl / TrackAndTraceUrl
-          - TrackAndTraceCode / TrackingNumber
-          - ShipperDescription / CarrierName / Carrier.Name / ShipperCode
-
-        Array forms:
-          - Shipments[0].TrackAndTraceLink / TrackTraceUrl / TrackAndTrace.Url
-          - Shipments[0].TrackAndTraceCode / TrackingNumber / TrackAndTrace.Number
-          - Shipments[0].ShipperDescription / CarrierName / Carrier.Name
-        """
         url = (
             self._safe_get(payload, 'TrackAndTraceLink')
             or self._safe_get(payload, 'TrackTraceUrl')
@@ -124,12 +99,6 @@ class MontaInbound:
         return number, url, carrier
 
     def _extract_status_and_dates(self, payload: Dict[str, Any]):
-        """
-        Build a readable status and detect a 'delivered' timestamp if present.
-
-        Tries a wide set of fields used by different tenants, then derives
-        a friendly status based on available timestamps / flags.
-        """
         status = (
             self._safe_get(payload, 'DeliveryStatusDescription')
             or self._safe_get(payload, 'DeliveryStatusCode')
@@ -151,7 +120,6 @@ class MontaInbound:
             'received_at': self._safe_get(payload, 'Received'),
         }
 
-        # Derive a human status if Monta didn't provide one
         if not status:
             if ts['delivered_at'] or ts['completed_at']:
                 status = 'Delivered'
@@ -166,7 +134,6 @@ class MontaInbound:
             else:
                 status = 'Processing'
 
-        # Prefer a concrete 'delivered' timestamp
         delivered = (
             ts['delivered_at']
             or ts['completed_at']
@@ -176,16 +143,35 @@ class MontaInbound:
         )
         return status, delivered
 
+    def _extract_eta(self, payload: Dict[str, Any]) -> Optional[str]:
+        """
+        Try a range of common ETA/expected delivery fields.
+        """
+        eta = (
+            self._safe_get(payload, 'ExpectedDelivery')
+            or self._safe_get(payload, 'ExpectedDeliveryDate')
+            or self._safe_get(payload, 'EstimatedDelivery')
+            or self._safe_get(payload, 'EstimatedDeliveryDate')
+            or self._safe_get(payload, 'ETA')
+        )
+
+        ships = payload.get('Shipments') or payload.get('ShipmentList') or []
+        if not eta and isinstance(ships, list) and ships:
+            first = ships[0] or {}
+            eta = (
+                first.get('ExpectedDelivery')
+                or first.get('ExpectedDeliveryDate')
+                or first.get('EstimatedDelivery')
+                or first.get('EstimatedDeliveryDate')
+                or self._safe_get(first, 'TrackAndTrace', 'EstimatedDelivery')
+            )
+        return eta
+
     # -------- Apply to Odoo --------
     def apply_to_sale_order(self, order, payload: Dict[str, Any]):
-        """
-        Returns (changes_dict, human_summary_json).
-        Also (NEW):
-          - sets monta_status_normalized via MontaStatusNormalizer
-          - writes batch/expiry rows into monta.order.batch.trace
-        """
         number, url, carrier = self._extract_tracking(payload)
         status, delivered_at = self._extract_status_and_dates(payload)
+        eta = self._extract_eta(payload)  # NEW
 
         proposed = {
             'monta_tracking_number': number or False,
@@ -195,28 +181,33 @@ class MontaInbound:
         }
         if delivered_at:
             proposed['monta_delivered_at'] = delivered_at
+        if eta:
+            proposed['monta_expected_delivery_at'] = eta  # NEW (normalized later in model)
 
-        # NEW: normalized status
-        normalized = MontaStatusNormalizer.normalize(status)
-        if normalized:
-            proposed['monta_status_normalized'] = normalized
+        # Normalized status (if you’re using it)
+        try:
+            normalized = MontaStatusNormalizer.normalize(status)
+            if normalized:
+                proposed['monta_status_normalized'] = normalized
+        except Exception:
+            pass
 
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
-        # NEW: persist batches/expiry rows (non-blocking; errors only logged)
+        # Optional: batches (safe to keep even if you’re not using yet)
         try:
             MontaInboundBatches(self.env).sync_for_order(order, payload if isinstance(payload, dict) else {})
-        except Exception as e:
-            _logger.error("[Monta Pull] Batch sync failed for %s: %s", order.name, e, exc_info=True)
+        except Exception:
+            pass
 
         summary = json.dumps(
             {
                 'remote_status': status,
-                'status_normalized': normalized,  # NEW
                 'delivered_at': delivered_at,
+                'eta': eta,  # NEW
                 'tracking_number': number,
                 'tracking_url': url,
                 'carrier': carrier,
