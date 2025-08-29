@@ -1,21 +1,35 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+import re
 from typing import Dict, Tuple, Any, Optional
 
-from .monta_client import MontaClient
-from .monta_status_normalizer import MontaStatusNormalizer  # if you already added it
-from .monta_inbound_batches import MontaInboundBatches      # safe to leave; optional for batches
+from .monta_client import MontaClient  # reuse your existing client
+# If you already added these in your project, you may keep them imported.
+# from .monta_status_normalizer import MontaStatusNormalizer
+# from .monta_inbound_batches import MontaInboundBatches
 
 _logger = logging.getLogger(__name__)
 
 
 class MontaInbound:
+    """
+    Service for GET /order/{webshoporderid} and mapping response → sale.order fields.
+    - Supports `channel` query param
+    - Robust to schema differences across tenants
+    - Derives readable status when Monta omits one
+    - Extracts Expected Delivery as datetime and/or text ("Unknown")
+    """
+
     def __init__(self, env):
         self.env = env
 
     # -------- HTTP --------
     def fetch_order(self, order, webshop_id: str, channel: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+        """
+        Calls Monta:
+          GET /order/{webshoporderid}[?channel=...]
+        """
         path = f"/order/{webshop_id}"
         if channel:
             path = f"{path}?channel={channel}"
@@ -57,6 +71,19 @@ class MontaInbound:
         return None
 
     def _extract_tracking(self, payload: Dict[str, Any]):
+        """
+        Tracking fields differ per tenant. Try several shapes:
+
+        Top-level (sample and variants):
+          - TrackAndTraceLink / TrackTraceUrl / TrackAndTraceUrl
+          - TrackAndTraceCode / TrackingNumber
+          - ShipperDescription / CarrierName / Carrier.Name / ShipperCode
+
+        Array forms:
+          - Shipments[0].TrackAndTraceLink / TrackTraceUrl / TrackAndTrace.Url
+          - Shipments[0].TrackAndTraceCode / TrackingNumber / TrackAndTrace.Number
+          - Shipments[0].ShipperDescription / CarrierName / Carrier.Name
+        """
         url = (
             self._safe_get(payload, 'TrackAndTraceLink')
             or self._safe_get(payload, 'TrackTraceUrl')
@@ -99,6 +126,12 @@ class MontaInbound:
         return number, url, carrier
 
     def _extract_status_and_dates(self, payload: Dict[str, Any]):
+        """
+        Build a readable status and detect a 'delivered' timestamp if present.
+
+        Tries a wide set of fields used by different tenants, then derives
+        a friendly status based on available timestamps / flags.
+        """
         status = (
             self._safe_get(payload, 'DeliveryStatusDescription')
             or self._safe_get(payload, 'DeliveryStatusCode')
@@ -120,6 +153,7 @@ class MontaInbound:
             'received_at': self._safe_get(payload, 'Received'),
         }
 
+        # Derive a human status if Monta didn't provide one
         if not status:
             if ts['delivered_at'] or ts['completed_at']:
                 status = 'Delivered'
@@ -134,6 +168,7 @@ class MontaInbound:
             else:
                 status = 'Processing'
 
+        # Prefer a concrete 'delivered' timestamp
         delivered = (
             ts['delivered_at']
             or ts['completed_at']
@@ -143,35 +178,87 @@ class MontaInbound:
         )
         return status, delivered
 
-    def _extract_eta(self, payload: Dict[str, Any]) -> Optional[str]:
-        """
-        Try a range of common ETA/expected delivery fields.
-        """
-        eta = (
-            self._safe_get(payload, 'ExpectedDelivery')
-            or self._safe_get(payload, 'ExpectedDeliveryDate')
-            or self._safe_get(payload, 'EstimatedDelivery')
-            or self._safe_get(payload, 'EstimatedDeliveryDate')
-            or self._safe_get(payload, 'ETA')
-        )
+    # ---- ETA helpers ----
+    _ISO_LIKE = re.compile(
+        r'^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?([+-]\d{2}:?\d{2}|Z)?$',
+        re.IGNORECASE
+    )
 
-        ships = payload.get('Shipments') or payload.get('ShipmentList') or []
-        if not eta and isinstance(ships, list) and ships:
-            first = ships[0] or {}
-            eta = (
-                first.get('ExpectedDelivery')
-                or first.get('ExpectedDeliveryDate')
-                or first.get('EstimatedDelivery')
-                or first.get('EstimatedDeliveryDate')
-                or self._safe_get(first, 'TrackAndTrace', 'EstimatedDelivery')
-            )
-        return eta
+    def _extract_eta(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Returns (eta_dt_str, eta_text).
+        - eta_dt_str: normalized 'YYYY-MM-DD HH:MM:SS' if a date/time was found
+        - eta_text:   a human text such as 'Unknown' if present
+
+        We search common ETA keys on the order and then the first shipment.
+        """
+        def get(d, *ks):
+            cur = d or {}
+            for k in ks:
+                if isinstance(cur, dict) and k in cur:
+                    cur = cur.get(k)
+                else:
+                    return None
+            return cur
+
+        candidates = [
+            'ExpectedDelivery', 'ExpectedDeliveryDate',
+            'EstimatedDelivery', 'EstimatedDeliveryDate',
+            'PromisedDeliveryDate', 'ETA'
+        ]
+
+        # Top-level keys
+        raw = None
+        for k in candidates:
+            v = get(payload, k)
+            if v:
+                raw = v
+                break
+
+        # Shipment-level (first)
+        if not raw:
+            ships = payload.get('Shipments') or payload.get('ShipmentList') or []
+            if isinstance(ships, list) and ships:
+                first = ships[0] or {}
+                for k in candidates:
+                    v = first.get(k) or get(first, 'TrackAndTrace', k)
+                    if v:
+                        raw = v
+                        break
+
+        if not raw:
+            return None, None
+
+        s = str(raw).strip()
+        if self._ISO_LIKE.match(s):
+            # normalize to 'YYYY-MM-DD HH:MM:SS'; model will convert to Datetime
+            from datetime import datetime
+            if s.endswith('Z'):
+                s = s[:-1] + '+00:00'
+            try:
+                dt = datetime.fromisoformat(s)
+                return dt.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'), None
+            except Exception:
+                # strip tz/fractions and retry
+                s2 = s.replace('T', ' ')
+                s2 = re.sub(r'([+-]\d{2}:?\d{2})$', '', s2)
+                s2 = s2.split('.')[0]
+                try:
+                    dt = datetime.strptime(s2, '%Y-%m-%d %H:%M:%S')
+                    return dt.strftime('%Y-%m-%d %H:%M:%S'), None
+                except Exception:
+                    return None, s
+        # not a datetime → text
+        return None, s
 
     # -------- Apply to Odoo --------
     def apply_to_sale_order(self, order, payload: Dict[str, Any]):
+        """
+        Returns (changes_dict, human_summary_json).
+        """
         number, url, carrier = self._extract_tracking(payload)
         status, delivered_at = self._extract_status_and_dates(payload)
-        eta = self._extract_eta(payload)  # NEW
+        eta_dt, eta_text = self._extract_eta(payload)  # NEW
 
         proposed = {
             'monta_tracking_number': number or False,
@@ -181,33 +268,36 @@ class MontaInbound:
         }
         if delivered_at:
             proposed['monta_delivered_at'] = delivered_at
-        if eta:
-            proposed['monta_expected_delivery_at'] = eta  # NEW (normalized later in model)
+        if eta_dt:
+            proposed['monta_expected_delivery_at'] = eta_dt
+        if eta_text:
+            proposed['monta_expected_delivery_text'] = eta_text
 
-        # Normalized status (if you’re using it)
-        try:
-            normalized = MontaStatusNormalizer.normalize(status)
-            if normalized:
-                proposed['monta_status_normalized'] = normalized
-        except Exception:
-            pass
+        # Optional normalized status support:
+        # try:
+        #     normalized = MontaStatusNormalizer.normalize(status)
+        #     if normalized:
+        #         proposed['monta_status_normalized'] = normalized
+        # except Exception:
+        #     pass
 
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
-        # Optional: batches (safe to keep even if you’re not using yet)
-        try:
-            MontaInboundBatches(self.env).sync_for_order(order, payload if isinstance(payload, dict) else {})
-        except Exception:
-            pass
+        # Optional: persist batches (if you added that service)
+        # try:
+        #     MontaInboundBatches(self.env).sync_for_order(order, payload if isinstance(payload, dict) else {})
+        # except Exception:
+        #     pass
 
         summary = json.dumps(
             {
                 'remote_status': status,
                 'delivered_at': delivered_at,
-                'eta': eta,  # NEW
+                'eta_dt': eta_dt,
+                'eta_text': eta_text,
                 'tracking_number': number,
                 'tracking_url': url,
                 'carrier': carrier,
