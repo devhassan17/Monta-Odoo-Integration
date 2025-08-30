@@ -1,13 +1,45 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-import re
 from datetime import datetime
 from typing import Dict, Tuple, Any, Optional
+
+from odoo import fields
 
 from .monta_client import MontaClient  # reuse your existing client
 
 _logger = logging.getLogger(__name__)
+
+
+def _norm_iso_dt(value) -> Optional[str]:
+    """
+    Normalize a Monta datetime into Odoo-safe string '%Y-%m-%d %H:%M:%S' (server-tz naive).
+    Accepts:
+      - '2025-08-16T01:49:23.42'
+      - '2025-08-16T01:49:23.420123Z'
+      - '2025-08-16T01:49:23+02:00'
+    Returns string or None.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return fields.Datetime.to_string(value)
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith('Z'):
+        s = s[:-1] + '+00:00'
+    try:
+        dt = datetime.fromisoformat(s)
+        return fields.Datetime.to_string(dt.replace(tzinfo=None))
+    except Exception:
+        # try removing fractional seconds and TZ
+        try:
+            s2 = s.replace('T', ' ').split('.')[0]
+            dt = datetime.strptime(s2[:19], '%Y-%m-%d %H:%M:%S')
+            return fields.Datetime.to_string(dt)
+        except Exception:
+            return None
 
 
 class MontaInbound:
@@ -16,8 +48,10 @@ class MontaInbound:
     - Supports `channel` query param
     - Robust to schema differences across tenants
     - Derives readable status when Monta omits one
-    - Stores Expected Delivery into sale.order.commitment_date
+    - Chooses ETA (commitment_date). If unknown → dummy 2099-01-01 00:00:00
     """
+
+    DUMMY_ETA_STR = "2099-01-01 00:00:00"  # requested dummy when ETA is Unknown/missing
 
     def __init__(self, env):
         self.env = env
@@ -70,17 +104,7 @@ class MontaInbound:
 
     def _extract_tracking(self, payload: Dict[str, Any]):
         """
-        Tracking fields differ per tenant. Try several shapes:
-
-        Top-level (sample and variants):
-          - TrackAndTraceLink / TrackTraceUrl / TrackAndTraceUrl
-          - TrackAndTraceCode / TrackingNumber
-          - ShipperDescription / CarrierName / Carrier.Name / ShipperCode
-
-        Array forms:
-          - Shipments[0].TrackAndTraceLink / TrackTraceUrl / TrackAndTrace.Url
-          - Shipments[0].TrackAndTraceCode / TrackingNumber / TrackAndTrace.Number
-          - Shipments[0].ShipperDescription / CarrierName / Carrier.Name
+        Tracking fields differ per tenant. Try several shapes.
         """
         url = (
             self._safe_get(payload, 'TrackAndTraceLink')
@@ -126,9 +150,6 @@ class MontaInbound:
     def _extract_status_and_dates(self, payload: Dict[str, Any]):
         """
         Build a readable status and detect a 'delivered' timestamp if present.
-
-        Tries a wide set of fields used by different tenants, then derives
-        a friendly status based on available timestamps / flags.
         """
         status = (
             self._safe_get(payload, 'DeliveryStatusDescription')
@@ -175,126 +196,103 @@ class MontaInbound:
         )
         return status, delivered
 
-    # ---- ETA helpers ----
-    _ISO_LIKE = re.compile(
-        r'^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?([+-]\d{2}:?\d{2}|Z)?$',
-        re.IGNORECASE
-    )
-
-    def _extract_eta(self, payload: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_eta_for_commitment(self, payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any], bool]:
         """
-        Returns (eta_dt_str, eta_text).
-        - eta_dt_str: normalized 'YYYY-MM-DD HH:MM:SS' if a date/time was found
-        - eta_text:   a human text such as 'Unknown' if present
+        Choose ETA for Odoo sale.order.commitment_date.
+        Returns (chosen_odoostr, raw_debug_dict, used_dummy_bool).
 
-        We search common ETA keys on the order and then the first shipment.
+        Priority order (normalize first valid):
+          1) EstimatedDeliveryFrom
+          2) EstimatedDeliveryTo
+          3) DeliveryDate
+          4) LatestDeliveryDate
+          5) DeliveryDateRequested
+          6) PlannedShipmentDate
+        If none found -> use DUMMY_ETA_STR ('2099-01-01 00:00:00').
         """
-        def get(d, *ks):
-            cur = d or {}
-            for k in ks:
-                if isinstance(cur, dict) and k in cur:
-                    cur = cur.get(k)
-                else:
-                    return None
-            return cur
+        raw = {
+            'EstimatedDeliveryFrom': payload.get('EstimatedDeliveryFrom'),
+            'EstimatedDeliveryTo': payload.get('EstimatedDeliveryTo'),
+            'DeliveryDate': payload.get('DeliveryDate'),
+            'LatestDeliveryDate': payload.get('LatestDeliveryDate'),
+            'DeliveryDateRequested': payload.get('DeliveryDateRequested'),
+            'PlannedShipmentDate': payload.get('PlannedShipmentDate'),
+            'Blocked': payload.get('Blocked'),
+            'BlockedMessage': payload.get('BlockedMessage'),
+            'Comment': payload.get('Comment'),
+        }
 
-        candidates = [
-            'ExpectedDelivery', 'ExpectedDeliveryDate',
-            'EstimatedDelivery', 'EstimatedDeliveryDate',
-            'PromisedDeliveryDate', 'ETA'
-        ]
+        for key in ('EstimatedDeliveryFrom',
+                    'EstimatedDeliveryTo',
+                    'DeliveryDate',
+                    'LatestDeliveryDate',
+                    'DeliveryDateRequested',
+                    'PlannedShipmentDate'):
+            cand = _norm_iso_dt(raw.get(key))
+            if cand:
+                return cand, raw, False
 
-        # Top-level keys
-        raw = None
-        for k in candidates:
-            v = get(payload, k)
-            if v:
-                raw = v
-                break
-
-        # Shipment-level (first)
-        if not raw:
-            ships = payload.get('Shipments') or payload.get('ShipmentList') or []
-            if isinstance(ships, list) and ships:
-                first = ships[0] or {}
-                for k in candidates:
-                    v = first.get(k) or get(first, 'TrackAndTrace', k)
-                    if v:
-                        raw = v
-                        break
-
-        if not raw:
-            return None, None
-
-        s = str(raw).strip()
-        if self._ISO_LIKE.match(s):
-            # normalize to 'YYYY-MM-DD HH:MM:SS'
-            if s.endswith('Z'):
-                s = s[:-1] + '+00:00'
-            try:
-                dt = datetime.fromisoformat(s)
-                return dt.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'), None
-            except Exception:
-                # strip tz/fractions and retry
-                s2 = s.replace('T', ' ')
-                s2 = re.sub(r'([+-]\d{2}:?\d{2})$', '', s2)
-                s2 = s2.split('.')[0]
-                try:
-                    dt = datetime.strptime(s2, '%Y-%m-%d %H:%M:%S')
-                    return dt.strftime('%Y-%m-%d %H:%M:%S'), None
-                except Exception:
-                    return None, s
-        # not a datetime → treat as text
-        return None, s
+        # Unknown / missing -> dummy
+        return self.DUMMY_ETA_STR, raw, True
 
     # -------- Apply to Odoo --------
     def apply_to_sale_order(self, order, payload: Dict[str, Any]):
         """
         Returns (changes_dict, human_summary_json).
+        Also writes an extra 'Monta ETA' log with decision & raw fields.
         """
         number, url, carrier = self._extract_tracking(payload)
         status, delivered_at = self._extract_status_and_dates(payload)
-        eta_dt, eta_text = self._extract_eta(payload)  # NEW
+        eta_odoostr, eta_raw, eta_dummy = self._extract_eta_for_commitment(payload)
 
         proposed = {
             'monta_tracking_number': number or False,
             'monta_tracking_url': url or False,
             'monta_carrier': carrier or False,
             'monta_remote_status': (status or '').strip() or False,
+            'commitment_date': eta_odoostr,  # default delivery date field on sale.order
         }
         if delivered_at:
-            proposed['monta_delivered_at'] = delivered_at
-        # Store ETA into Odoo's standard Delivery Date on sale.order
-        if eta_dt:
-            proposed['commitment_date'] = eta_dt
-        elif eta_text:
-            # keep a log so you can see e.g. "Unknown" without custom fields
-            try:
-                order._create_monta_log({'eta_text': eta_text}, level='info', tag='Monta ETA',
-                                        console_summary=f"[Monta ETA] {eta_text}")
-            except Exception:
-                pass
+            proposed['monta_delivered_at'] = _norm_iso_dt(delivered_at)
 
         changes = {}
         for k, v in proposed.items():
             if (order[k] or False) != (v or False):
                 changes[k] = v
 
+        # Nice JSON summary for chatter/log
         summary = json.dumps(
             {
                 'remote_status': status,
-                'delivered_at': delivered_at,
-                'eta_dt->commitment_date': eta_dt,
-                'eta_text_logged': eta_text if (eta_text and not eta_dt) else None,
+                'delivered_at': _norm_iso_dt(delivered_at) if delivered_at else None,
                 'tracking_number': number,
                 'tracking_url': url,
                 'carrier': carrier,
+                'eta_chosen': eta_odoostr,
+                'eta_used_dummy': bool(eta_dummy),
                 'diff_keys': list(changes.keys()),
             },
             indent=2,
             ensure_ascii=False,
             default=str,
         )
+
+        # Dedicated ETA decision log (very explicit for debugging/visibility)
+        try:
+            order._create_monta_log(
+                {
+                    'eta': {
+                        'chosen_for_commitment_date': eta_odoostr,
+                        'used_dummy_2099': bool(eta_dummy),
+                        'raw_fields': eta_raw,
+                    }
+                },
+                level='info',
+                tag='Monta ETA',
+                console_summary='[Monta ETA] decision saved',
+            )
+        except Exception:
+            pass
 
         _logger.info("[Monta Pull] %s -> changed keys: %s", order.name, list(changes.keys()))
         return changes, summary
