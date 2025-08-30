@@ -277,7 +277,7 @@ class MontaInbound:
             default=str,
         )
 
-        # Dedicated ETA decision log (very explicit for debugging/visibility)
+        # Dedicated ETA decision log
         try:
             order._create_monta_log(
                 {

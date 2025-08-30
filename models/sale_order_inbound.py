@@ -1,134 +1,137 @@
 # -*- coding: utf-8 -*-
+import json
 import logging
-from datetime import datetime
-from odoo import models, fields, api
+from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
 
-PULL_MIN_GAP_SECONDS = 60  # throttle repeated pulls
-
-
-def _normalize_monta_dt(value):
-    """See services.monta_inbound._norm_iso_dt; kept here for safety."""
-    from datetime import datetime as _dt
-    if not value:
-        return False
-    if isinstance(value, datetime):
-        return fields.Datetime.to_string(value)
-    s = str(value).strip()
-    if not s:
-        return False
-    if s.endswith('Z'):
-        s = s[:-1] + '+00:00'
-    try:
-        dt = datetime.fromisoformat(s)
-        return fields.Datetime.to_string(dt.replace(tzinfo=None))
-    except Exception:
-        try:
-            s2 = s.replace('T', ' ').split('.')[0]
-            dt = _dt.strptime(s2[:19], '%Y-%m-%d %H:%M:%S')
-            return fields.Datetime.to_string(dt)
-        except Exception:
-            return False
-
+DUMMY_ETA_STR = "2099-01-01 00:00:00"  # always UTC
 
 class SaleOrderInbound(models.Model):
     _inherit = 'sale.order'
 
-    # Inbound mirror fields
-    monta_remote_status = fields.Char(copy=False, index=True)
-    monta_tracking_number = fields.Char(copy=False, index=True)
-    monta_tracking_url = fields.Char(copy=False)
-    monta_carrier = fields.Char(copy=False)
-    monta_delivered_at = fields.Datetime(copy=False)
-    monta_last_pull = fields.Datetime(copy=False)
-    # NOTE: we use the native 'commitment_date' as Delivery Date (ETA)
-
-    # ---------- Public API ----------
-    def action_monta_pull_now(self, channel=None):
+    def _monta__eta_from_body(self, body):
         """
-        Pull GET /order/{webshoporderid} for these orders and update fields.
-        Optional 'channel' (string) if your Monta has multiple channels.
+        Decide which ETA we use for commitment_date.
+        Priority (first non-empty):
+          1) EstimatedDeliveryTo
+          2) EstimatedDeliveryFrom
+          3) DeliveryDate
+          4) LatestDeliveryDate
+          5) DeliveryDateRequested
+          6) PlannedShipmentDate
+          else -> DUMMY_ETA_STR
         """
-        from ..services.monta_inbound import MontaInbound
-        svc = MontaInbound(self.env)
+        # Pull all candidates as plain strings (Monta returns ISO-like strings or null)
+        get = lambda k: (body or {}).get(k)
+        cands = [
+            get('EstimatedDeliveryTo'),
+            get('EstimatedDeliveryFrom'),
+            get('DeliveryDate'),
+            get('LatestDeliveryDate'),
+            get('DeliveryDateRequested'),
+            get('PlannedShipmentDate'),
+        ]
+        chosen = next((c for c in cands if c), None)
 
+        # If Monta literally says “Unknown” (or blank), use dummy
+        if not chosen or (isinstance(chosen, str) and chosen.strip().lower() == 'unknown'):
+            chosen = DUMMY_ETA_STR
+
+        # If Monta gave a timestamp like 2025-08-29T12:34:56, normalize to Odoo “YYYY-MM-DD HH:MM:SS”
+        if 'T' in chosen and len(chosen) >= 19:
+            chosen = chosen.replace('T', ' ')[:19]
+
+        return chosen
+
+    def _monta__vals_from_order_body(self, body):
+        """
+        Compute values to apply to sale.order from Monta GET /order/{id} body.
+        We keep it small and explicit.
+        """
+        vals = {}
+        # Status text if available
+        remote_status = (body or {}).get('DeliveryStatusDescription') or (body or {}).get('Status') or (body or {}).get('ShipperDescription') or 'Received'
+        vals['monta_remote_status'] = remote_status
+
+        # Delivered at (prefer Shipped/DeliveryDate if present)
+        shipped = (body or {}).get('Shipped') or (body or {}).get('DeliveryDate')
+        if shipped and 'T' in shipped:
+            shipped = shipped.replace('T', ' ')[:19]
+        if shipped:
+            vals['monta_delivered_at'] = shipped
+
+        # commitment_date (ETA)
+        chosen_eta = self._monta__eta_from_body(body)
+        vals['commitment_date'] = chosen_eta
+
+        # We set a small flag to show this order still needs an outbound sync (harmless)
+        vals['monta_needs_sync'] = True
+        return vals
+
+    def action_monta_pull_now(self, channel='manual'):
+        """
+        Pull latest state for each order from Monta, update commitment_date + status.
+        Creates two logs per call:
+          - 'Monta Pull': raw API status/body (short)
+          - 'Monta ETA' : the ETA decision (fields considered + chosen)
+        """
         for order in self:
             try:
                 webshop_id = order.monta_order_id or order.name
                 if not webshop_id:
-                    _logger.info("[Monta Pull] Skip %s: no webshop id/name", order.display_name)
                     continue
 
-                # throttle if very recent
-                if order.monta_last_pull:
-                    delta = fields.Datetime.now() - order.monta_last_pull
-                    if delta.total_seconds() < PULL_MIN_GAP_SECONDS:
-                        _logger.info("[Monta Pull] Throttled for %s (last %.0fs ago)",
-                                     order.name, delta.total_seconds())
-                        continue
+                # GET /order/{webshop_id}
+                client = order.env['monta.client.proxy'] if 'monta.client.proxy' in order.env else None
+                if client:
+                    status, body = client.request(order, 'GET', f'/order/{webshop_id}')
+                else:
+                    # Use the helper on sale.order if you have it:
+                    status, body = order._monta_request('GET', f'/order/{webshop_id}')
 
-                status, body = svc.fetch_order(order, webshop_id, channel=channel)
-                order.write({'monta_last_pull': fields.Datetime.now()})
+                # Log API call (short)
+                order._create_monta_log(
+                    {'status': status, 'path': f'/order/{webshop_id}'},
+                    level='info', tag='Monta Pull',
+                    console_summary='[Monta Pull] GET /order/%s -> %s' % (webshop_id, status)
+                )
 
-                if not (200 <= int(status or 0) < 300):
-                    # detailed logs already saved by service
-                    continue
+                if 200 <= (status or 0) < 300 and isinstance(body, dict):
+                    # Decide ETA + values to write
+                    vals = self._monta__vals_from_order_body(body)
 
-                # Monta example wraps payload as {"Order": {...}}
-                payload = body.get('Order', body) if isinstance(body, dict) else {}
-                changes, summary = svc.apply_to_sale_order(order, payload)
+                    # Persist ETA decision as a separate readable log
+                    eta_log_payload = {
+                        'eta': {
+                            'chosen_for_commitment_date': vals.get('commitment_date'),
+                            'used_dummy_2099': vals.get('commitment_date') == DUMMY_ETA_STR,
+                            'raw_fields': {
+                                'EstimatedDeliveryFrom': body.get('EstimatedDeliveryFrom'),
+                                'EstimatedDeliveryTo': body.get('EstimatedDeliveryTo'),
+                                'DeliveryDate': body.get('DeliveryDate'),
+                                'LatestDeliveryDate': body.get('LatestDeliveryDate'),
+                                'DeliveryDateRequested': body.get('DeliveryDateRequested'),
+                                'PlannedShipmentDate': body.get('PlannedShipmentDate'),
+                                'Blocked': body.get('Blocked'),
+                                'BlockedMessage': body.get('BlockedMessage'),
+                                'Comment': body.get('Comment'),
+                            }
+                        }
+                    }
+                    order._create_monta_log(eta_log_payload, level='info', tag='Monta ETA', console_summary='[Monta ETA] decision saved')
 
-                if changes:
-                    # normalize datetimes before write
-                    if 'monta_delivered_at' in changes:
-                        changes['monta_delivered_at'] = _normalize_monta_dt(changes['monta_delivered_at'])
+                    # Apply changes
+                    order.write(vals)
 
-                    # 'commitment_date' is already normalized by svc (string)
-                    order.write(changes)
-                    try:
-                        order.message_post(body="<b>Monta inbound update</b><br/><pre>%s</pre>" % summary)
-                    except Exception:
-                        pass
-
-                    order._create_monta_log(
-                        {'apply_changes': changes},
-                        level='info', tag='Monta Pull',
-                        console_summary='[Monta Pull] updated fields'
-                    )
+                    # Optional: info in server log about what changed
+                    _logger.info("[Monta Pull] %s -> changed keys: %s", order.name, list(vals.keys()))
                 else:
                     order._create_monta_log(
-                        {'note': 'No applicable changes from Monta response'},
-                        level='info', tag='Monta Pull',
-                        console_summary='[Monta Pull] no changes'
+                        {'status': status, 'body': body or {}},
+                        level='error', tag='Monta Pull',
+                        console_summary='[Monta Pull] non-200 status'
                     )
-
             except Exception as e:
                 _logger.error("[Monta Pull] Failure for %s: %s", order.name, e, exc_info=True)
-        return True
-
-    # ---------- Cron entry (call from Scheduled Action UI; no XML) ----------
-    @api.model
-    def cron_monta_pull_open_orders(self, batch_size=30):
-        """
-        Optional: create a Scheduled Action in UI to call:
-          model.cron_monta_pull_open_orders()
-        """
-        dom = [
-            ('state', 'in', ('sale', 'done')),
-            ('state', '!=', 'cancel'),
-            '|', ('monta_order_id', '!=', False), ('name', '!=', False),
-        ]
-        orders = self.search(dom, limit=batch_size, order='write_date desc')
-        _logger.info("[Monta Pull] Cron scanning %s order(s)", len(orders))
-
-        pulled = 0
-        for so in orders:
-            try:
-                so.action_monta_pull_now()
-                pulled += 1
-            except Exception as e:
-                _logger.error("[Monta Pull] Cron failed for %s: %s", so.name, e, exc_info=True)
-
-        _logger.info("[Monta Pull] Cron finished. Pulled: %s order(s).", pulled)
         return True
