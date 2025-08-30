@@ -1,41 +1,62 @@
 # -*- coding: utf-8 -*-
 import logging
+from odoo import fields
 from .monta_client import MontaClient
+
 _logger = logging.getLogger(__name__)
+
+
+class _LogProxy:
+    """
+    Lightweight proxy so MontaClient can call `_create_monta_log(...)`
+    without requiring a real sale.order. We just log to server logs.
+    """
+    def _create_monta_log(self, payload, level='info', tag='Monta API', console_summary=None):
+        msg = f"[{tag}] {console_summary or ''} | {payload}"
+        if level == 'error':
+            _logger.error(msg)
+        else:
+            _logger.info(msg)
+
 
 class MontaInboundEDDService:
     """
     Pushes Expected Delivery Date for inbound registrations (stock.picking of type 'incoming').
-    Expects a Monta endpoint like /inbound/{reference}/expected-delivery or a PATCH on /inbound.
-    If your tenant uses another route, only tweak PATH building below.
+
+    We use the native `scheduled_date` of the picking as the Expected Delivery.
+    Adjust the endpoint path if your Monta tenant differs.
     """
     def __init__(self, env):
         self.env = env
 
+    # Choose the reference used by Monta to find the inbound registration.
+    # Often this is the picking name (e.g. WH/IN/0001) or a vendor ref.
     def _reference_for(self, picking):
-        # Choose your reference (name/origin/vendor ref). Default to picking.name
         return picking.name
 
     def _payload_for(self, picking):
         return {
-            "ExpectedDelivery": picking.x_monta_expected_delivery_date and
-                                fields.Datetime.to_string(picking.x_monta_expected_delivery_date)
+            "ExpectedDelivery": picking.scheduled_date and
+                                fields.Datetime.to_string(picking.scheduled_date)
         }
 
     def push_one(self, picking):
-        if not picking.x_monta_expected_delivery_date:
-            return
+        # If there's no date, skip pushing.
+        if not picking.scheduled_date:
+            _logger.info("[Monta EDD] %s has no scheduled_date; skipping push.", picking.name)
+            return 0, {'note': 'No scheduled_date on picking'}
+
         client = MontaClient(self.env)
         ref = self._reference_for(picking)
         path = f"/inbound/{ref}/expected-delivery"
-        # Reuse sale.order logging via a fake order-like wrapper:
-        order_log_proxy = self.env['sale.order'].browse()  # empty; we’ll just log at INFO level here
-        status, body = client.request(order_log_proxy, "PUT", path, payload=self._payload_for(picking))
+
+        # Use our proxy to satisfy MontaClient logging hooks.
+        proxy = _LogProxy()
+
+        status, body = client.request(proxy, "PUT", path, payload=self._payload_for(picking))
         (picking.message_post if hasattr(picking, 'message_post') else _logger.info)(
-            f"[Monta EDD] {ref} -> {status} {body}"
+            f"[Monta EDD] Push {ref} -> {status} {body}"
         )
-        if 200 <= (status or 0) < 300:
-            picking.write({'x_monta_edd_needs_sync': False})
         return status, body
 
     def push_many(self, pickings):
@@ -43,4 +64,4 @@ class MontaInboundEDDService:
             try:
                 self.push_one(p)
             except Exception as e:
-                _logger.error("EDD push failed for %s: %s", p.name, e, exc_info=True)
+                _logger.error("[Monta EDD] Push failed for %s: %s", p.name, e, exc_info=True)
