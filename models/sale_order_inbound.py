@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
-from odoo import api, fields, models
+from odoo import fields, models
 
 from ..services.monta_client import MontaClient  # reuse your existing client
 
@@ -88,7 +88,7 @@ class SaleOrderInbound(models.Model):
             'PlannedShipmentDate',
         )
 
-        # Select first valid
+        # Select first valid (skip literal 'unknown')
         for k in ordered_keys:
             v = raw.get(k)
             if isinstance(v, str) and v.strip().lower() == 'unknown':
@@ -100,79 +100,24 @@ class SaleOrderInbound(models.Model):
         # Unknown / missing -> dummy
         return DUMMY_ETA_STR, raw, True
 
-    # ---------------- Status & delivered ----------------
-    @staticmethod
-    def _monta__status_and_delivered(body: Dict[str, Any]) -> Tuple[str, Optional[str]]:
-        """
-        Build a readable status and detect a likely 'delivered' timestamp.
-        """
-        body = body or {}
-        status = (
-            body.get('DeliveryStatusDescription')
-            or body.get('DeliveryStatusCode')
-            or body.get('Status')
-            or body.get('State')
-            or body.get('OrderStatus')
-            or body.get('ActionCode')
-        )
-
-        ts_opts = [
-            body.get('DeliveredAt'),
-            body.get('Delivery', {}).get('DeliveredAt') if isinstance(body.get('Delivery'), dict) else None,
-            body.get('DeliveryDate'),
-            body.get('Shipped'),
-            body.get('Picked'),
-            body.get('Received'),
-        ]
-        delivered = None
-        for t in ts_opts:
-            norm = _norm_iso_dt(t)
-            if norm:
-                delivered = norm
-                break
-
-        if not status:
-            if delivered:
-                status = 'Delivered'
-            elif body.get('Shipped'):
-                status = 'Shipped'
-            elif body.get('Picked'):
-                status = 'Picked'
-            elif body.get('Received'):
-                status = 'Received'
-            elif body.get('Backorder'):
-                status = 'Backorder'
-            else:
-                status = 'Processing'
-
-        return status, delivered
-
     # ---------------- Value mapping ----------------
     def _monta__vals_from_order_body(self, body: Dict[str, Any]) -> Dict[str, Any]:
         """
         Compute values to apply to sale.order from Monta GET /order/{id} body.
-        We keep it small and explicit.
+        We ONLY touch default fields you agreed to use:
+          - commitment_date (ETA)
+          - monta_needs_sync (existing boolean in your model)
         """
         vals: Dict[str, Any] = {}
-
-        # Remote status & delivered_at
-        status, delivered = self._monta__status_and_delivered(body)
-        vals['monta_remote_status'] = (status or '').strip() or False
-        if delivered:
-            vals['monta_delivered_at'] = delivered
-
-        # ETA -> commitment_date
         eta_str, _eta_raw, _eta_dummy = self._monta__eta_from_body(body)
         vals['commitment_date'] = eta_str
-
-        # Keep sync flag (harmless if you push back to Monta elsewhere)
         vals['monta_needs_sync'] = True
         return vals
 
     # ---------------- Pull + apply ----------------
     def action_monta_pull_now(self, channel: Optional[str] = None) -> bool:
         """
-        Pull latest state for each order from Monta, update commitment_date + status.
+        Pull latest state for each order from Monta, update commitment_date.
         Creates two logs per call:
           - 'Monta Pull': API status + small body excerpt
           - 'Monta ETA' : ETA decision (raw fields considered + chosen result)
@@ -187,6 +132,7 @@ class SaleOrderInbound(models.Model):
                 if channel:
                     path = f"{path}?channel={channel}"
 
+                # HTTP
                 client = MontaClient(order.env)
                 status, body = client.request(
                     order,
@@ -214,13 +160,12 @@ class SaleOrderInbound(models.Model):
                     _logger.info("[Monta Pull] %s -> %s (log save failed but continuing)", path, status)
 
                 if 200 <= (status or 0) < 300 and isinstance(body, dict):
-                    # Decide ETA + gather vals
+                    # ETA decision
                     eta_str, eta_raw, eta_dummy = self._monta__eta_from_body(body)
                     vals = self._monta__vals_from_order_body(body)
-                    # force the chosen ETA we just computed (safety)
-                    vals['commitment_date'] = eta_str
+                    vals['commitment_date'] = eta_str  # ensure forced ETA
 
-                    # Persist ETA decision (human readable)
+                    # Save ETA decision (human readable)
                     try:
                         order._create_monta_log(
                             {
@@ -237,10 +182,10 @@ class SaleOrderInbound(models.Model):
                     except Exception:
                         _logger.info("[Monta ETA] log save failed for %s", order.name)
 
-                    # Only write changed values
+                    # Only write changed values (and only keys that actually exist on sale.order)
                     changes: Dict[str, Any] = {}
                     for k, v in vals.items():
-                        if (order[k] or False) != (v or False):
+                        if k in order._fields and (order[k] or False) != (v or False):
                             changes[k] = v
 
                     if changes:
