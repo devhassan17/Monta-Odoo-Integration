@@ -36,7 +36,7 @@ def _norm_iso_dt(value) -> Optional[str]:
         # try removing fractional seconds and TZ
         try:
             s2 = s.replace('T', ' ').split('.')[0]
-            dt = datetime.strptime(s2[:19], '%Y-%m-%d %H:%M:%S')
+            dt = datetime.strptime(s2, '%Y-%m-%d %H:%M:%S')
             return fields.Datetime.to_string(dt)
         except Exception:
             return None
