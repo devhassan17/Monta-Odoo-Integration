@@ -1,14 +1,11 @@
 /** Auto-fill Delivery Date input from the stored sale.order.commitment_date
- * Works on pages like /odoo/sales/<id> that already render the input element:
- *   <input id="commitment_date_0" data-field="commitment_date" ...>
- *
- * No template changes needed.
+ * Works on pages like /odoo/sales/<id>.
+ * Adds clear console logs: Request, Date Get, Date is that, Added, Showing.
  */
 (function () {
   function parseOrderIdFromUrl() {
     try {
       var parts = (window.location.pathname || "").split("/").filter(Boolean);
-      // Expect ... /odoo/sales/<id>
       var last = parts[parts.length - 1];
       var id = parseInt(last, 10);
       return Number.isFinite(id) ? id : null;
@@ -18,10 +15,7 @@
   }
 
   function formatOdooDatetime(dtStr) {
-    // dtStr is UTC "YYYY-MM-DD HH:mm:ss" from Odoo read()
-    // Target example: 30/08/2025 16:09:48
     if (!dtStr) return "";
-    // Parse as UTC
     var m = dtStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
     if (!m) return dtStr;
     var y = parseInt(m[1], 10),
@@ -30,7 +24,6 @@
         hh = parseInt(m[4], 10),
         mm = parseInt(m[5], 10),
         ss = parseInt(m[6], 10);
-    // Make a Date in UTC, then show as local time:
     var dt = new Date(Date.UTC(y, mo - 1, d, hh, mm, ss));
     var dd = String(dt.getDate()).padStart(2, "0");
     var MM = String(dt.getMonth() + 1).padStart(2, "0");
@@ -42,18 +35,13 @@
   }
 
   async function jsonRpc(model, method, args, kwargs) {
-    // Minimal JSON-RPC to Odoo /web/dataset/call_kw (works when user is logged in)
     const payload = {
       jsonrpc: "2.0",
       method: "call",
-      params: {
-        model: model,
-        method: method,
-        args: args || [],
-        kwargs: kwargs || {},
-      },
+      params: { model, method, args: args || [], kwargs: kwargs || {} },
       id: Date.now(),
     };
+    console.info("[EDD UI] Request Sent To Monta/Server → read commitment_date");
     const resp = await fetch("/web/dataset/call_kw", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -68,37 +56,40 @@
   async function fillCommitmentDate() {
     try {
       var input = document.querySelector('input#commitment_date_0[data-field="commitment_date"]');
-      if (!input) return; // field not present on this page
-
-      // If it already has a value, do nothing
-      if ((input.value || "").trim()) return;
+      if (!input) {
+        console.info("[EDD UI] Input not found on this page; nothing to show.");
+        return;
+      }
+      if ((input.value || "").trim()) {
+        console.info("[EDD UI] Input already filled by server; showing:", input.value);
+        return;
+      }
 
       var orderId = parseOrderIdFromUrl();
-      if (!orderId) return;
+      if (!orderId) {
+        console.info("[EDD UI] Cannot parse order id from URL.");
+        return;
+      }
 
-      // Read commitment_date from server (UTC string)
       const result = await jsonRpc("sale.order", "read", [[orderId], ["commitment_date"]], {});
       const rec = (result && result[0]) || {};
-      const dtStr = rec.commitment_date; // e.g. "2099-01-01 00:00:00" or null
+      const dtStr = rec.commitment_date;
+      console.info("[EDD UI] Date Get:", dtStr || "(none)");
+      if (!dtStr) return;
 
-      if (!dtStr) return; // nothing to fill
-
-      // Format for your visual requirement
       const pretty = formatOdooDatetime(dtStr);
+      console.info("[EDD UI] Date is that:", dtStr, "| pretty:", pretty);
 
-      // Fill the input
       input.value = pretty;
-
-      // If Odoo widget listens to input events, fire one:
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
+      console.info("[EDD UI] Date is added to Commitment date (input).");
+      console.info("[EDD UI] Date is showing.");
     } catch (e) {
-      // Silent fail—no UI break if RPC not available on this route
-      console && console.debug && console.debug("[Monta ETA autofill] skipped:", e);
+      console.info("[EDD UI] Skipped:", e && e.message ? e.message : e);
     }
   }
 
-  // Run when DOM is ready (works on both backend & portal-like pages)
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", fillCommitmentDate);
   } else {

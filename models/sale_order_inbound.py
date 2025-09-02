@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from odoo import fields, models
 
-from ..services.monta_client import MontaClient  # reuse your existing client
+from ..services.monta_client import MontaClient
 
 _logger = logging.getLogger(__name__)
 
@@ -14,15 +14,6 @@ DUMMY_ETA_STR = "2099-01-01 00:00:00"  # always UTC (server-naive)
 
 
 def _norm_iso_dt(value) -> Optional[str]:
-    """
-    Normalize a Monta datetime into Odoo-safe string '%Y-%m-%d %H:%M:%S' (server-naive).
-    Accepts:
-      - '2025-08-16T01:49:23.42'
-      - '2025-08-16T01:49:23.420123Z'
-      - '2025-08-16T01:49:23+02:00'
-      - datetime instances
-    Returns string or None.
-    """
     if not value:
         return None
     if isinstance(value, datetime):
@@ -30,15 +21,12 @@ def _norm_iso_dt(value) -> Optional[str]:
     s = str(value).strip()
     if not s:
         return None
-    # Monta sometimes returns trailing Z = UTC
     if s.endswith('Z'):
         s = s[:-1] + '+00:00'
     try:
         dt = datetime.fromisoformat(s)
-        # store as server-naive
         return fields.Datetime.to_string(dt.replace(tzinfo=None))
     except Exception:
-        # fallback: strip fractional seconds and TZ if present
         try:
             s2 = s.replace('T', ' ').split('.')[0]
             dt = datetime.strptime(s2[:19], '%Y-%m-%d %H:%M:%S')
@@ -47,25 +35,22 @@ def _norm_iso_dt(value) -> Optional[str]:
             return None
 
 
+def _pretty(dt_str: Optional[str]) -> str:
+    if not dt_str:
+        return ''
+    try:
+        y, m, d = int(dt_str[0:4]), int(dt_str[5:7]), int(dt_str[8:10])
+        hh, mm, ss = int(dt_str[11:13]), int(dt_str[14:16]), int(dt_str[17:19])
+        return f"{d:02d}/{m:02d}/{y:04d} {hh:02d}:{mm:02d}:{ss:02d}"
+    except Exception:
+        return dt_str or ''
+
+
 class SaleOrderInbound(models.Model):
     _inherit = 'sale.order'
 
     # ---------------- ETA extraction ----------------
     def _monta__eta_from_body(self, body: Dict[str, Any]) -> Tuple[str, Dict[str, Any], bool]:
-        """
-        Decide which ETA we use for commitment_date.
-
-        Priority (first non-empty after normalization):
-          1) EstimatedDeliveryTo
-          2) EstimatedDeliveryFrom
-          3) DeliveryDate
-          4) LatestDeliveryDate
-          5) DeliveryDateRequested
-          6) PlannedShipmentDate
-          else -> DUMMY_ETA_STR
-
-        Returns: (chosen_odoostr, raw_debug_dict, used_dummy_bool)
-        """
         body = body or {}
         raw = {
             'EstimatedDeliveryFrom': body.get('EstimatedDeliveryFrom'),
@@ -78,7 +63,6 @@ class SaleOrderInbound(models.Model):
             'BlockedMessage': body.get('BlockedMessage'),
             'Comment': body.get('Comment'),
         }
-
         ordered_keys = (
             'EstimatedDeliveryTo',
             'EstimatedDeliveryFrom',
@@ -87,8 +71,6 @@ class SaleOrderInbound(models.Model):
             'DeliveryDateRequested',
             'PlannedShipmentDate',
         )
-
-        # Select first valid (skip literal 'unknown')
         for k in ordered_keys:
             v = raw.get(k)
             if isinstance(v, str) and v.strip().lower() == 'unknown':
@@ -96,32 +78,17 @@ class SaleOrderInbound(models.Model):
             norm = _norm_iso_dt(v)
             if norm:
                 return norm, raw, False
-
-        # Unknown / missing -> dummy
         return DUMMY_ETA_STR, raw, True
 
-    # ---------------- Value mapping ----------------
     def _monta__vals_from_order_body(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Compute values to apply to sale.order from Monta GET /order/{id} body.
-        We ONLY touch default fields you agreed to use:
-          - commitment_date (ETA)
-          - monta_needs_sync (existing boolean in your model)
-        """
         vals: Dict[str, Any] = {}
         eta_str, _eta_raw, _eta_dummy = self._monta__eta_from_body(body)
         vals['commitment_date'] = eta_str
         vals['monta_needs_sync'] = True
         return vals
 
-    # ---------------- Pull + apply ----------------
+    # ---------------- Pull + apply (+ step logs) ----------------
     def action_monta_pull_now(self, channel: Optional[str] = None) -> bool:
-        """
-        Pull latest state for each order from Monta, update commitment_date.
-        Creates two logs per call:
-          - 'Monta Pull': API status + small body excerpt
-          - 'Monta ETA' : ETA decision (raw fields considered + chosen result)
-        """
         for order in self:
             try:
                 webshop_id = order.monta_order_id or order.name
@@ -132,78 +99,76 @@ class SaleOrderInbound(models.Model):
                 if channel:
                     path = f"{path}?channel={channel}"
 
-                # HTTP
-                client = MontaClient(order.env)
-                status, body = client.request(
-                    order,
-                    "GET",
-                    path,
-                    payload=None,
-                    headers={"Accept": "application/json"},
+                # Step: Request Sent To Monta
+                order._create_monta_log(
+                    {'edd_auto': {'step': 'Request Sent To Monta', 'path': path}},
+                    level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta'
                 )
 
-                # Log API pull with a trimmed body for visibility
+                client = MontaClient(order.env)
+                status, body = client.request(
+                    order, "GET", path, payload=None, headers={"Accept": "application/json"}
+                )
+
+                # Log API pull
                 try:
                     order._create_monta_log(
-                        {
-                            'pull': {
-                                'status': status,
-                                'path': path,
-                                'body_excerpt': (body if isinstance(body, dict) else {}),
-                            }
-                        },
+                        {'pull': {'status': status, 'path': path, 'body_excerpt': (body if isinstance(body, dict) else {})}},
                         level='info' if (200 <= (status or 0) < 300) else 'error',
-                        tag='Monta Pull',
-                        console_summary=f"[Monta Pull] GET {path} -> {status}",
+                        tag='Monta Pull', console_summary=f"[Monta Pull] GET {path} -> {status}",
                     )
                 except Exception:
-                    _logger.info("[Monta Pull] %s -> %s (log save failed but continuing)", path, status)
+                    pass
 
                 if 200 <= (status or 0) < 300 and isinstance(body, dict):
-                    # ETA decision
                     eta_str, eta_raw, eta_dummy = self._monta__eta_from_body(body)
                     vals = self._monta__vals_from_order_body(body)
-                    vals['commitment_date'] = eta_str  # ensure forced ETA
+                    vals['commitment_date'] = eta_str
 
-                    # Save ETA decision (human readable)
-                    try:
-                        order._create_monta_log(
-                            {
-                                'eta': {
-                                    'chosen_for_commitment_date': eta_str,
-                                    'used_dummy_2099': bool(eta_dummy),
-                                    'raw_fields': eta_raw,
-                                }
-                            },
-                            level='info',
-                            tag='Monta ETA',
-                            console_summary='[Monta ETA] decision saved',
-                        )
-                    except Exception:
-                        _logger.info("[Monta ETA] log save failed for %s", order.name)
+                    # Step: Date Get + Date is that
+                    order._create_monta_log(
+                        {'edd_auto': {'step': 'Date Get', 'eta_raw': eta_raw, 'chosen': eta_str, 'used_dummy_2099': bool(eta_dummy)}},
+                        level='info', tag='Monta EDD', console_summary=f"[EDD] Date Get: {eta_str}"
+                    )
 
-                    # Only write changed values (and only keys that actually exist on sale.order)
+                    # Only write changed values
                     changes: Dict[str, Any] = {}
                     for k, v in vals.items():
                         if k in order._fields and (order[k] or False) != (v or False):
                             changes[k] = v
 
                     if changes:
+                        before = order.commitment_date
                         order.write(changes)
-                        _logger.info("[Monta Pull] %s -> changed keys: %s", order.name, list(changes.keys()))
-                    else:
-                        _logger.info("[Monta Pull] %s -> no changes", order.name)
-                else:
-                    # Non-200 or unexpected body
-                    try:
                         order._create_monta_log(
-                            {'status': status, 'path': path, 'body': body or {}},
-                            level='error',
-                            tag='Monta Pull',
-                            console_summary='[Monta Pull] non-200 status',
+                            {'edd_auto': {
+                                'step': 'Date is added to Commitment date',
+                                'from': before, 'to': order.commitment_date, 'pretty': _pretty(order.commitment_date)}},
+                            level='info', tag='Monta EDD',
+                            console_summary=f"[EDD] Added to Commitment date: {order.commitment_date}"
                         )
-                    except Exception:
-                        pass
+                    else:
+                        order._create_monta_log(
+                            {'edd_auto': {'step': 'Date is added to Commitment date', 'note': 'no change'}},
+                            level='info', tag='Monta EDD', console_summary='[EDD] Commitment date unchanged'
+                        )
+
+                    # Step: Date is showing (ready for UI)
+                    order._create_monta_log(
+                        {'edd_auto': {
+                            'step': 'Date is showing',
+                            'value': order.commitment_date,
+                            'pretty': _pretty(order.commitment_date),
+                            'order_url_hint': f"/odoo/sales/{order.id}",
+                        }},
+                        level='info', tag='Monta EDD', console_summary='[EDD] Date is showing'
+                    )
+                else:
+                    order._create_monta_log(
+                        {'edd_auto': {'step': 'Date Get', 'error': f"HTTP {status}"}},
+                        level='error', tag='Monta EDD', console_summary=f"[EDD] Date Get failed: {status}"
+                    )
+
             except Exception as e:
                 _logger.error("[Monta Pull] Failure for %s: %s", order.name, e, exc_info=True)
         return True

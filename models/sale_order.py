@@ -56,11 +56,63 @@ class SaleOrder(models.Model):
             )
         return ok
 
+    # ------------- EDD immediate pull + step logs -------------
+    def _edd_pretty(self, dt_str):
+        """Return dd/MM/YYYY HH:mm:ss for log readability."""
+        try:
+            if not dt_str:
+                return ''
+            y, m, d = int(dt_str[0:4]), int(dt_str[5:7]), int(dt_str[8:10])
+            hh, mm, ss = int(dt_str[11:13]), int(dt_str[14:16]), int(dt_str[17:19])
+            return f"{d:02d}/{m:02d}/{y:04d} {hh:02d}:{mm:02d}:{ss:02d}"
+        except Exception:
+            return dt_str or ''
+
+    def _pull_and_apply_edd_now(self):
+        """
+        Pull Monta order and apply ETA to commitment_date immediately
+        so the sales page shows Expected Delivery right after order is sent/updated.
+        """
+        try:
+            # Step 1: Request sent
+            self._create_monta_log(
+                {'edd_auto': {'step': 'Request Sent To Monta'}},
+                level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta'
+            )
+            before = self.commitment_date
+            self.action_monta_pull_now()
+            after = self.commitment_date
+            # Step 2..5: summarize
+            pretty = self._edd_pretty(after)
+            msg = {
+                'edd_auto': {
+                    'step': 'EDD Result',
+                    'Date Get': True,
+                    'Date is that': after,
+                    'Date is added to Commitment date': (before or '') != (after or ''),
+                    'Date is showing': bool(after),
+                    'pretty_for_ui': pretty,
+                    'order_url_hint': f"/odoo/sales/{self.id}",
+                }
+            }
+            self._create_monta_log(msg, level='info', tag='Monta EDD',
+                                   console_summary=f"[EDD] Set {after} (pretty {pretty})")
+            try:
+                self.message_post(body=(
+                    "<b>EDD Auto</b><br/>"
+                    "✓ Request Sent To Monta<br/>"
+                    "✓ Date Get<br/>"
+                    f"• Date is that: <code>{after or '-'}</code><br/>"
+                    f"• Date is added to Commitment date: <b>{'Yes' if (before or '') != (after or '') else 'No'}</b><br/>"
+                    f"✓ Date is showing: <b>{pretty or '-'}</b>"
+                ))
+            except Exception:
+                pass
+        except Exception as e:
+            _logger.error("[Monta EDD] Immediate pull failed for %s: %s", self.name, e, exc_info=True)
+
     # ---------------- logging ----------------
     def _log_pack_variant_skus_for_order(self):
-        """
-        For each pack line, log components (non-recursive snapshot) with real SKUs.
-        """
         packs_scanned = 0
         for line in self.order_line:
             p = line.product_id
@@ -74,7 +126,6 @@ class SaleOrder(models.Model):
                 sku, src = resolve_sku(comp, env=self.env, allow_synthetic=False)
                 _logger.info("[Monta Pack Debug]    - %s | qty=%s | sku=%s | src=%s",
                              comp.display_name, cqty, sku or 'EMPTY', src)
-                # Optional: persist to sku_test.log if your model exists
                 try:
                     self.env['sku_test.log'].create({
                         'order_id': self.id,
@@ -89,9 +140,6 @@ class SaleOrder(models.Model):
         _logger.info("[Monta Pack Debug] %s pack line(s) scanned", packs_scanned)
 
     def _log_all_skus_now(self):
-        """
-        Log every SKU we intend to send after recursive flattening.
-        """
         rows = []
         for l in self.order_line:
             p = l.product_id
@@ -109,10 +157,6 @@ class SaleOrder(models.Model):
 
     # ---------------- Lines (ONLY child product SKUs) ----------------
     def _prepare_monta_lines(self):
-        """
-        Build Lines as array of leaf product SKUs (packs expanded). Never use pack/variant SKU.
-        Raises ValidationError if any leaf product lacks a real SKU.
-        """
         from math import isfinite
         sku_qty = defaultdict(float)
         missing = []
@@ -241,6 +285,8 @@ class SaleOrder(models.Model):
                 'monta_needs_sync': False,
             })
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Create', '[Monta] order created')
+            # Pull ETA now so commitment_date is set immediately
+            self._pull_and_apply_edd_now()
         else:
             self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
             self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Create', '[Monta] create failed')
@@ -264,9 +310,10 @@ class SaleOrder(models.Model):
                 'monta_needs_sync': False,
             })
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Update', '[Monta] order updated')
+            # Pull ETA now so commitment_date is set immediately
+            self._pull_and_apply_edd_now()
             return status, body
 
-        # If Monta is verifying (Code=42), mark for retry later and don't hammer
         reason_codes = []
         try:
             reason_codes = [r.get('Code') for r in (body or {}).get('OrderInvalidReasons', [])]
@@ -282,7 +329,6 @@ class SaleOrder(models.Model):
                 pass
             return status, body
 
-        # Otherwise try create as fallback (idempotent by name)
         if status in (400, 404):
             _logger.warning("[Monta] Update failed (%s) for %s; attempting create...", status, webshop_id)
             c_status, c_body = self._monta_request('POST', '/order', self._prepare_monta_order_payload())
@@ -295,6 +341,8 @@ class SaleOrder(models.Model):
                 })
                 self._create_monta_log({'status': c_status, 'body': c_body}, 'info', 'Monta Create',
                                        '[Monta] order created (after update fallback)')
+                # Pull ETA now so commitment_date is set immediately
+                self._pull_and_apply_edd_now()
                 return c_status, c_body
 
         self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
@@ -352,6 +400,17 @@ class SaleOrder(models.Model):
         if any(f in vals for f in tracked_fields):
             vals.setdefault('monta_needs_sync', True)
         res = super(SaleOrder, self).write(vals)
+
+        # NEW: If order just got a monta id or was marked sent/updated via some other flow, pull EDD now
+        keys = set(vals.keys())
+        if {'monta_order_id', 'monta_sync_state'} & keys:
+            for order in self:
+                try:
+                    if vals.get('monta_order_id') or vals.get('monta_sync_state') in ('sent', 'updated'):
+                        order._pull_and_apply_edd_now()
+                except Exception as e:
+                    _logger.error("[Monta EDD] write-trigger failed for %s: %s", order.name, e, exc_info=True)
+
         # push updates automatically for confirmed orders
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
             try:
