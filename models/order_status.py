@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields
 
-
 class MontaOrderStatus(models.Model):
     _name = "monta.order.status"
     _description = "Monta Order Status snapshots"
