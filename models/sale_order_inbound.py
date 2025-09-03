@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from odoo import fields, models
 
 from ..services.monta_client import MontaClient
+from ..services.monta_status_normalizer import MontaStatusNormalizer
 
 _logger = logging.getLogger(__name__)
 
@@ -80,14 +81,67 @@ class SaleOrderInbound(models.Model):
                 return norm, raw, False
         return DUMMY_ETA_STR, raw, True
 
+    # ---------------- Status & delivered ----------------
+    @staticmethod
+    def _monta__status_and_delivered(body: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+        """
+        Build a readable status and detect a likely 'delivered' timestamp.
+        """
+        body = body or {}
+        status = (
+            body.get('DeliveryStatusDescription')
+            or body.get('DeliveryStatusCode')
+            or body.get('Status')
+            or body.get('State')
+            or body.get('OrderStatus')
+            or body.get('ActionCode')
+        )
+
+        ts_opts = [
+            body.get('DeliveredAt'),
+            body.get('Delivery', {}).get('DeliveredAt') if isinstance(body.get('Delivery'), dict) else None,
+            body.get('DeliveryDate'),
+            body.get('Shipped'),
+            body.get('Picked'),
+            body.get('Received'),
+        ]
+        delivered = None
+        for t in ts_opts:
+            norm = _norm_iso_dt(t)
+            if norm:
+                delivered = norm
+                break
+
+        if not status:
+            if delivered:
+                status = 'Delivered'
+            elif body.get('Shipped'):
+                status = 'Shipped'
+            elif body.get('Picked'):
+                status = 'Picked'
+            elif body.get('Received'):
+                status = 'Received'
+            elif body.get('Backorder'):
+                status = 'Backorder'
+            else:
+                status = 'Processing'
+
+        return status, delivered
+
+    # ---------------- Value mapping ----------------
     def _monta__vals_from_order_body(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Only touch default fields:
+          - commitment_date (EDD)
+          - monta_needs_sync (existing boolean in your model)
+        """
         vals: Dict[str, Any] = {}
         eta_str, _eta_raw, _eta_dummy = self._monta__eta_from_body(body)
         vals['commitment_date'] = eta_str
         vals['monta_needs_sync'] = True
         return vals
 
-    # ---------------- Pull + apply (+ step logs) ----------------
+    # ---------------- Pull + apply + STORE STATUS (separate model) ----------------
     def action_monta_pull_now(self, channel: Optional[str] = None) -> bool:
         for order in self:
             try:
@@ -121,11 +175,11 @@ class SaleOrderInbound(models.Model):
                     pass
 
                 if 200 <= (status or 0) < 300 and isinstance(body, dict):
+                    # --- ETA ---
                     eta_str, eta_raw, eta_dummy = self._monta__eta_from_body(body)
                     vals = self._monta__vals_from_order_body(body)
                     vals['commitment_date'] = eta_str
 
-                    # Step: Date Get + Date is that
                     order._create_monta_log(
                         {'edd_auto': {'step': 'Date Get', 'eta_raw': eta_raw, 'chosen': eta_str, 'used_dummy_2099': bool(eta_dummy)}},
                         level='info', tag='Monta EDD', console_summary=f"[EDD] Date Get: {eta_str}"
@@ -152,6 +206,21 @@ class SaleOrderInbound(models.Model):
                             {'edd_auto': {'step': 'Date is added to Commitment date', 'note': 'no change'}},
                             level='info', tag='Monta EDD', console_summary='[EDD] Commitment date unchanged'
                         )
+
+                    # --- STATUS (SEPARATE MODEL) ---
+                    stat_raw, delivered = self._monta__status_and_delivered(body)
+                    stat_norm = MontaStatusNormalizer.normalize(stat_raw)
+                    self.env['monta.order.status'].sudo().create({
+                        'sale_order_id': order.id,
+                        'status_raw': (stat_raw or '').strip(),
+                        'status_normalized': stat_norm,
+                        'delivered_at': delivered or False,
+                        'notes': json.dumps({'channel': channel or '', 'path': path}, ensure_ascii=False),
+                    })
+                    order._create_monta_log(
+                        {'status_store': {'raw': stat_raw, 'normalized': stat_norm, 'delivered_at': delivered}},
+                        level='info', tag='Monta Status', console_summary=f"[Status] {stat_norm} ({stat_raw})"
+                    )
 
                     # Step: Date is showing (ready for UI)
                     order._create_monta_log(
