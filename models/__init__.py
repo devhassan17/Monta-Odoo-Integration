@@ -7,3 +7,4 @@ from . import sku_test_log
 from . import sale_order_inbound
 from . import inbound_expected_delivery
 from . import order_status   # <-- MUST be present
+from . import purchase_order_inbound_forecast
