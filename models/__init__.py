@@ -9,4 +9,5 @@ from . import inbound_expected_delivery
 from . import order_status
 from . import purchase_order           # ok
 from . import res_partner_ext          # ok
-from . import stock_warehouse_ext      # ok
+from . import stock_warehouse_ext    
+from . import purchase_order_line# ok
