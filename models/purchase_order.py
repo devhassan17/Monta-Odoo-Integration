@@ -5,11 +5,10 @@ from odoo import models
 _logger = logging.getLogger(__name__)
 
 class PurchaseOrder(models.Model):
-    _inherit = "purchase.order"
+    _inherit = 'purchase.order'
 
     def action_monta_push_inbound_forecast(self):
-        """Manual (and programmatic) trigger to push/update the inbound forecast."""
-        svc = self.env["monta.inbound.forecast.service"]
+        svc = self.env['monta.inbound.forecast.service']
         for po in self:
             try:
                 _logger.info("[Monta IF] Start push for PO %s", po.name)

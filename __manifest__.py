@@ -1,7 +1,7 @@
 {
     "name": "Monta-Odoo Integration",
     "version": "1.0.0",
-    "author": "Ali Hassan20",
+    "author": "Ali Hassan21",
     "category": "Sales",
     "summary": "Monta WMS integration: Orders, EDD, Inbound Forecast",
     "depends": ["sale_management", "mrp", "purchase"],
@@ -11,7 +11,6 @@
     "application": False,
     "license": "LGPL-3",
     # hooks (pure Python)
-    "uninstall_hook": "uninstall_hook",
     # If you don't create anything on install, omit post_init_hook
     # "post_init_hook": "post_init_hook",
     "assets": {
