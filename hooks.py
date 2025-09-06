@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import api, SUPERUSER_ID
+from odoo.api import Environment as OdooEnvironment
 
 PARAM_KEYS = [
     "monta.base_url",
@@ -13,42 +14,59 @@ PARAM_KEYS = [
     "monta.allowed_base_urls",
 ]
 
-CRON_NAMES = []   # if you create any crons programmatically, add their names here
-MENU_NAMES = []   # if you create menus programmatically, add their names here
+CRON_NAMES = []   # add any programmatically-created crons here if you make them later
+MENU_NAMES = []   # add any programmatically-created menus here if you make them later
 
-def _ensure_env(env_or_cr, maybe_registry=None):
+
+def _get_env_any(env_or_cr, registry=None):
     """
-    Accept both modern and legacy hook signatures:
+    Normalize to a real Environment regardless of what Odoo passes:
       - uninstall_hook(env)
       - uninstall_hook(cr, registry)
-    Return a sudoed Environment.
+      - odd 'env-like' objects without .sudo()
     """
-    try:
-        # Modern style: got an Environment-like object
-        # Some builds pass a "thin" env without .sudo(); rebuild a proper one.
-        cr = getattr(env_or_cr, "cr", None)
-        uid = getattr(env_or_cr, "uid", SUPERUSER_ID)
-        if cr:
-            return api.Environment(cr, uid or SUPERUSER_ID, {}).sudo()
-    except Exception:
-        pass
+    # Case 1: real Environment
+    if isinstance(env_or_cr, OdooEnvironment):
+        try:
+            return env_or_cr.sudo()
+        except Exception:
+            # Rare: env lacks sudo; rebuild from its cursor if present
+            cr = getattr(env_or_cr, "cr", None)
+            if cr is not None:
+                return api.Environment(cr, SUPERUSER_ID, {})
+            # As last resort, fall through to cursor path
 
-    # Legacy: first arg is cursor
-    cr = env_or_cr
-    return api.Environment(cr, SUPERUSER_ID, {}).sudo()
+    # Case 2: has a cursor attribute (env-like)
+    cr_attr = getattr(env_or_cr, "cr", None)
+    if cr_attr is not None:
+        return api.Environment(cr_attr, SUPERUSER_ID, {}).sudo()
+
+    # Case 3: raw cursor (legacy signature)
+    # Heuristic: cursor usually has .execute
+    if hasattr(env_or_cr, "execute"):
+        return api.Environment(env_or_cr, SUPERUSER_ID, {}).sudo()
+
+    # Last resort: try to get cursor off registry
+    if registry is not None and hasattr(registry, "cursor"):
+        with registry.cursor() as cr:
+            return api.Environment(cr, SUPERUSER_ID, {}).sudo()
+
+    # If all else fails, raise a clean error rather than an AssertionError
+    raise RuntimeError("Uninstall hook could not obtain an Odoo Environment")
+
 
 def uninstall_hook(env_or_cr, registry=None):
-    env = _ensure_env(env_or_cr, registry)
+    env = _get_env_any(env_or_cr, registry)
     ICP = env["ir.config_parameter"]
 
-    # 1) scrub system params (never block uninstall)
+    # 1) scrub system parameters (never block uninstall on errors)
     for k in PARAM_KEYS:
         try:
             ICP.set_param(k, "")
         except Exception:
             pass
 
-    # 2) remove any programmatic records you may have created
+    # 2) remove programmatic records if you ever create them
     if CRON_NAMES:
         try:
             env["ir.cron"].search([("name", "in", CRON_NAMES)]).unlink()
@@ -60,7 +78,7 @@ def uninstall_hook(env_or_cr, registry=None):
         except Exception:
             pass
 
-    # 3) defensive: ensure module not pinned in server_wide_modules
+    # 3) defensive: ensure module not left in server_wide_modules
     try:
         swm = (ICP.get_param("server_wide_modules") or "").strip()
         if swm:
