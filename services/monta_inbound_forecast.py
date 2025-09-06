@@ -8,7 +8,7 @@ _logger = logging.getLogger(__name__)
 
 class MontaInboundForecastService(models.AbstractModel):
     _name = "monta.inbound.forecast.service"
-    _description = "Create/Update Inbound Forecast in Monta (idempotent + line upserts + URL guard)"
+    _description = "Create/Update/Delete Inbound Forecast in Monta (idempotent + URL guard)"
 
     # ---------- config ----------
     def _conf(self):
@@ -20,18 +20,13 @@ class MontaInboundForecastService(models.AbstractModel):
         wh_display = (ICP.get_param("monta.inbound_warehouse_display_name") or "").strip()
         return base, user, pwd, tz, wh_display
 
+    # ---------- URL guard to avoid staging duplicates ----------
     def _allowed_instance_urls(self):
-        """
-        Comma/space-separated allow-list from ICP:
-        - monta.allowed_base_urls = https://prod.mycompany.com, https://www.mycompany.com
-        If empty, we fallback to current web.base.url (acts as 'only this instance').
-        """
         ICP = self.env["ir.config_parameter"].sudo()
         raw = (ICP.get_param("monta.allowed_base_urls") or "").strip()
         urls = [u.strip().rstrip("/") + "/" for u in raw.replace(";", ",").split(",") if u.strip()]
         if urls:
             return [u.lower() for u in urls]
-        # Fallback: allow only current base
         wb = (ICP.get_param("web.base.url") or "").strip().rstrip("/") + "/"
         return [wb.lower()] if wb else []
 
@@ -47,16 +42,15 @@ class MontaInboundForecastService(models.AbstractModel):
             _logger.warning("[Monta IF][Guard] Blocked by URL guard. web.base.url=%s not in allowed=%s", cur, allowed)
         return ok, cur, allowed
 
+    # ---------- supplier / warehouse helpers ----------
     def _supplier_code_for(self, partner):
         ICP = self.env["ir.config_parameter"].sudo()
         override = (ICP.get_param("monta.supplier_code_override") or "").strip()
         if override:
             return override
-        # safe-read supports half-uninstalled states
         code = (getattr(partner, "x_monta_supplier_code", "") or "").strip()
         if code:
             return code
-        # optional mapping by vendor name/ref
         try:
             mp = { (k or "").strip().upper(): (v or "").strip()
                    for k, v in json.loads(ICP.get_param("monta.supplier_code_map") or "{}").items() }
@@ -68,7 +62,6 @@ class MontaInboundForecastService(models.AbstractModel):
             return mp[name_u]
         if ref_u and ref_u in mp and mp[ref_u]:
             return mp[ref_u]
-        # last-chance fallbacks
         for attr in ("ref", "vat"):
             v = (getattr(partner, attr, "") or "").strip()
             if v:
@@ -85,6 +78,7 @@ class MontaInboundForecastService(models.AbstractModel):
         _base, _u, _p, _tz, wh_icp = self._conf()
         return wh_icp or None
 
+    # ---------- date helper ----------
     def _iso_with_tz(self, dt, tzname):
         tz = pytz.timezone(tzname)
         if not dt:
@@ -142,7 +136,6 @@ class MontaInboundForecastService(models.AbstractModel):
 
     def _group_payload(self, po, tz):
         planned = po.date_planned or fields.Datetime.now()
-        # Some tenants require future dates; push at least +1h if in the past
         if planned < fields.Datetime.now() - timedelta(minutes=1):
             planned = fields.Datetime.now() + timedelta(hours=1)
         edd   = self._iso_with_tz(planned, tz)
@@ -157,21 +150,29 @@ class MontaInboundForecastService(models.AbstractModel):
         }
         return payload, edd
 
-    # ---------- helpers for idempotency ----------
+    # ---------- endpoints ----------
     def _get_group(self, base, auth, po):
-        url = f"{base}/inboundforecast/group/{po.name}"
-        return self._http(po, "GET", url, None, auth=auth)
+        return self._http(po, "GET", f"{base}/inboundforecast/group/{po.name}", None, auth=auth)
 
     def _create_group_with_lines(self, base, auth, po, header, lines):
         payload = header.copy()
         payload["InboundForecasts"] = lines
-        url_post = f"{base}/inboundforecast/group"
-        return self._http(po, "POST", url_post, payload, auth=auth)
+        return self._http(po, "POST", f"{base}/inboundforecast/group", payload, auth=auth)
 
     def _put_header(self, base, auth, po, header):
-        url_put = f"{base}/inboundforecast/group/{po.name}"
-        return self._http(po, "PUT", url_put, header, auth=auth)
+        return self._http(po, "PUT", f"{base}/inboundforecast/group/{po.name}", header, auth=auth)
 
+    def _delete_group(self, base, auth, po, note="Cancelled from Odoo"):
+        # If Monta expects a body, send it; otherwise DELETE without body also works for many tenants
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        payload = {"Note": note}
+        # Try with payload first; if server rejects, fallback to no body
+        st, body = self._http(po, "DELETE", f"{base}/inboundforecast/group/{po.name}", payload, auth=auth, headers=headers)
+        if st in (405, 415):  # method not allowed / unsupported media type — retry bare
+            st, body = self._http(po, "DELETE", f"{base}/inboundforecast/group/{po.name}", None, auth=auth, headers={"Accept": "application/json"})
+        return st, body
+
+    # ---------- utilities ----------
     def _get_existing_skus(self, group_body):
         existing = set()
         try:
@@ -211,16 +212,11 @@ class MontaInboundForecastService(models.AbstractModel):
                     if "already" in txt or "exist" in txt:
                         self._http(po, "PUT", f"{url_group}/{sku}", line_payload, auth=auth)
 
-    # ---------- public entry ----------
+    # ---------- public: create/update ----------
     def send_for_po(self, po):
-        """
-        Idempotent: GET→(POST with lines | PUT header)→upsert lines.
-        Added URL guard so staging/dev instances never push to Monta.
-        """
-        # URL GUARD (prevents duplicates from staging)
+        """Idempotent: GET→(POST with lines | PUT header)→upsert lines."""
         ok, cur, allowed = self._is_allowed_instance()
         if not ok:
-            # Log to chatter + skip silently
             try:
                 po._create_monta_log(
                     {'IF': {'step': 'URL Guard', 'web_base_url': cur, 'allowed': allowed, 'skipped': True}},
@@ -238,19 +234,13 @@ class MontaInboundForecastService(models.AbstractModel):
         auth = HTTPBasicAuth(user, pwd)
         header, edd = self._group_payload(po, tz)
 
-        # Validate supplier code (avoid accidental VAT)
         sc = (header.get("SupplierCode") or "").strip()
         if not sc or len(sc) < 3:
-            raise ValueError(
-                "SupplierCode is missing/invalid. "
-                "Set vendor.x_monta_supplier_code or configure ICP "
-                "'monta.supplier_code_map' / 'monta.supplier_code_override'."
-            )
+            raise ValueError("SupplierCode is missing/invalid. Set vendor.x_monta_supplier_code "
+                             "or configure ICP 'monta.supplier_code_map' / 'monta.supplier_code_override'.")
 
-        # 1) Check existence
         st, body = self._get_group(base, auth, po)
         if st == 404:
-            # 2a) Create fresh with lines
             st2, body2 = self._create_group_with_lines(base, auth, po, header, self._collect_lines(po, edd))
             if 200 <= (st2 or 0) < 300:
                 uid = body2.get("UniqueId")
@@ -261,19 +251,41 @@ class MontaInboundForecastService(models.AbstractModel):
                         pass
                 _logger.info("[Monta IF] ✅ Created group for %s", po.name)
                 return True
-            # Fallback to PUT path if POST failed for conflict-like reasons
             body = body2
         elif not (200 <= (st or 0) < 300):
             raise RuntimeError(f"GET group failed for {po.name}: HTTP {st} {body}")
 
-        # 2b) Ensure header synced
         st3, body3 = self._put_header(base, auth, po, header)
         if not (200 <= (st3 or 0) < 300):
             raise RuntimeError(f"PUT header failed for {po.name}: HTTP {st3} {body3}")
 
-        # 3) Upsert lines always
         existing = self._get_existing_skus(body if st == 200 else body3 if isinstance(body3, dict) else {})
         self._upsert_lines(base, auth, po, edd, existing)
 
         _logger.info("[Monta IF] ✅ Header synced and lines upserted for %s", po.name)
         return True
+
+    # ---------- public: cancel/delete ----------
+    def cancel_for_po(self, po, note="Cancelled"):
+        """
+        Delete the inbound forecast group in Monta when PO is cancelled or deleted.
+        Safe + logged; obeys URL guard.
+        """
+        ok, cur, allowed = self._is_allowed_instance()
+        if not ok:
+            try:
+                po._create_monta_log(
+                    {'IF': {'step': 'URL Guard (cancel)', 'web_base_url': cur, 'allowed': allowed, 'skipped': True}},
+                    'info', 'Monta IF', console_summary='[Monta IF][Guard] cancel skipped'
+                )
+            except Exception:
+                pass
+            return False
+
+        base, user, pwd, _tz, _wh = self._conf()
+        auth = HTTPBasicAuth(user, pwd)
+        st, body = self._delete_group(base, auth, po, note=note)
+        if st in (200, 204, 404):  # 404 is fine (already gone)
+            _logger.info("[Monta IF] ✅ Deleted group for %s (status %s)", po.name, st)
+            return True
+        raise RuntimeError(f"Delete group failed for {po.name}: HTTP {st} {body}")
