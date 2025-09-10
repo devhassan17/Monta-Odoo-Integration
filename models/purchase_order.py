@@ -41,3 +41,18 @@ class PurchaseOrder(models.Model):
         except Exception as e:
             _logger.error("[Monta IF] Auto push after confirm failed: %s", e, exc_info=True)
         return res
+    def _create_monta_log(self, payload, level='info', tag='Monta IF', console_summary=None):
+        """Store Monta IF logs in monta.sale.log (sale_order_id=False)."""
+        Log = self.env['monta.sale.log'].sudo()
+        name = f"{tag} {(self.name or '')} - {level}"
+        try:
+            Log.create({
+                'name': name,
+                'sale_order_id': False,
+                'level': level,
+                'log_data': json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+            })
+        except Exception:
+            pass
+        (_logger.info if level == 'info' else _logger.error)(console_summary or name)
+    
