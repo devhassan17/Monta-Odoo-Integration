@@ -8,7 +8,17 @@ _logger = logging.getLogger(__name__)
 
 class MontaInboundForecastService(models.AbstractModel):
     _name = 'monta.inbound.forecast.service'
-    _description = 'Create/Update/Delete Inbound Forecast in Monta (idempotent + line upserts)'
+    _description = 'Create/Update Inbound Forecast in Monta (idempotent + line upserts)'
+
+    # ---------- feature toggle ----------
+    def _is_enabled(self) -> bool:
+        """Global on/off switch via ICP `monta.inbound_enable` (default False)."""
+        try:
+            ICP = self.env['ir.config_parameter'].sudo()
+            val = (ICP.get_param('monta.inbound_enable') or '').strip().lower()
+            return val in ('1', 'true', 'yes', 'on')
+        except Exception:
+            return False
 
     # ---------- config ----------
     def _conf(self):
@@ -18,26 +28,7 @@ class MontaInboundForecastService(models.AbstractModel):
         pwd  = ICP.get_param('monta.password') or ''
         tz   = ICP.get_param('monta.warehouse_tz') or 'Europe/Amsterdam'
         wh_display = (ICP.get_param('monta.inbound_warehouse_display_name') or '').strip()
-        allowed = (ICP.get_param('monta.allowed_instance_url') or '').strip().rstrip('/') + '/' if ICP.get_param('monta.allowed_instance_url') else ''  # optional guard
-        return base, user, pwd, tz, wh_display, allowed
-
-    def _is_allowed_instance(self):
-        """Guard to avoid pushing from staging by mistake.
-
-        Configure System Parameter:
-          - monta.allowed_instance_url = https://YOUR-PROD-URL/
-        (Include trailing slash, or we’ll add it.)
-        If unset -> allow all.
-        """
-        ICP = self.env['ir.config_parameter'].sudo()
-        allowed = (ICP.get_param('monta.allowed_instance_url') or '').strip().rstrip('/') + '/'
-        if not allowed:
-            return True
-        web_url = (ICP.get_param('web.base.url') or '').strip().rstrip('/') + '/'
-        ok = (web_url.lower() == allowed.lower())
-        if not ok:
-            _logger.warning("[Monta IF Guard] Blocked push. web.base.url=%s expected=%s", web_url, allowed)
-        return ok
+        return base, user, pwd, tz, wh_display
 
     def _supplier_code_for(self, partner):
         ICP = self.env['ir.config_parameter'].sudo()
@@ -68,7 +59,7 @@ class MontaInboundForecastService(models.AbstractModel):
         wh_name = (getattr(po.picking_type_id.warehouse_id, 'x_monta_inbound_warehouse_name', '') or '').strip()
         if wh_name:
             return wh_name
-        _base, _u, _p, _tz, wh_icp, _allow = self._conf()
+        _base, _u, _p, _tz, wh_icp = self._conf()
         return wh_icp or None
 
     def _iso_with_tz(self, dt, tzname):
@@ -148,7 +139,7 @@ class MontaInboundForecastService(models.AbstractModel):
         st, body = self._http(po, "GET", url, None, auth=auth)
         return st, body
 
-    def _create_group_with_lines(self, base, auth, po, header, lines):
+    def _create_group_with_lines(self, base, auth, po, header, lines, edd):
         payload = header.copy()
         payload["InboundForecasts"] = lines
         url_post = f"{base}/inboundforecast/group"
@@ -159,17 +150,6 @@ class MontaInboundForecastService(models.AbstractModel):
         url_put = f"{base}/inboundforecast/group/{po.name}"
         st, body = self._http(po, "PUT", url_put, header, auth=auth)
         return st, body
-
-    def _delete_group(self, base, auth, po, note="Cancelled from Odoo"):
-        """Best-effort delete. Treat 200/204/404 as success."""
-        url = f"{base}/inboundforecast/group/{po.name}"
-        headers = {"Accept": "application/json", "Content-Type": "application/json-patch+json"}
-        st, body = self._http(po, "DELETE", url, {"Note": note}, auth=auth, headers=headers)
-        if st in (200, 204, 404):
-            _logger.info("[Monta IF] Deleted group (or already gone) for %s", po.name)
-            return True
-        _logger.error("[Monta IF] Delete failed for %s: %s %s", po.name, st, body)
-        return False
 
     def _get_existing_skus(self, group_body):
         existing = set()
@@ -206,35 +186,38 @@ class MontaInboundForecastService(models.AbstractModel):
             else:
                 st, body = self._http(po, "POST", url_group, line_payload, auth=auth)
                 if not (200 <= (st or 0) < 300):
-                    # fallback if server says “already in group”
                     txt = json.dumps(body).lower()
                     if "already" in txt or "exist" in txt:
                         self._http(po, "PUT", f"{url_group}/{sku}", line_payload, auth=auth)
 
-    # ---------- public: create/update ----------
+    # ---------- public entry ----------
     def send_for_po(self, po):
-        """Create or update (idempotent). Call on confirm or on update."""
-        if not self._is_allowed_instance():
+        # FEATURE FLAG — hard stop when disabled
+        if not self._is_enabled():
+            _logger.info("[Monta IF] Disabled by ICP 'monta.inbound_enable' — skipping PO %s", po.name)
+            try:
+                po._create_monta_log({'IF': {'step': 'SKIP', 'reason': "monta.inbound_enable is false/empty"}},
+                                     'info', 'Monta IF', console_summary='[Monta IF] disabled')
+            except Exception:
+                pass
             return False
+
         if po.state not in ('purchase', 'done'):
             _logger.info("[Monta IF] Skip PO %s (state=%s)", po.name, po.state)
             return False
 
-        base, user, pwd, tz, _wh, _allow = self._conf()
-        if not user or not pwd:
-            raise RuntimeError("Monta credentials missing in System Parameters.")
+        base, user, pwd, tz, _wh = self._conf()
         auth = HTTPBasicAuth(user, pwd)
         header, edd = self._group_payload(po, tz)
 
         sc = (header.get('SupplierCode') or '').strip()
         if not sc or len(sc) < 3:
-            raise ValueError("SupplierCode is missing/invalid.")
+            raise ValueError("SupplierCode is missing/invalid. Set vendor.x_monta_supplier_code "
+                             "or configure ICP 'monta.supplier_code_map' / 'monta.supplier_code_override'.")
 
-        # 1) check
         st, body = self._get_group(base, auth, po)
         if st == 404:
-            # 2a) create with lines
-            st2, body2 = self._create_group_with_lines(base, auth, po, header, self._collect_lines(po, edd))
+            st2, body2 = self._create_group_with_lines(base, auth, po, header, self._collect_lines(po, edd), edd)
             if 200 <= (st2 or 0) < 300:
                 uid = body2.get("UniqueId")
                 if uid:
@@ -244,34 +227,18 @@ class MontaInboundForecastService(models.AbstractModel):
                         pass
                 _logger.info("[Monta IF] ✅ Created group for %s", po.name)
                 return True
-            # if POST failed but conflict-like, fall through to PUT + upsert
             body = body2
         elif 200 <= (st or 0) < 300:
             pass
         else:
             raise RuntimeError(f"GET group failed for {po.name}: HTTP {st} {body}")
 
-        # 2b) update header
         st3, body3 = self._put_header(base, auth, po, header)
         if not (200 <= (st3 or 0) < 300):
             raise RuntimeError(f"PUT header failed for {po.name}: HTTP {st3} {body3}")
 
-        # 3) lines upsert
         existing = self._get_existing_skus(body if st == 200 else body3 if isinstance(body3, dict) else {})
         self._upsert_lines(base, auth, po, edd, existing)
 
         _logger.info("[Monta IF] ✅ Header synced and lines upserted for %s", po.name)
         return True
-
-    # ---------- public: delete ----------
-    def delete_for_po(self, po, note="Cancelled/Deleted from Odoo"):
-        """Delete inbound forecast group when PO is cancelled or deleted."""
-        if not self._is_allowed_instance():
-            return False
-        base, user, pwd, _tz, _wh, _allow = self._conf()
-        if not user or not pwd:
-            _logger.error("[Monta IF] Missing credentials; cannot delete group for %s", po.name)
-            return False
-        auth = HTTPBasicAuth(user, pwd)
-        ok = self._delete_group(base, auth, po, note=note)
-        return ok
