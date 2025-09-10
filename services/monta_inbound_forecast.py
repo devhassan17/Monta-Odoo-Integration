@@ -10,16 +10,6 @@ class MontaInboundForecastService(models.AbstractModel):
     _name = 'monta.inbound.forecast.service'
     _description = 'Create/Update Inbound Forecast in Monta (idempotent + line upserts)'
 
-    # ---------- feature toggle ----------
-    def _is_enabled(self) -> bool:
-        """Global on/off switch via ICP `monta.inbound_enable` (default False)."""
-        try:
-            ICP = self.env['ir.config_parameter'].sudo()
-            val = (ICP.get_param('monta.inbound_enable') or '').strip().lower()
-            return val in ('1', 'true', 'yes', 'on')
-        except Exception:
-            return False
-
     # ---------- config ----------
     def _conf(self):
         ICP = self.env['ir.config_parameter'].sudo()
@@ -192,14 +182,11 @@ class MontaInboundForecastService(models.AbstractModel):
 
     # ---------- public entry ----------
     def send_for_po(self, po):
-        # FEATURE FLAG — hard stop when disabled
-        if not self._is_enabled():
+        # Feature flag still respected (use System Parameter: monta.inbound_enable = 1 / true)
+        ICP = self.env['ir.config_parameter'].sudo()
+        inbound_enable = (ICP.get_param('monta.inbound_enable') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        if not inbound_enable:
             _logger.info("[Monta IF] Disabled by ICP 'monta.inbound_enable' — skipping PO %s", po.name)
-            try:
-                po._create_monta_log({'IF': {'step': 'SKIP', 'reason': "monta.inbound_enable is false/empty"}},
-                                     'info', 'Monta IF', console_summary='[Monta IF] disabled')
-            except Exception:
-                pass
             return False
 
         if po.state not in ('purchase', 'done'):
@@ -215,8 +202,10 @@ class MontaInboundForecastService(models.AbstractModel):
             raise ValueError("SupplierCode is missing/invalid. Set vendor.x_monta_supplier_code "
                              "or configure ICP 'monta.supplier_code_map' / 'monta.supplier_code_override'.")
 
+        # 1) Idempotent existence check
         st, body = self._get_group(base, auth, po)
         if st == 404:
+            # 2a) Create with lines
             st2, body2 = self._create_group_with_lines(base, auth, po, header, self._collect_lines(po, edd), edd)
             if 200 <= (st2 or 0) < 300:
                 uid = body2.get("UniqueId")
@@ -227,18 +216,42 @@ class MontaInboundForecastService(models.AbstractModel):
                         pass
                 _logger.info("[Monta IF] ✅ Created group for %s", po.name)
                 return True
+            # if POST failed for some reason but conflict-like, fall through to PUT + upsert
             body = body2
         elif 200 <= (st or 0) < 300:
             pass
         else:
             raise RuntimeError(f"GET group failed for {po.name}: HTTP {st} {body}")
 
+        # 2b) Ensure header exists/updated
         st3, body3 = self._put_header(base, auth, po, header)
         if not (200 <= (st3 or 0) < 300):
             raise RuntimeError(f"PUT header failed for {po.name}: HTTP {st3} {body3}")
 
+        # 3) Upsert lines (always)
         existing = self._get_existing_skus(body if st == 200 else body3 if isinstance(body3, dict) else {})
         self._upsert_lines(base, auth, po, edd, existing)
 
         _logger.info("[Monta IF] ✅ Header synced and lines upserted for %s", po.name)
         return True
+
+    # ---------- delete ----------
+    def delete_for_po(self, po, note="Cancelled/Deleted from Odoo"):
+        ICP = self.env['ir.config_parameter'].sudo()
+        inbound_enable = (ICP.get_param('monta.inbound_enable') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        if not inbound_enable:
+            _logger.info("[Monta IF] Disabled by ICP 'monta.inbound_enable' — delete skipped for %s", po.name)
+            return False
+
+        base, user, pwd, _tz, _wh = self._conf()
+        auth = HTTPBasicAuth(user, pwd)
+
+        url = f"{base}/inboundforecast/group/{po.name}"
+        headers = {"Content-Type": "application/json-patch+json", "Accept": "application/json"}
+        payload = {"Note": note}
+        st, body = self._http(po, "DELETE", url, payload, auth=auth, headers=headers)
+        if st in (200, 204):
+            _logger.info("[Monta IF] ✅ Deleted group for %s", po.name)
+            return True
+        _logger.error("[Monta IF] Delete failed for %s: HTTP %s %s", po.name, st, body)
+        return False
