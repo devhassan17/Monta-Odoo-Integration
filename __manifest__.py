@@ -10,9 +10,7 @@
     "auto_install": False,
     "application": False,
     "license": "LGPL-3",
-    # hooks (pure Python)
-    # If you don't create anything on install, omit post_init_hook
-    # "post_init_hook": "post_init_hook",
+    "post_init_hook": "post_init_hook",
     "assets": {
         "web.assets_backend": [
             "Monta-Odoo-Integration/static/src/js/commitment_autofill.js",
