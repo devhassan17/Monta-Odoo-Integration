@@ -1,7 +1,7 @@
 {
     "name": "Monta-Odoo Integration",
     "version": "1.0.0",
-    "author": "Ali Hassan26",
+    "author": "Ali Hassan27",
     "category": "Sales",
     "summary": "Monta WMS integration: Orders, EDD, Inbound Forecast",
     "depends": ["sale_management", "mrp", "purchase"],
