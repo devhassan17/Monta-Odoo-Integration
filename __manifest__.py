@@ -10,7 +10,6 @@
     "auto_install": False,
     "application": False,
     "license": "LGPL-3",
-    "post_init_hook": "post_init_hook",
     "assets": {
         "web.assets_backend": [
             "Monta-Odoo-Integration/static/src/js/commitment_autofill.js",
