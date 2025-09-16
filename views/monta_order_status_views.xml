@@ -4,7 +4,7 @@
     <record id="action_monta_order_status" model="ir.actions.act_window">
         <field name="name">Monta Orders</field>
         <field name="res_model">monta.order.status</field>
-        <field name="view_mode">tree,form</field>
+        <field name="view_mode">list,form</field>
         <field name="context">{}</field>
         <field name="help">Read-only mirror of Monta status for Sales Orders.</field>
     </record>
@@ -14,12 +14,12 @@
     <menuitem id="menu_monta_orders" name="Orders"
               parent="menu_monta_root" action="action_monta_order_status" sequence="10"/>
 
-    <!-- Tree -->
-    <record id="view_monta_order_status_tree" model="ir.ui.view">
-        <field name="name">monta.order.status.tree</field>
+    <!-- LIST (Odoo 18) -->
+    <record id="view_monta_order_status_list" model="ir.ui.view">
+        <field name="name">monta.order.status.list</field>
         <field name="model">monta.order.status</field>
         <field name="arch" type="xml">
-            <tree string="Monta Orders" create="false" delete="false" edit="false">
+            <list string="Monta Orders" create="false" delete="false" edit="false">
                 <field name="order_name"/>
                 <field name="sale_order_id"/>
                 <field name="status"/>
@@ -28,11 +28,11 @@
                 <field name="track_trace"/>
                 <field name="delivery_date"/>
                 <field name="last_sync"/>
-            </tree>
+            </list>
         </field>
     </record>
 
-    <!-- Form -->
+    <!-- FORM -->
     <record id="view_monta_order_status_form" model="ir.ui.view">
         <field name="name">monta.order.status.form</field>
         <field name="model">monta.order.status</field>

@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import models, api, fields
 import logging
-from odoo.tools import mute_logger
-
 _logger = logging.getLogger(__name__)
 
 class MontaOrderStatus(models.Model):
@@ -10,11 +8,14 @@ class MontaOrderStatus(models.Model):
 
     @api.model
     def _resolve_and_upsert(self, sale_order):
-        """Fetch from Monta and upsert into monta.order.status (no change to sale.order)."""
-        from odoo.addons.Monta_Odoo_Integration.services.monta_status_resolver import MontaStatusResolver
+        """Fetch from Monta and upsert into monta.order.status (no write to sale.order)."""
+        # use RELATIVE import because your module name contains a hyphen
+        from ..services.monta_status_resolver import MontaStatusResolver
+
         resolver = MontaStatusResolver(self.env)
-        ref = sale_order.name  # you can change this if you map differently
+        ref = sale_order.name
         status, meta = resolver.resolve(ref)
+
         vals = {
             "sale_order_id": sale_order.id,
             "order_name": ref,
@@ -36,14 +37,14 @@ class MontaOrderStatus(models.Model):
 
     @api.model
     def cron_monta_sync_status(self, batch_limit=50):
-        """Hourly cron entry point — only reads sale.order and writes *our* model."""
+        """Hourly cron — reads sale.order and writes *our* model only."""
         dom = [("state", "in", ["sale", "done"])]
         orders = self.env["sale.order"].search(dom, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Cron sync: %s orders", len(orders))
         for so in orders:
             try:
                 self._resolve_and_upsert(so)
-            except Exception as e:
-                _logger.exception("Monta sync failed for %s: %s", so.name, e)
+            except Exception:
+                _logger.exception("Monta sync failed for %s", so.name)
         _logger.info("[Monta] Cron finished")
         return True

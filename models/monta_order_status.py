@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import models, fields, api, _
+from odoo import models, fields
 
 class MontaOrderStatus(models.Model):
     _name = "monta.order.status"
@@ -10,11 +10,12 @@ class MontaOrderStatus(models.Model):
         "sale.order", string="Sales Order", index=True, ondelete="cascade", required=True
     )
     order_name = fields.Char(string="Order Name", index=True, required=True)
-    source = fields.Char(string="API Source")                     # e.g., shipments?/orders?/events?
-    status = fields.Char(string="Status")                         # e.g., Delivered / Blocked / Shipped / etc.
-    status_code = fields.Char(string="Status Code")               # numeric/text from Monta
-    track_trace = fields.Char(string="Track & Trace URL")         # URL (if any)
-    delivery_date = fields.Datetime(string="Delivery Date")       # NEW: from Monta
+
+    source = fields.Char(string="API Source")            # orders / shipments / events
+    status = fields.Char(string="Status")                # Delivered / Blocked / Shipped / etc.
+    status_code = fields.Char(string="Status Code")      # numeric/text code from Monta
+    track_trace = fields.Char(string="Track & Trace URL")
+    delivery_date = fields.Datetime(string="Delivery Date")  # << requested new field
     last_sync = fields.Datetime(string="Last Sync (UTC)", index=True)
 
     _sql_constraints = [
@@ -22,8 +23,7 @@ class MontaOrderStatus(models.Model):
     ]
 
     def name_get(self):
-        out = []
+        res = []
         for rec in self:
-            label = f"{rec.order_name} — {rec.status or '-'}"
-            out.append((rec.id, label))
-        return out
+            res.append((rec.id, f"{rec.order_name} — {rec.status or '-'}"))
+        return res

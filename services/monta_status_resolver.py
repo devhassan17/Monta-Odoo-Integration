@@ -4,8 +4,6 @@ import requests
 from urllib.parse import urljoin
 
 class MontaStatusResolver:
-    """Fetch Monta status/metadata for a given order reference."""
-
     def __init__(self, env):
         self.env = env
         ICP = env["ir.config_parameter"].sudo()
@@ -93,7 +91,6 @@ class MontaStatusResolver:
         return None
 
     def resolve(self, order_ref):
-        # 1) orders?search=
         sc, orders = self._get("orders", {"search": order_ref})
         if not (200 <= sc < 300 and isinstance(orders, list) and orders):
             sc2, orders2 = self._get("orders", {"clientReference": order_ref})
@@ -115,7 +112,6 @@ class MontaStatusResolver:
             "webshopOrderId": o.get("WebshopOrderId") or o.get("InternalWebshopOrderId"),
         }
 
-        # 2) shipments
         ship_status = ship_tt = ship_date = ship_src = None
         for params, lbl in [
             ({"orderId": refs["orderId"]}, "shipments?orderId"),
@@ -143,7 +139,6 @@ class MontaStatusResolver:
             if ship_status:
                 break
 
-        # 3) order events (fallback)
         event_status = event_src = None
         if not ship_status:
             for params, lbl in [
@@ -168,7 +163,6 @@ class MontaStatusResolver:
                         event_src = lbl
                         break
 
-        # 4) order header fallback
         order_status = self._pick_status(o) or self._derive_order_status(o)
         order_tt = self._pick_track_trace(o)
         order_date = self._pick_delivery_date(o)
