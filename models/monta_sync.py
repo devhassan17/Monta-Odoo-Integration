@@ -1,104 +1,135 @@
-# odoo/addons/Monta-Odoo-Integration/models/monta_sync.py
-from odoo import api, fields, models, _
 import logging
+from odoo import api, fields, models
+
 _logger = logging.getLogger(__name__)
+
+VALID_SOURCES = ("orders", "shipments")
 
 class MontaOrderStatus(models.Model):
     _name = "monta.order.status"
-    _description = "Monta Order Status"
-    _rec_name = "order_name"
+    _description = "Monta Order Status (read through from Monta)"
+    _order = "id desc"
 
-    sale_order_id = fields.Many2one("sale.order", index=True)
-    order_name     = fields.Char(index=True)
-    status         = fields.Char()
-    status_code    = fields.Char()
-    source         = fields.Selection([("orders","orders"),("shipments","shipments")], default="orders")
-    track_trace    = fields.Char()
-    delivery_date  = fields.Date()
-    last_sync      = fields.Datetime(default=lambda self: fields.Datetime.now())
+    sale_order_id = fields.Many2one("sale.order", index=True, ondelete="cascade")
+    order_name    = fields.Char(index=True)
+    status        = fields.Char()
+    status_code   = fields.Char()
+    source        = fields.Selection(selection=[(s, s) for s in VALID_SOURCES], default="orders")
+    track_trace   = fields.Char()
+    delivery_date = fields.Date()
+    last_sync     = fields.Datetime()
 
-    # ---- Monta client helpers (replace request impl with yours) ----
-    def _monta_get_order(self, name):
-        """Return dict from Monta 'orders' endpoint; {} if none."""
-        return self.env["monta.http"].sudo().get_json(f"/orders/{name}") or {}
+    _sql_constraints = [
+        ("order_unique", "unique(order_name)", "One status row per Monta order."),
+    ]
 
-    def _monta_get_shipment(self, name):
-        """Fallback: shipments view of the same reference."""
-        return self.env["monta.http"].sudo().get_json(f"/shipments/{name}") or {}
+    # -----------------------------
+    # Helper: pull via existing SO method (no monta.http)
+    # -----------------------------
+    def _pull_via_sale_order(self, so):
+        """
+        Use the module’s existing integration:
+        - call so.action_monta_sync_status()
+        - read fields from sale.order
+        Returns a dict with normalized keys.
+        """
+        # Call the method you already used manually
+        try:
+            so.sudo().action_monta_sync_status()
+        except Exception as e:
+            _logger.exception("Monta sync via sale.order failed for %s", so.name)
+            return {}
 
-    # ---- Single upsert from Monta to our table ---------------------
-    def _resolve_and_upsert(self, so):
-        name = so.name
-        data = self._monta_get_order(name) or {}
-        src = "orders"
-        if not data:
-            data = self._monta_get_shipment(name) or {}
-            src = "shipments"
+        vals = so.read([
+            "name",
+            "monta_status",
+            "monta_status_code",
+            "monta_status_source",
+            "monta_track_trace",
+            "monta_last_sync",
+            "x_monta_delivery_date",  # optional Studio field
+        ])[0]
 
-        if not data:
-            return False
-
-        vals = {
-            "sale_order_id": so.id,
-            "order_name": name,
-            "status": data.get("DeliveryStatusDescription") or data.get("Status") or "",
-            "status_code": str(data.get("DeliveryStatusCode") or data.get("StatusID") or "" ),
-            "source": src,
-            "track_trace": data.get("TrackAndTraceUrl") or data.get("TrackAndTraceLink") or False,
-            # Monta dates are usually ISO strings -> keep date part
-            "delivery_date": (data.get("DeliveryDate") or data.get("PlannedDeliveryDate") or "")[:10] or False,
-            "last_sync": fields.Datetime.now(),
+        return {
+            "order_name": vals.get("name"),
+            "status": vals.get("monta_status") or "",
+            "status_code": (vals.get("monta_status_code") or "") and str(vals.get("monta_status_code")),
+            "source": vals.get("monta_status_source") if vals.get("monta_status_source") in VALID_SOURCES else "orders",
+            "track_trace": vals.get("monta_track_trace") or False,
+            "delivery_date": vals.get("x_monta_delivery_date") or False,
+            "last_sync": vals.get("monta_last_sync") or fields.Datetime.now(),
         }
 
-        rec = self.sudo().search([("sale_order_id","=",so.id)], limit=1)
+    # -----------------------------
+    # Upsert & mirror
+    # -----------------------------
+    @api.model
+    def _upsert_from_sale_order(self, so):
+        data = self._pull_via_sale_order(so)
+        if not data or not data.get("order_name"):
+            return False
+
+        rec = self.search([("order_name", "=", data["order_name"])], limit=1)
+        vals = dict(
+            sale_order_id=so.id,
+            order_name=data["order_name"],
+            status=data["status"],
+            status_code=data["status_code"],
+            source=data["source"],
+            track_trace=data["track_trace"],
+            delivery_date=data["delivery_date"],
+            last_sync=data["last_sync"],
+        )
         if rec:
             rec.write(vals)
-            _logger.info("[Monta] Updated status row for %s", name)
+            _logger.info("[Monta] Updated status row for %s", data["order_name"])
         else:
-            rec = self.sudo().create(vals)
-            _logger.info("[Monta] Created status row for %s", name)
+            rec = self.create(vals)
+            _logger.info("[Monta] Created status row for %s", data["order_name"])
+
+        # Mirror back onto sale.order so Studio columns render in Sales dashboard
+        mirror_vals = {
+            "monta_order_id": rec.id,  # if you have an M2O/Integer helper field
+            "monta_status": rec.status or False,
+            "monta_status_code": rec.status_code or False,
+            "monta_status_source": rec.source if rec.source in VALID_SOURCES else "orders",
+            "monta_track_trace": rec.track_trace or False,
+            "monta_last_sync": rec.last_sync,
+        }
+        # Optional Studio field (ignore if not present on model)
+        if "x_monta_delivery_date" in so._fields:
+            mirror_vals["x_monta_delivery_date"] = rec.delivery_date or False
+
+        try:
+            so.sudo().write(mirror_vals)
+        except Exception as e:
+            # Don’t break the sync if Studio field or source selection misconfigured
+            safe = mirror_vals.copy()
+            safe.pop("x_monta_delivery_date", None)
+            try:
+                so.sudo().write(safe)
+            except Exception:
+                _logger.exception("[Monta] Mirror write failed on sale.order %s", so.name)
+
         return rec
 
-    # ---- Mirror back to Studio fields on sale.order ----------------
-    def _mirror_to_sale(self, rec):
-        so = rec.sale_order_id
-        if not so:
-            return
-        updates = {}
-        # Only write into fields that exist on sale.order (Studio or native).
-        fields_to_check = self.env["ir.model.fields"].sudo().search_read([
-            ("model", "=", "sale.order"),
-            ("name", "in", [
-                "monta_status","monta_status_code","monta_status_source",
-                "monta_track_trace","monta_last_sync","x_monta_delivery_date",
-            ]),
-        ], ["name"])
-        existing = {f["name"] for f in fields_to_check}
-
-        if "monta_status" in existing:         updates["monta_status"] = rec.status or False
-        if "monta_status_code" in existing:     updates["monta_status_code"] = rec.status_code or False
-        if "monta_status_source" in existing:   updates["monta_status_source"] = rec.source  # 'orders'/'shipments'
-        if "monta_track_trace" in existing:     updates["monta_track_trace"] = rec.track_trace or False
-        if "monta_last_sync" in existing:       updates["monta_last_sync"] = rec.last_sync
-        if "x_monta_delivery_date" in existing: updates["x_monta_delivery_date"] = rec.delivery_date or False
-
-        if updates:
-            # prevent chatter spam
-            so.with_context(mail_create_nolog=True, tracking_disable=True).sudo().write(updates)
-
-    # ---- Cron entry point -----------------------------------------
+    # -----------------------------
+    # Cron entry point (every 30 minutes)
+    # -----------------------------
     @api.model
     def cron_monta_sync_status(self, batch_limit=200):
-        """Hourly job: pull Monta *orders* first; mirror to Studio fields."""
-        SO = self.env["sale.order"].sudo()
-        # choose candidates: orders that look like Monta refs (BC/S*) or already linked
+        """
+        Scan recent/eligible orders, pull Monta status through sale.order’s own
+        action, upsert our table, and mirror values back to sale.order.
+        """
         dom = ["|", ("name", "=like", "BC%"), ("name", "=like", "S%")]
-        sos = SO.search(dom, limit=batch_limit)
-        count = 0
+        sos = self.env["sale.order"].sudo().search(dom, limit=batch_limit, order="id desc")
+
+        processed = 0
         for so in sos:
-            rec = self._resolve_and_upsert(so)
+            rec = self._upsert_from_sale_order(so)
             if rec:
-                self._mirror_to_sale(rec)
-                count += 1
-        _logger.info("[Monta] Cron finished, processed %s orders", count)
+                processed += 1
+
+        _logger.info("[Monta] Cron finished, processed %s orders", processed)
         return True

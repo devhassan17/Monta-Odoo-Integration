@@ -1,0 +1,19 @@
+<odoo noupdate="1">
+  <record id="ir_cron_monta_status_30min" model="ir.cron">
+    <field name="name">Monta: Sync order status (30 min)</field>
+    <field name="model_id" ref="base.model_ir_actions_server"/> <!-- temp placeholder; set via code -->
+    <field name="state">code</field>
+    <field name="code">env['monta.order.status'].cron_monta_sync_status(batch_limit=200)</field>
+    <field name="active">True</field>
+    <field name="interval_type">minutes</field>
+    <field name="interval_number">30</field>
+    <field name="nextcall" eval="(DateTime.now())"/>
+    <field name="user_id" ref="base.user_root"/>
+  </record>
+
+  <!-- Fix model_id properly at install/upgrade (model ir.cron requires a model_id) -->
+  <function model="ir.cron" name="write">
+    <value eval="[ref('ir_cron_monta_status_30min')]"/>
+    <value eval="{'model_id': ref('Monta-Odoo-Integration.model_monta_order_status')}"/>
+  </function>
+</odoo>

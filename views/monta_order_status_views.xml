@@ -1,28 +1,49 @@
-<!-- odoo/addons/Monta-Odoo-Integration/views/monta_order_status_views.xml -->
 <odoo>
-  <record id="view_monta_order_status_tree" model="ir.ui.view">
+  <record id="view_monta_order_status_list" model="ir.ui.view">
     <field name="name">monta.order.status.list</field>
     <field name="model">monta.order.status</field>
     <field name="arch" type="xml">
-      <list string="Monta Orders">
+      <list string="Monta Status">
         <field name="order_name"/>
         <field name="sale_order_id"/>
         <field name="status"/>
-        <field name="status_code"/>
-        <field name="source"/>
-        <field name="track_trace"/>
+        <field name="status_code" width="90"/>
+        <field name="source" width="90"/>
+        <field name="track_trace" widget="url"/>
         <field name="delivery_date"/>
         <field name="last_sync"/>
       </list>
     </field>
   </record>
 
+  <record id="view_monta_order_status_form" model="ir.ui.view">
+    <field name="name">monta.order.status.form</field>
+    <field name="model">monta.order.status</field>
+    <field name="arch" type="xml">
+      <form string="Monta Status">
+        <sheet>
+          <group>
+            <field name="order_name" readonly="1"/>
+            <field name="sale_order_id" readonly="1"/>
+          </group>
+          <group>
+            <field name="status" readonly="1"/>
+            <field name="status_code" readonly="1"/>
+            <field name="source" readonly="1"/>
+          </group>
+          <group>
+            <field name="track_trace" widget="url" readonly="1"/>
+            <field name="delivery_date" readonly="1"/>
+            <field name="last_sync" readonly="1"/>
+          </group>
+        </sheet>
+      </form>
+    </field>
+  </record>
+
   <record id="action_monta_order_status" model="ir.actions.act_window">
-    <field name="name">Monta Orders</field>
+    <field name="name">Monta Status</field>
     <field name="res_model">monta.order.status</field>
     <field name="view_mode">list,form</field>
   </record>
-
-  <menuitem id="menu_monta_root" name="Monta"/>
-  <menuitem id="menu_monta_orders" name="Orders" parent="menu_monta_root" action="action_monta_order_status"/>
 </odoo>

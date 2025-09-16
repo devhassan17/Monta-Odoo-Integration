@@ -1,0 +1,6 @@
+<odoo>
+  <!-- Put the menu under Sales › Reporting (or wherever you prefer) -->
+  <menuitem id="menu_monta_root" name="Monta" parent="sale.menu_sale_reporting" sequence="90"/>
+  <menuitem id="menu_monta_status" name="Order Status" parent="menu_monta_root"
+            action="action_monta_order_status" sequence="10"/>
+</odoo>
