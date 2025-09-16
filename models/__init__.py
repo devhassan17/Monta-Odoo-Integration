@@ -6,7 +6,7 @@ from . import sale_order_line
 from . import sku_test_log
 from . import sale_order_inbound
 from . import inbound_expected_delivery
-from . import order_status
+from . import monta_order_status
 from . import purchase_order           # ok
 from . import res_partner_ext          # ok
 from . import stock_warehouse_ext    

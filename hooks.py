@@ -1,100 +1,70 @@
 # -*- coding: utf-8 -*-
-"""
-Programmatic cron (no XML) for Monta status sync.
+from odoo import SUPERUSER_ID
 
-Creates/updates a single ir.cron that calls:
-    model.cron_monta_sync_status()
+CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_hourly"
 
-Logging is minimal here; the heavy per-order logs live in models/monta_status_sync.py
-"""
-
-from datetime import datetime, timedelta
-from odoo import api, SUPERUSER_ID
-
-
-_CRON_XMLID = "monta_order_status_sync.cron_monta_status_sync"  # internal name; not from XML
-_CRON_NAME = "Monta: Sync Order Status (hourly)"
-_CRON_MODEL = "sale.order"
-_CRON_METHOD = "cron_monta_sync_status"
-_CRON_INTERVAL_NUMBER = 1
-_CRON_INTERVAL_TYPE = "hours"
-
-
-def _ensure_cron(env):
-    """Create or update the cron safely."""
-    IrModel = env["ir.model"].sudo()
-    IrCron = env["ir.cron"].sudo()
-    IrModelData = env["ir.model.data"].sudo()
-
-    # Resolve model id
-    sale_model = IrModel.search([("model", "=", _CRON_MODEL)], limit=1)
-    if not sale_model:
-        return
-
-    # Try to find existing via ir.model.data xmlid-like record
-    rec = IrModelData.search(
-        [("module", "=", "monta_order_status_sync"), ("name", "=", "cron_monta_status_sync")],
-        limit=1,
-    )
-    cron = IrCron.browse(rec.res_id).exists() if rec else IrCron.search(
-        [("name", "=", _CRON_NAME), ("model_id", "=", sale_model.id)], limit=1
-    )
-
-    vals = {
-        "name": _CRON_NAME,
-        "model_id": sale_model.id,
-        "state": "code",
-        "code": "model.%s()" % _CRON_METHOD,
-        "interval_number": _CRON_INTERVAL_NUMBER,
-        "interval_type": _CRON_INTERVAL_TYPE,
-        "numbercall": -1,
-        "doall": False,
-        "active": True,
-        # start a few minutes from now to avoid top-of-hour thundering herd
-        "nextcall": (datetime.utcnow() + timedelta(minutes=7)).strftime("%Y-%m-%d %H:%M:%S"),
-    }
-
+def _ensure_hourly_cron(env):
+    cron = env.ref(CRON_XMLID, raise_if_not_found=False)
     if cron:
-        # Update existing cron in place (keep id stable)
-        cron.write(vals)
-    else:
-        cron = IrCron.create(vals)
-        # create a model data row so future upgrades find it again
-        IrModelData.create({
-            "name": "cron_monta_status_sync",
-            "module": "monta_order_status_sync",
-            "model": "ir.cron",
-            "res_id": cron.id,
-            "noupdate": True,
-        })
+        return cron
+    cron = env["ir.cron"].sudo().create({
+        "name": "Monta: Sync Order Status (hourly, no SO write)",
+        "model_id": env["ir.model"]._get_id("monta.order.status"),
+        "state": "code",
+        "code": "env['monta.order.status'].cron_monta_sync_status(batch_limit=50)",
+        "interval_number": 1,
+        "interval_type": "hours",
+        "numbercall": -1,
+        "active": True,
+    })
+    env["ir.model.data"].sudo().create({
+        "name": "ir_cron_monta_status_hourly",
+        "module": "Monta-Odoo-Integration",
+        "res_id": cron.id,
+        "model": "ir.cron",
+        "noupdate": True,
+    })
+    return cron
+
+def post_init_hook(env):
+    _ensure_hourly_cron(env)
+    # Prime the table so you see data immediately
+    env["monta.order.status"].sudo().cron_monta_sync_status(batch_limit=25)
 
 
-def post_init_hook(cr, registry):
-    """Called right after module install."""
-    env = api.Environment(cr, SUPERUSER_ID, {})
-    _ensure_cron(env)
+def uninstall_hook(env):
+    """Executed right before uninstall is finalized.
 
+    - Remove cron
+    - Drop our custom columns in case they linger
+    - (Optional) remove Studio fields that start with 'x_monta_' on sale.order
+    """
+    # 1) Remove cron if present
+    cron = env.ref(CRON_XMLID, raise_if_not_found=False)
+    if cron:
+        cron.sudo().unlink()
 
-def uninstall_hook(cr, registry):
-    """Clean up the cron on uninstall (optional but tidy)."""
-    env = api.Environment(cr, SUPERUSER_ID, {})
-    IrModel = env["ir.model"].sudo()
-    IrCron = env["ir.cron"].sudo()
-    IrModelData = env["ir.model.data"].sudo()
+    # 2) Drop columns (idempotent)
+    env.cr.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='sale_order' AND column_name='monta_delivery_date') THEN
+                EXECUTE 'ALTER TABLE sale_order DROP COLUMN IF EXISTS monta_delivery_date CASCADE';
+            END IF;
+        END$$;
+    """)
 
-    sale_model = IrModel.search([("model", "=", _CRON_MODEL)], limit=1)
-    if not sale_model:
-        return
-
-    # Find via our model data entry
-    rec = IrModelData.search(
-        [("module", "=", "monta_order_status_sync"), ("name", "=", "cron_monta_status_sync")],
-        limit=1,
-    )
-    if rec:
-        IrCron.browse(rec.res_id).unlink()
-        rec.unlink()
-    else:
-        # Fallback cleanup by name/model
-        crons = IrCron.search([("name", "=", _CRON_NAME), ("model_id", "=", sale_model.id)])
-        crons.unlink()
+    # 3) OPTIONAL — purge Studio fields on sale.order beginning with x_monta_
+    #    Comment this block if you don't want to touch Studio records
+    studio_fields = env['ir.model.fields'].sudo().search([
+        ('model', '=', 'sale.order'),
+        ('name', 'like', 'x_monta_%'),
+    ])
+    for f in studio_fields:
+        # try drop column if exists
+        try:
+            env.cr.execute(f"ALTER TABLE sale_order DROP COLUMN IF EXISTS {f.name} CASCADE;")
+        except Exception:
+            pass
+        f.unlink()
