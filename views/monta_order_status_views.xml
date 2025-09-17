@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <odoo>
 
-  <!-- List (tree) view -->
-  <record id="view_monta_order_status_tree" model="ir.ui.view">
-    <field name="name">monta.order.status.tree</field>
+  <!-- List (grid) view -->
+  <record id="view_monta_order_status_list" model="ir.ui.view">
+    <field name="name">monta.order.status.list</field>
     <field name="model">monta.order.status</field>
     <field name="arch" type="xml">
-      <tree default_order="last_sync desc" create="0">
+      <list default_order="last_sync desc" create="0">
         <field name="order_name"/>
         <field name="sale_order_id"/>
         <field name="status"/>
@@ -15,7 +15,7 @@
         <field name="track_trace" widget="url"/>
         <field name="delivery_date"/>
         <field name="last_sync"/>
-      </tree>
+      </list>
     </field>
   </record>
 
@@ -70,11 +70,11 @@
     </field>
   </record>
 
-  <!-- Action + Menu (top-level, no external parent xmlid) -->
+  <!-- Action + Menu -->
   <record id="action_monta_order_status" model="ir.actions.act_window">
     <field name="name">Monta Orders</field>
     <field name="res_model">monta.order.status</field>
-    <field name="view_mode">tree,form</field>
+    <field name="view_mode">list,form</field>
     <field name="search_view_id" ref="view_monta_order_status_search"/>
   </record>
 
@@ -84,4 +84,5 @@
             parent="menu_monta_root"
             action="action_monta_order_status"
             sequence="10"/>
+
 </odoo>
