@@ -1,14 +1,14 @@
 {
     "name": "Monta-Odoo Integration",
-    "version": "1.0.0",
-    "author": "Ali Hassan39",
+    "version": "1.0.1",
+    "author": "Ali Hassan40",
     "category": "Sales",
     "summary": "Monta WMS integration: Orders, EDD, Inbound Forecast",
     "depends": ["sale_management", "mrp", "purchase"],
     "data": [
         "security/ir.model.access.csv",
         "views/monta_order_status_views.xml",
-        ],  # ← no XML
+    ],
     "installable": True,
     "auto_install": False,
     "application": True,
