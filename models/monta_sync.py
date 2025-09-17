@@ -7,45 +7,71 @@ _logger = logging.getLogger(__name__)
 class MontaOrderStatus(models.Model):
     _name = "monta.order.status"
     _description = "Monta Order Status snapshot"
-    _order = "last_sync desc, id desc"
+    _order = "last_sync desc"
 
-    order_name = fields.Char(required=True, index=True)
+    order_name   = fields.Char(required=True, index=True)
     sale_order_id = fields.Many2one("sale.order", ondelete="cascade", index=True)
-
-    # IMPORTANT: keep this a Selection to avoid the upgrade crash.
-    source = fields.Selection(
-        [("orders", "orders"), ("shipments", "shipments"), ("events", "events")],
-        default="orders",
-        string="API Source",
-        help="Where the status came from in Monta API.",
-    )
-    status = fields.Char(string="Status")
-    status_code = fields.Char(string="Status Code")
-    track_trace = fields.Char(string="Track & Trace URL")
-    delivery_date = fields.Datetime(string="Delivery Date")
-    last_sync = fields.Datetime(index=True, default=fields.Datetime.now)
+    status       = fields.Char()
+    status_code  = fields.Char()
+    source       = fields.Selection([("orders","orders"), ("shipments","shipments"), ("events","events")], default="orders")
+    track_trace  = fields.Char()
+    delivery_date = fields.Date()
+    last_sync    = fields.Datetime(index=True, default=fields.Datetime.now)
 
     _sql_constraints = [
         ("monta_order_name_unique", "unique(order_name)", "Monta order name must be unique."),
     ]
 
     # --------------------------- helpers ---------------------------
+
+    @staticmethod
+    def _first(obj):
+        if isinstance(obj, list) and obj:
+            return obj[0]
+        if isinstance(obj, dict):
+            return obj
+        return None
+
     def _monta_get_order(self, name: str) -> dict:
-        return self.env["monta.http"].sudo().get_json(f"/orders/{name}") or {}
+        """
+        Pull a single order by *searching* Monta first, because /orders/<human-name>
+        returns 404 on v6. We try:
+          - /orders?search=<name>
+          - /orders?clientReference=<name>
+          - If we get an 'Id', hydrate with /orders/<Id>
+        """
+        http = self.env["monta.http"].sudo()
+
+        for params in ({"search": name}, {"clientReference": name}, {"webshopOrderId": name}):
+            data = http.get_json("orders", params=params)
+            if isinstance(data, list) and data:
+                o = self._first(data)
+                # Hydrate by numeric Id if available
+                oid = (o or {}).get("Id")
+                if oid:
+                    full = http.get_json(f"orders/{oid}")
+                    if isinstance(full, dict) and full:
+                        return full
+                return o or {}
+            if isinstance(data, dict) and data:  # some envs return dict directly
+                return data
+
+        _logger.info("[Monta] No payload for order %s", name)
+        return {}
 
     @api.model
     def _map_monta_payload(self, so, data: dict) -> dict:
-        status_txt = data.get("DeliveryStatusDescription") or data.get("Status") or ""
+        status_txt = data.get("DeliveryStatusDescription") or data.get("Status") or data.get("CurrentStatus") or ""
         code = data.get("StatusID") or data.get("DeliveryStatusCode") or data.get("Code") or ""
-        tnt = data.get("TrackAndTraceLink") or data.get("TrackAndTraceUrl") or ""
-        # accept either date or datetime; store as datetime for UI clarity
-        delivery = data.get("DeliveryDate") or data.get("EstimatedDeliveryTo") or data.get("ShippedDate") or None
+        tnt = data.get("TrackAndTraceLink") or data.get("TrackAndTraceUrl") or data.get("TrackAndTrace") or ""
+        # prefer shipped / latest delivery style keys if present
+        delivery = data.get("DeliveryDate") or data.get("EstimatedDeliveryTo") or data.get("LatestDeliveryDate") or None
 
         return {
             "order_name": so.name,
             "sale_order_id": so.id,
-            "status": status_txt or False,
-            "status_code": str(code) if code not in (None, "") else False,
+            "status": status_txt,
+            "status_code": str(code) if code not in (None, "") else "",
             "source": "orders",
             "track_trace": tnt or False,
             "delivery_date": delivery or False,
@@ -53,7 +79,6 @@ class MontaOrderStatus(models.Model):
         }
 
     def _mirror_to_sale(self, rec):
-        """Mirror into sale.order if fields exist. No Studio dependency required."""
         so = rec.sale_order_id
         if not so:
             return
@@ -64,7 +89,7 @@ class MontaOrderStatus(models.Model):
         if "monta_status_code" in can:
             vals["monta_status_code"] = rec.status_code or False
         if "monta_status_source" in can:
-            vals["monta_status_source"] = rec.source or "orders"
+            vals["monta_status_source"] = rec.source
         if "monta_track_trace" in can:
             vals["monta_track_trace"] = rec.track_trace or False
         if "monta_last_sync" in can:
@@ -75,28 +100,29 @@ class MontaOrderStatus(models.Model):
             so.sudo().write(vals)
 
     # --------------------------- public API ---------------------------
+
     @api.model
     def _resolve_and_upsert(self, so):
         if not so or not so.name:
             return False
         data = self._monta_get_order(so.name)
         if not data:
-            _logger.info("[Monta] No payload for order %s", so.name)
             return False
 
         vals = self._map_monta_payload(so, data)
         rec = self.search([("order_name", "=", so.name)], limit=1)
         if rec:
             rec.sudo().write(vals)
+            _logger.info("[Monta] Updated status row for %s", so.name)
         else:
             rec = self.sudo().create(vals)
+            _logger.info("[Monta] Created status row for %s", so.name)
 
         self._mirror_to_sale(rec)
         return rec
 
     @api.model
     def cron_monta_sync_status(self, batch_limit=300):
-        """Picked up by cron: sync and mirror."""
         SO = self.env["sale.order"].sudo()
         dom = ["|", ("name", "=like", "BC%"), ("name", "=like", "S%")]
         orders = SO.search(dom, limit=batch_limit, order="id")
