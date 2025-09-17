@@ -1,63 +1,80 @@
-import logging
-from datetime import datetime, timedelta
-
 from odoo import api, SUPERUSER_ID
 
-_logger = logging.getLogger(__name__)
+MODULE = "Monta-Odoo-Integration"
+CRON_XMLID = f"{MODULE}.ir_cron_monta_status_halfhourly"
+CRON_NAME = "Monta: Sync order status every 30 min"
+STUDIO_DATE_FIELD = "x_monta_delivery_date"   # custom field on sale.order
 
-CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
+def _ensure_studio_date_field(env):
+    Fields = env["ir.model.fields"].sudo()
+    SaleModel = env["ir.model"].sudo().search([("model", "=", "sale.order")], limit=1)
+    exists = Fields.search([("model", "=", "sale.order"), ("name", "=", STUDIO_DATE_FIELD)], limit=1)
+    if not exists and SaleModel:
+        Fields.create({
+            "name": STUDIO_DATE_FIELD,
+            "model": "sale.order",
+            "model_id": SaleModel.id,
+            "ttype": "date",
+            "field_description": "Monta Delivery Date",
+            "store": True,
+        })
+        env.cr.commit()
 
-def _safe_ref(env, xmlid):
-    try:
-        return env.ref(xmlid)
-    except Exception:
-        return env['ir.model.data']
-
-def post_init_hook(cr, registry):
-    """Create a 30-min cron and run one initial sync + mirror (idempotent)."""
-    env = api.Environment(cr, SUPERUSER_ID, {})
+def _ensure_cron(env):
     Cron = env["ir.cron"].sudo()
     IMD = env["ir.model.data"].sudo()
-
-    # 1) Ensure cron exists (no XML data file, do it programmatically)
-    try:
-        env.ref(CRON_XMLID)
-        _logger.info("[Monta] Cron already exists: %s", CRON_XMLID)
-    except Exception:
-        model_id = env.ref("Monta-Odoo-Integration.model_monta_order_status").id
-        cron = Cron.create({
-            "name": "Monta: Sync order status (every 30 min)",
-            "model_id": model_id,
-            "state": "code",
-            "code": 'env["monta.order.status"].cron_monta_sync_status(batch_limit=300)',
-            "interval_type": "minutes",
-            "interval_number": 30,
-            "nextcall": datetime.utcnow(),  # run soon
-            "active": True,
-            "user_id": env.ref("base.user_root").id,
-        })
-        IMD.create({
-            "module": "Monta-Odoo-Integration",
-            "name": "ir_cron_monta_status_halfhourly",
-            "model": "ir.cron",
-            "res_id": cron.id,
-            "noupdate": True,
-        })
-        _logger.info("[Monta] Cron created and registered: %s (id=%s)", CRON_XMLID, cron.id)
-
-    # 2) Initial quick pass (does not fail install if HTTP not yet configured)
-    try:
-        env["monta.order.status"].sudo().cron_monta_sync_status(batch_limit=100)
-    except Exception as e:
-        _logger.warning("[Monta] Initial sync skipped: %s", e)
-
-
-def uninstall_hook(cr, registry):
-    """Remove the cron cleanly so uninstall doesn’t error."""
-    env = api.Environment(cr, SUPERUSER_ID, {})
     try:
         cron = env.ref(CRON_XMLID)
-        cron.sudo().unlink()
-        _logger.info("[Monta] Removed cron %s during uninstall", CRON_XMLID)
-    except Exception:
-        _logger.info("[Monta] Cron %s was not present, nothing to remove", CRON_XMLID)
+        return cron
+    except ValueError:
+        pass
+
+    model_id = env.ref(f"{MODULE}.model_monta_order_status").id
+    cron = Cron.create({
+        "name": CRON_NAME,
+        "model_id": model_id,
+        "state": "code",
+        "code": 'env["monta.order.status"].cron_monta_sync_status(batch_limit=500)',
+        "interval_type": "minutes",
+        "interval_number": 30,
+        "nextcall": fields.Datetime.now(env),
+        "user_id": env.ref("base.user_root").id,
+        "active": True,
+    })
+    # register xmlid for future upgrades
+    IMD.create({
+        "module": MODULE,
+        "name": "ir_cron_monta_status_halfhourly",
+        "model": "ir.cron",
+        "res_id": cron.id,
+        "noupdate": True,
+    })
+    env.cr.commit()
+    return cron
+
+def _initial_sync(env):
+    # run one pass and mirror to sale.order so Studio widgets update now
+    MOS = env["monta.order.status"].sudo()
+    MOS.cron_monta_sync_status(batch_limit=300)
+
+@api.model
+def post_init_hook(cr, registry):
+    env = api.Environment(cr, SUPERUSER_ID, {})
+    # 1) make sure Studio date exists
+    _ensure_studio_date_field(env)
+    # 2) create cron if missing
+    _ensure_cron(env)
+    # 3) first sync to populate list + mirror onto sale.order
+    _initial_sync(env)
+
+@api.model
+def uninstall_hook(cr, registry):
+    env = api.Environment(cr, SUPERUSER_ID, {})
+    # delete the cron
+    try:
+        env.ref(CRON_XMLID).sudo().unlink()
+    except ValueError:
+        pass
+    # delete the Studio field
+    Fields = env["ir.model.fields"].sudo()
+    Fields.search([("model", "=", "sale.order"), ("name", "=", STUDIO_DATE_FIELD)]).unlink()
