@@ -48,12 +48,12 @@
         </field>
     </record>
 
-    <!-- List (tree) view -->
+    <!-- List view -->
     <record id="view_monta_order_status_list" model="ir.ui.view">
         <field name="name">monta.order.status.list</field>
         <field name="model">monta.order.status</field>
         <field name="arch" type="xml">
-            <list string="Monta Orders" create="0" delete="0" editable="false">
+            <list string="Monta Orders" create="0" delete="0">
                 <field name="order_name"/>
                 <field name="sale_order_id"/>
                 <field name="status"/>
