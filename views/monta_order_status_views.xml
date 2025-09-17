@@ -1,25 +1,24 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <odoo>
-
-  <!-- List (grid) view -->
-  <record id="view_monta_order_status_list" model="ir.ui.view">
+  <!-- List -->
+  <record id="view_monta_order_status_tree" model="ir.ui.view">
     <field name="name">monta.order.status.list</field>
     <field name="model">monta.order.status</field>
     <field name="arch" type="xml">
-      <list default_order="last_sync desc" create="0">
+      <list string="Monta Orders" create="0" delete="0">
         <field name="order_name"/>
         <field name="sale_order_id"/>
         <field name="status"/>
-        <field name="status_code" optional="hide"/>
+        <field name="status_code"/>
         <field name="source"/>
-        <field name="track_trace" widget="url"/>
+        <field name="track_trace"/>
         <field name="delivery_date"/>
         <field name="last_sync"/>
       </list>
     </field>
   </record>
 
-  <!-- Search view -->
+  <!-- Search -->
   <record id="view_monta_order_status_search" model="ir.ui.view">
     <field name="name">monta.order.status.search</field>
     <field name="model">monta.order.status</field>
@@ -30,59 +29,59 @@
         <field name="status"/>
         <field name="status_code"/>
         <field name="source"/>
-        <filter name="src_orders" string="Orders API" domain="[('source','=','orders')]"/>
-        <filter name="src_shipments" string="Shipments API" domain="[('source','=','shipments')]"/>
-        <separator/>
-        <filter name="recent" string="Synced Today" domain="[('last_sync','&gt;=', (context_today()).strftime('%%Y-%%m-%%d 00:00:00'))]"/>
-        <separator/>
+        <field name="track_trace"/>
+        <field name="delivery_date"/>
+        <field name="last_sync"/>
+        <filter string="Shipped" name="flt_shipped" domain="[('status','ilike','ship')]" help="Shipped / In transit"/>
+        <filter string="Has Track&Trace" name="flt_tt" domain="[('track_trace','!=',False)]"/>
         <group expand="0" string="Group By">
-          <filter name="grp_source" string="Source" context="{'group_by':'source'}"/>
-          <filter name="grp_status" string="Status" context="{'group_by':'status'}"/>
-          <filter name="grp_date" string="Delivery Date" context="{'group_by':'delivery_date'}"/>
+          <filter string="Source" context="{'group_by':'source'}"/>
+          <filter string="Status" context="{'group_by':'status'}"/>
+          <filter string="Sales Order" context="{'group_by':'sale_order_id'}"/>
+          <filter string="Delivery Date" context="{'group_by':'delivery_date'}"/>
         </group>
       </search>
     </field>
   </record>
 
-  <!-- Form view -->
+  <!-- Form -->
   <record id="view_monta_order_status_form" model="ir.ui.view">
     <field name="name">monta.order.status.form</field>
     <field name="model">monta.order.status</field>
     <field name="arch" type="xml">
-      <form string="Monta Order Status">
+      <form string="Monta Order Snapshot" create="0" delete="0" edit="0">
         <sheet>
           <group>
-            <group>
-              <field name="order_name" readonly="1"/>
-              <field name="sale_order_id" readonly="1"/>
-              <field name="status" readonly="1"/>
-              <field name="status_code" readonly="1"/>
-            </group>
-            <group>
-              <field name="source" readonly="1"/>
-              <field name="track_trace" widget="url" readonly="1"/>
-              <field name="delivery_date" readonly="1"/>
-              <field name="last_sync" readonly="1"/>
-            </group>
+            <field name="order_name" readonly="1"/>
+            <field name="sale_order_id" readonly="1"/>
+          </group>
+          <group>
+            <field name="status" readonly="1"/>
+            <field name="status_code" readonly="1"/>
+            <field name="source" readonly="1"/>
+          </group>
+          <group>
+            <field name="track_trace" readonly="1"/>
+            <field name="delivery_date" readonly="1"/>
+            <field name="last_sync" readonly="1"/>
           </group>
         </sheet>
       </form>
     </field>
   </record>
 
-  <!-- Action + Menu -->
+  <!-- Action -->
   <record id="action_monta_order_status" model="ir.actions.act_window">
     <field name="name">Monta Orders</field>
     <field name="res_model">monta.order.status</field>
     <field name="view_mode">list,form</field>
     <field name="search_view_id" ref="view_monta_order_status_search"/>
+    <field name="context">{}</field>
+    <field name="help" type="html">
+      <p class="o_view_nocontent_smiling_face">
+        No Monta snapshots yet
+      </p>
+      <p>They will appear after the cron runs (or run it manually in Odoo shell).</p>
+    </field>
   </record>
-
-  <menuitem id="menu_monta_root" name="Monta"/>
-  <menuitem id="menu_monta_status"
-            name="Monta Orders"
-            parent="menu_monta_root"
-            action="action_monta_order_status"
-            sequence="10"/>
-
 </odoo>
