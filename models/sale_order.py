@@ -274,9 +274,10 @@ class SaleOrder(models.Model):
 
     # ---------------- API calls ----------------
     def _monta_create(self):
+        """Minimal change: POST to /orders (v6)."""
         self.ensure_one()
         _logger.info("[Monta] Creating order %s", self.name)
-        status, body = self._monta_request('POST', '/order', self._prepare_monta_order_payload())
+        status, body = self._monta_request('POST', '/orders', self._prepare_monta_order_payload())
         if 200 <= status < 300:
             self.write({
                 'monta_order_id': self.name,
@@ -297,23 +298,56 @@ class SaleOrder(models.Model):
         return status, body
 
     def _monta_update(self):
+        """
+        Minimal change: resolve Monta internal Id via /orders?clientReference=...,
+        then PUT /orders/{Id}. Keep your fallback POST and all logging/states.
+        """
         self.ensure_one()
         webshop_id = self.monta_order_id or self.name
         _logger.info("[Monta] Updating order %s (idempotent by name)", webshop_id)
-        path = f"/order/{webshop_id}"
-        status, body = self._monta_request('PUT', path, self._prepare_monta_order_payload())
-        if 200 <= status < 300:
-            self.write({
-                'monta_order_id': webshop_id,
-                'monta_sync_state': 'updated' if self.monta_sync_state != 'sent' else 'sent',
-                'monta_last_push': fields.Datetime.now(),
-                'monta_needs_sync': False,
-            })
-            self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Update', '[Monta] order updated')
-            # Pull ETA now so commitment_date is set immediately
-            self._pull_and_apply_edd_now()
-            return status, body
 
+        # 1) Try to find order by clientReference/search
+        order_id = None
+        g_status, g_body = self._monta_request('GET', f"/orders?clientReference={webshop_id}")
+        if 200 <= g_status < 300 and isinstance(g_body, list) and g_body:
+            order_id = g_body[0].get('Id') or g_body[0].get('id')
+
+        if not order_id:
+            # last resort: generic search param
+            g2_status, g2_body = self._monta_request('GET', f"/orders?search={webshop_id}")
+            if 200 <= g2_status < 300 and isinstance(g2_body, list) and g2_body:
+                order_id = g2_body[0].get('Id') or g2_body[0].get('id')
+
+        # 2) If found -> PUT by Id, else try POST (keeps your behavior)
+        if order_id:
+            path = f"/orders/{order_id}"
+            status, body = self._monta_request('PUT', path, self._prepare_monta_order_payload())
+            if 200 <= status < 300:
+                self.write({
+                    'monta_order_id': webshop_id,
+                    'monta_sync_state': 'updated' if self.monta_sync_state != 'sent' else 'sent',
+                    'monta_last_push': fields.Datetime.now(),
+                    'monta_needs_sync': False,
+                })
+                self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Update', '[Monta] order updated')
+                self._pull_and_apply_edd_now()
+                return status, body
+        else:
+            # no Monta Id found, go straight to create
+            status, body = self._monta_request('POST', '/orders', self._prepare_monta_order_payload())
+            if 200 <= status < 300:
+                self.write({
+                    'monta_order_id': webshop_id,
+                    'monta_sync_state': 'sent',
+                    'monta_last_push': fields.Datetime.now(),
+                    'monta_needs_sync': False,
+                })
+                self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Create',
+                                       '[Monta] order created (no prior record)')
+                self._pull_and_apply_edd_now()
+                return status, body
+            # fall through to your original error handling below
+        # ---------------- keep ALL your existing error logic ----------------
         reason_codes = []
         try:
             reason_codes = [r.get('Code') for r in (body or {}).get('OrderInvalidReasons', [])]
@@ -331,7 +365,7 @@ class SaleOrder(models.Model):
 
         if status in (400, 404):
             _logger.warning("[Monta] Update failed (%s) for %s; attempting create...", status, webshop_id)
-            c_status, c_body = self._monta_request('POST', '/order', self._prepare_monta_order_payload())
+            c_status, c_body = self._monta_request('POST', '/orders', self._prepare_monta_order_payload())
             if 200 <= c_status < 300:
                 self.write({
                     'monta_order_id': webshop_id,
@@ -341,7 +375,6 @@ class SaleOrder(models.Model):
                 })
                 self._create_monta_log({'status': c_status, 'body': c_body}, 'info', 'Monta Create',
                                        '[Monta] order created (after update fallback)')
-                # Pull ETA now so commitment_date is set immediately
                 self._pull_and_apply_edd_now()
                 return c_status, c_body
 
@@ -355,13 +388,29 @@ class SaleOrder(models.Model):
         return status, body
 
     def _monta_delete(self, note="Cancelled from Odoo"):
+        """
+        Minimal change: delete via Monta Id when possible: DELETE /orders/{Id}.
+        Fallback to your previous /order/{webshop_id} endpoint if not found.
+        """
         self.ensure_one()
         webshop_id = self.monta_order_id or self.name
         if not webshop_id:
             return 204, {'note': 'No webshoporderid stored; nothing to delete.'}
-        headers = {"Content-Type": "application/json-patch+json", "Accept": "application/json"}
-        path = f"/order/{webshop_id}"
-        status, body = self._monta_request('DELETE', path, {"Note": note}, headers=headers)
+
+        # Try resolve Monta Id
+        order_id = None
+        g_status, g_body = self._monta_request('GET', f"/orders?clientReference={webshop_id}")
+        if 200 <= g_status < 300 and isinstance(g_body, list) and g_body:
+            order_id = g_body[0].get('Id') or g_body[0].get('id')
+
+        if order_id:
+            status, body = self._monta_request('DELETE', f"/orders/{order_id}", {"Note": note},
+                                               headers={"Content-Type": "application/json", "Accept": "application/json"})
+        else:
+            # fallback to legacy path you used before
+            headers = {"Content-Type": "application/json-patch+json", "Accept": "application/json"}
+            status, body = self._monta_request('DELETE', f"/order/{webshop_id}", {"Note": note}, headers=headers)
+
         if status in (200, 204):
             self.write({'monta_sync_state': 'cancelled'})
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Delete', '[Monta] order deleted')
