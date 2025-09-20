@@ -2,7 +2,6 @@
 import logging
 import requests
 from requests.auth import HTTPBasicAuth
-
 from odoo import models
 
 _logger = logging.getLogger(__name__)
