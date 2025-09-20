@@ -72,7 +72,6 @@
 
     <menuitem id="menu_monta_root"
               name="Monta"
-              parent="sale.menu_sale_root"
               sequence="90"
               groups="base.group_user"/>
 
