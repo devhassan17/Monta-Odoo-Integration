@@ -1,7 +1,4 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-Monta-Odoo-Integration.access_monta_order_status_user,access_monta_order_status_user,Monta-Odoo-Integration.model_monta_order_status,base.group_user,1,0,0,0
-Monta-Odoo-Integration.access_monta_order_status_manager,access_monta_order_status_manager,Monta-Odoo-Integration.model_monta_order_status,sales_team.group_sale_manager,1,1,0,0
-Monta-Odoo-Integration.access_monta_order_status_admin,access_monta_order_status_admin,Monta-Odoo-Integration.model_monta_order_status,base.group_system,1,1,1,1
-
-Monta-Odoo-Integration.access_monta_sale_log,access_monta_sale_log,Monta-Odoo-Integration.model_monta_sale_log,base.group_user,1,0,0,0
-Monta-Odoo-Integration.access_sku_test_log,access_sku_test_log,Monta-Odoo-Integration.model_sku_test_log,base.group_user,1,0,0,0
+access_monta_order_status_user,access_monta_order_status_user,model_monta_order_status,base.group_user,1,0,0,0
+access_monta_order_status_manager,access_monta_order_status_manager,model_monta_order_status,sales_team.group_sale_manager,1,1,0,0
+access_monta_order_status_admin,access_monta_order_status_admin,model_monta_order_status,base.group_system,1,1,1,1

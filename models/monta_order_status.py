@@ -10,47 +10,69 @@ class MontaOrderStatus(models.Model):
     _description = "Monta Order Status snapshot"
     _order = "last_sync desc, id desc"
 
+    # Links / identifiers
     sale_order_id = fields.Many2one(
         "sale.order", string="Sales Order", index=True, ondelete="cascade", required=True
     )
     order_name = fields.Char(string="Order Name", index=True, required=True)
-
     monta_order_ref = fields.Char(string="Monta Order Id/Number", index=True)
-    order_status = fields.Char(string="Order Status")
+
+    # Status fields (match the view)
+    status = fields.Char(string="Order Status")
+    status_code = fields.Char(string="Status Code")
+    source = fields.Char(string="Source", default="orders")
+
+    # Extra info
     delivery_message = fields.Char(string="Delivery Message")
-    track_trace_url = fields.Char(string="Track & Trace URL")
+    track_trace = fields.Char(string="Track & Trace URL")
     delivery_date = fields.Datetime(string="Delivery Date")
-    last_sync = fields.Datetime(string="Last Sync Time (UTC)", default=fields.Datetime.now, index=True)
+    last_sync = fields.Datetime(
+        string="Last Sync Time (UTC)",
+        default=fields.Datetime.now,
+        index=True,
+    )
 
     _sql_constraints = [
-        ("monta_order_name_unique", "unique(order_name)", "Monta order name must be unique."),
+        ("monta_order_name_unique",
+         "unique(order_name)",
+         "Monta order snapshot must be unique by order name."),
     ]
 
-    def name_get(self):
-        res = []
-        for rec in self:
-            title = rec.order_name or f"Status #{rec.id}"
-            if rec.order_status:
-                title = f"{title} — {rec.order_status}"
-            res.append((rec.id, title))
-        return res
-
     @api.model
-    def upsert_for_order(self, so, **vals):
-        if not so or not so.name:
-            return False
-        base_vals = {
-            "sale_order_id": so.id,
-            "order_name": so.name,
+    def _normalize_vals(self, vals):
+        """
+        Accept both legacy keys from existing code and the canonical field names.
+        (So we don't have to touch other parts of your module.)
+        """
+        # Allow callers to pass either 'status' OR 'order_status', etc.
+        return {
             "monta_order_ref": vals.get("monta_order_ref"),
-            "order_status": vals.get("order_status"),
+            "status": vals.get("status", vals.get("order_status")),
+            "status_code": vals.get("status_code", vals.get("monta_status_code")),
+            "source": vals.get("source", vals.get("monta_status_source", "orders")),
             "delivery_message": vals.get("delivery_message"),
-            "track_trace_url": vals.get("track_trace_url"),
+            "track_trace": vals.get("track_trace", vals.get("track_trace_url")),
             "delivery_date": vals.get("delivery_date"),
             "last_sync": vals.get("last_sync") or fields.Datetime.now(),
         }
-        rec = self.search([("order_name", "=", so.name)], limit=1)
+
+    @api.model
+    def upsert_for_order(self, so, **vals):
+        """
+        Create or update a single snapshot row per sale.order (keyed by order_name).
+        This is the method your cron calls. Safe to call repeatedly.
+        """
+        if not so or not so.id:
+            raise ValueError("upsert_for_order requires a valid sale.order record")
+
+        base_vals = self._normalize_vals(vals)
+        base_vals.update({
+            "sale_order_id": so.id,
+            "order_name": so.name,
+        })
+
+        rec = self.sudo().search([("order_name", "=", so.name)], limit=1)
         if rec:
-            rec.sudo().write(base_vals)
+            rec.write(base_vals)
             return rec
         return self.sudo().create(base_vals)
