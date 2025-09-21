@@ -12,12 +12,16 @@ class MontaOrderStatus(models.Model):
 
     # Links / identifiers
     sale_order_id = fields.Many2one(
-        "sale.order", string="Sales Order", index=True, ondelete="cascade", required=True
+        "sale.order",
+        string="Sales Order",
+        index=True,
+        ondelete="cascade",
+        required=True,
     )
     order_name = fields.Char(string="Order Name", index=True, required=True)
-    monta_order_ref = fields.Char(string="Monta Order Id/Number", index=True)
+    monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
-    # Status fields (match the view)
+    # Status (match views)
     status = fields.Char(string="Order Status")
     status_code = fields.Char(string="Status Code")
     source = fields.Char(string="Source", default="orders")
@@ -25,26 +29,24 @@ class MontaOrderStatus(models.Model):
     # Extra info
     delivery_message = fields.Char(string="Delivery Message")
     track_trace = fields.Char(string="Track & Trace URL")
-    delivery_date = fields.Datetime(string="Delivery Date")
+    delivery_date = fields.Date(string="Delivery Date")   # sample data is a date
     last_sync = fields.Datetime(
-        string="Last Sync Time (UTC)",
+        string="Last Sync (UTC)",
         default=fields.Datetime.now,
         index=True,
     )
 
     _sql_constraints = [
-        ("monta_order_name_unique",
-         "unique(order_name)",
-         "Monta order snapshot must be unique by order name."),
+        (
+            "monta_order_name_unique",
+            "unique(order_name)",
+            "Monta order snapshot must be unique by order name.",
+        ),
     ]
 
     @api.model
     def _normalize_vals(self, vals):
-        """
-        Accept both legacy keys from existing code and the canonical field names.
-        (So we don't have to touch other parts of your module.)
-        """
-        # Allow callers to pass either 'status' OR 'order_status', etc.
+        """Accept both legacy and canonical keys so other code doesn’t break."""
         return {
             "monta_order_ref": vals.get("monta_order_ref"),
             "status": vals.get("status", vals.get("order_status")),
@@ -60,16 +62,18 @@ class MontaOrderStatus(models.Model):
     def upsert_for_order(self, so, **vals):
         """
         Create or update a single snapshot row per sale.order (keyed by order_name).
-        This is the method your cron calls. Safe to call repeatedly.
+        Safe to call repeatedly.
         """
         if not so or not so.id:
             raise ValueError("upsert_for_order requires a valid sale.order record")
 
         base_vals = self._normalize_vals(vals)
-        base_vals.update({
-            "sale_order_id": so.id,
-            "order_name": so.name,
-        })
+        base_vals.update(
+            {
+                "sale_order_id": so.id,
+                "order_name": so.name,
+            }
+        )
 
         rec = self.sudo().search([("order_name", "=", so.name)], limit=1)
         if rec:
