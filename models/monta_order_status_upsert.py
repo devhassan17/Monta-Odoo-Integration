@@ -2,17 +2,17 @@
 from odoo import api, fields, models
 
 class MontaOrderStatus(models.Model):
-    _inherit = "monta.order.status"   # extend existing model; DO NOT re-declare fields
+    _inherit = "monta.order.status"   # extend the existing model only
 
     @api.model
     def _normalize_vals(self, vals):
-        """Map incoming keys and guard against unknown/invalid fields."""
+        """Map incoming keys and guard against invalid/unknown fields."""
         v = {}
         mapping = {
             "monta_order_ref": ["monta_order_ref"],
             "status": ["status", "order_status"],
             "status_code": ["status_code", "monta_status_code"],
-            "source": ["source", "monta_status_source"],
+            "source": ["source", "monta_status_source"],  # no default; validate below
             "delivery_message": ["delivery_message"],
             "track_trace": ["track_trace", "track_trace_url"],
             "delivery_date": ["delivery_date"],
@@ -24,34 +24,47 @@ class MontaOrderStatus(models.Model):
                     v[dest] = vals[k]
                     break
 
-        # default last_sync
-        if "last_sync" not in v and "last_sync" in self._fields:
+        # default last_sync if the field exists
+        if "last_sync" in self._fields and "last_sync" not in v:
             v["last_sync"] = fields.Datetime.now()
 
-        # keep only fields that really exist on the model
+        # keep only real fields on the model
         v = {k: v[k] for k in list(v.keys()) if k in self._fields}
 
-        # if 'source' is a selection, ensure value is allowed; otherwise drop it
-        if "source" in v and self._fields.get("source").type == "selection":
-            allowed = [key for key, _ in self._fields["source"].selection(self.env)]
+        # If 'source' is a selection, allow only valid keys
+        field = self._fields.get("source")
+        if "source" in v and field and getattr(field, "type", None) == "selection":
+            sel = field.selection
+            # selection can be a list OR a callable
+            if callable(sel):
+                try:
+                    options = sel(self.env)
+                except TypeError:
+                    # some old signatures expect 'self' (recordset)
+                    options = sel(self)
+            else:
+                options = sel or []
+            allowed = [opt[0] for opt in options]
             if v["source"] not in allowed:
-                v.pop("source")
+                v.pop("source", None)
+
         return v
 
     @api.model
     def upsert_for_order(self, so, **vals):
-        """Create/update a snapshot row per order. Safe to call repeatedly."""
+        """Create/update a snapshot row per sale.order (one row per order)."""
         if not so or not getattr(so, "id", False):
             raise ValueError("upsert_for_order requires a valid sale.order record")
 
         payload = self._normalize_vals(vals)
+
         # attach identifiers if those fields exist
         if "sale_order_id" in self._fields:
             payload["sale_order_id"] = so.id
         if "order_name" in self._fields:
             payload["order_name"] = so.name
 
-        # choose lookup key by preference
+        # choose lookup key
         domain = []
         if "order_name" in self._fields:
             domain = [("order_name", "=", so.name)]
