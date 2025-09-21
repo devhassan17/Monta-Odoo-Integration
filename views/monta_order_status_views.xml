@@ -2,12 +2,13 @@
 <odoo>
   <data>
 
-    <!-- TREE / LIST VIEW -->
+    <!-- LIST VIEW -->
     <record id="view_monta_order_status_tree" model="ir.ui.view">
-      <field name="name">monta.order.status.tree</field>
+      <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <tree string="Monta Order Status">
+        <!-- CHANGE tree -> list -->
+        <list string="Monta Order Status">
           <field name="order_name"/>
           <field name="sale_order_id"/>
           <field name="status"/>
@@ -18,11 +19,11 @@
           <field name="track_trace"/>
           <field name="delivery_date"/>
           <field name="last_sync"/>
-        </tree>
+        </list>
       </field>
     </record>
 
-    <!-- FORM VIEW -->
+    <!-- FORM VIEW (unchanged) -->
     <record id="view_monta_order_status_form" model="ir.ui.view">
       <field name="name">monta.order.status.form</field>
       <field name="model">monta.order.status</field>
@@ -50,7 +51,7 @@
       </field>
     </record>
 
-    <!-- SEARCH VIEW -->
+    <!-- SEARCH VIEW (unchanged) -->
     <record id="view_monta_order_status_search" model="ir.ui.view">
       <field name="name">monta.order.status.search</field>
       <field name="model">monta.order.status</field>
@@ -67,15 +68,15 @@
       </field>
     </record>
 
-    <!-- ACTION -->
+    <!-- ACTION: view_mode must use "list" -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Order Status</field>
       <field name="res_model">monta.order.status</field>
-      <field name="view_mode">tree,form</field>
+      <field name="view_mode">list,form</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
     </record>
 
-    <!-- MENUS (reuse your existing root if you already have one) -->
+    <!-- MENUS (leave as you had them) -->
     <menuitem id="menu_monta_root" name="Monta" sequence="90" groups="base.group_user"/>
     <menuitem id="menu_monta_order_status" name="Order Status"
               parent="menu_monta_root" action="action_monta_order_status"
