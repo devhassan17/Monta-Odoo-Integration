@@ -2,16 +2,25 @@
 import time
 import requests
 from urllib.parse import urljoin
+from odoo import fields
 
 
 class MontaStatusResolver:
     """
     Read-only resolver that:
-      1) finds an order via /orders?search=<ref> (fallbacks included),
+      1) finds an order via /orders?search=<ref> (with precise matching),
       2) hydrates with /orders/<Id> when available,
       3) tries shipments and orderevents for fresher status,
-      4) returns a normalized snapshot dict to store.
-    No writes to sale.order here.
+      4) returns a normalized (status_text, meta) tuple.
+
+    meta = {
+        "source": "shipments" | "events" | "orders",
+        "status_code": str | None,
+        "track_trace": str | None,
+        "delivery_date": date | None,
+        "delivery_message": str | None,
+        "monta_order_ref": str | None,
+    }
     """
 
     def __init__(self, env):
@@ -19,9 +28,8 @@ class MontaStatusResolver:
         ICP = env["ir.config_parameter"].sudo()
         self.base = (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").strip()
         self.user = (ICP.get_param("monta.username") or "").strip()
-        self.pwd  = (ICP.get_param("monta.password") or "").strip()
+        self.pwd = (ICP.get_param("monta.password") or "").strip()
         self.timeout = int(ICP.get_param("monta.timeout") or 20)
-
         if not (self.base and self.user and self.pwd):
             raise ValueError("Missing System Parameters: monta.base_url / monta.username / monta.password")
         if not self.base.endswith("/"):
@@ -31,7 +39,7 @@ class MontaStatusResolver:
         self.s.auth = (self.user, self.pwd)
         self.s.headers.update({"Accept": "application/json", "Cache-Control": "no-cache", "Pragma": "no-cache"})
 
-    # --------------- HTTP ---------------
+    # ---------------- HTTP ----------------
     def _get(self, path, params=None):
         params = dict(params or {})
         params["_ts"] = int(time.time())
@@ -42,7 +50,7 @@ class MontaStatusResolver:
         except Exception:
             return r.status_code, None
 
-    # --------------- pickers ---------------
+    # ---------------- helpers ----------------
     @staticmethod
     def _first(obj):
         if isinstance(obj, list) and obj:
@@ -50,6 +58,23 @@ class MontaStatusResolver:
         if isinstance(obj, dict):
             return obj
         return None
+
+    @staticmethod
+    def _match_order(candidates, needle):
+        """
+        Prefer an EXACT match on common reference fields; otherwise fallback to first.
+        This avoids grabbing the wrong order when 'search' returns multiple rows.
+        """
+        if not isinstance(candidates, list):
+            return None
+        keys = ["Reference", "ClientReference", "WebshopOrderId", "InternalWebshopOrderId"]
+        for row in candidates:
+            if not isinstance(row, dict):
+                continue
+            for k in keys:
+                if (row.get(k) or "") == needle:
+                    return row
+        return candidates[0] if candidates else None
 
     @staticmethod
     def _pick_status(d):
@@ -64,10 +89,9 @@ class MontaStatusResolver:
 
     @staticmethod
     def _pick_delivery_message(d):
-        """Human message when blocked / delayed etc."""
         if not isinstance(d, dict):
             return None
-        for k in ("BlockedMessage", "DeliveryMessage", "Message", "Reason"):
+        for k in ("BlockedMessage", "DeliveryMessage", "Message", "Reason", "Remark"):
             v = d.get(k)
             if v:
                 return v
@@ -77,7 +101,7 @@ class MontaStatusResolver:
     def _pick_delivery_date(d):
         if not isinstance(d, dict):
             return None
-        for k in ("DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate"):
+        for k in ("DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate", "ETA", "Eta"):
             v = d.get(k)
             if v:
                 return v
@@ -87,7 +111,7 @@ class MontaStatusResolver:
     def _pick_track_trace(d):
         if not isinstance(d, dict):
             return None
-        for k in ("TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl"):
+        for k in ("TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl", "trackTrace"):
             v = d.get(k)
             if v:
                 return v
@@ -124,47 +148,43 @@ class MontaStatusResolver:
             return f"DeliveryStatusId={o['DeliveryStatusId']}"
         return "Received / Pending workflow"
 
-    # --------------- resolve ---------------
+    # ---------------- resolve ----------------
     def resolve(self, order_ref):
         """
-        Returns: (status_text, meta)
-          meta:
-            {
-              "source": "shipments"|"orderevents"|"orders",
-              "status_code": ...,
-              "track_trace": ...,
-              "delivery_date": ...,
-              "delivery_message": ...,
-              "monta_order_ref": ...,   # WebshopOrderId/EorderGuid when available
-            }
+        Resolve one order by reference and return (status_text, meta).
         """
-        # Find order by search/clientReference/webshopOrderId, then hydrate by Id
+        # 1) Find order using search variants and choose the best match
         sc, orders = self._get("orders", {"search": order_ref})
-        if not (200 <= sc < 300 and isinstance(orders, list) and orders):
-            sc2, orders2 = self._get("orders", {"clientReference": order_ref})
-            orders = orders2 if (200 <= sc2 < 300 and isinstance(orders2, list) and orders2) else None
-        if not orders:
-            sc3, orders3 = self._get("orders", {"webshopOrderId": order_ref})
-            orders = orders3 if (200 <= sc3 < 300 and isinstance(orders3, list) and orders3) else None
+        if 200 <= sc < 300 and isinstance(orders, list) and orders:
+            o = self._match_order(orders, order_ref)
+        else:
+            o = None
 
-        o = self._first(orders) if orders else None
+        if not o:
+            for key in ("clientReference", "webshopOrderId"):
+                scx, ox = self._get("orders", {key: order_ref})
+                if 200 <= scx < 300 and isinstance(ox, list) and ox:
+                    o = self._match_order(ox, order_ref)
+                    break
+
         if not o:
             return None, {"reason": "Order not found"}
 
+        # hydrate by Id if available
         if o.get("Id"):
-            scid, o2 = self._get(f"orders/{o['Id']}")
-            if 200 <= scid < 300 and isinstance(o2, dict):
-                o = o2
+            scid, full = self._get(f"orders/{o['Id']}")
+            if 200 <= scid < 300 and isinstance(full, dict):
+                o = full
 
         refs = {
             "orderId": o.get("Id"),
             "orderReference": o.get("Reference") or order_ref,
             "clientReference": o.get("ClientReference") or order_ref,
             "orderGuid": o.get("EorderGUID") or o.get("EorderGuid"),
-            "webshopOrderId": o.get("WebshopOrderId") or o.get("InternalWebshopOrderId") or order_ref,
+            "webshopOrderId": o.get("WebshopOrderId") or o.get("InternalWebshopOrderId"),
         }
 
-        # Prefer freshest info from shipments, then events, finally order header
+        # 2) Prefer freshest info from shipments, then events, finally order header
         ship_status = ship_tt = ship_date = ship_msg = ship_src = None
         for params, lbl in [
             ({"orderId": refs["orderId"]}, "shipments"),
@@ -187,7 +207,7 @@ class MontaStatusResolver:
                         ship_status = st
                         ship_tt = ship_tt or self._pick_track_trace(sh)
                         ship_date = ship_date or self._pick_delivery_date(sh)
-                        ship_msg  = ship_msg  or self._pick_delivery_message(sh)
+                        ship_msg = ship_msg or self._pick_delivery_message(sh)
                         ship_src = lbl
                         break
             if ship_status:
@@ -196,11 +216,11 @@ class MontaStatusResolver:
         event_status = event_msg = event_src = None
         if not ship_status:
             for params, lbl in [
-                ({"orderId": refs["orderId"], "limit": 1, "sort": "desc"}, "orderevents"),
-                ({"orderReference": refs["orderReference"], "limit": 1, "sort": "desc"}, "orderevents"),
-                ({"clientReference": refs["clientReference"], "limit": 1, "sort": "desc"}, "orderevents"),
-                ({"orderGuid": refs["orderGuid"], "limit": 1, "sort": "desc"}, "orderevents"),
-                ({"webshopOrderId": refs["webshopOrderId"], "limit": 1, "sort": "desc"}, "orderevents"),
+                ({"orderId": refs["orderId"], "limit": 1, "sort": "desc"}, "events"),
+                ({"orderReference": refs["orderReference"], "limit": 1, "sort": "desc"}, "events"),
+                ({"clientReference": refs["clientReference"], "limit": 1, "sort": "desc"}, "events"),
+                ({"orderGuid": refs["orderGuid"], "limit": 1, "sort": "desc"}, "events"),
+                ({"webshopOrderId": refs["webshopOrderId"], "limit": 1, "sort": "desc"}, "events"),
             ]:
                 params = {k: v for k, v in params.items() if v}
                 scE, ev = self._get("orderevents", params)
@@ -227,15 +247,29 @@ class MontaStatusResolver:
         src = ship_src or event_src or "orders"
         status_txt = ship_status or event_status or order_status
         tt = ship_tt or order_tt
-        dd = ship_date or order_date
+        dd_raw = ship_date or order_date
         dm = ship_msg or event_msg or order_msg
 
+        # normalize date to date object when possible
+        try:
+            dd = fields.Date.to_date(dd_raw) if dd_raw else None
+        except Exception:
+            dd = None
+
+        monta_ref = (
+            refs.get("webshopOrderId")
+            or refs.get("orderGuid")
+            or refs.get("orderReference")
+            or refs.get("clientReference")
+            or order_ref
+        )
+
         meta = {
-            "source": src,
-            "status_code": o.get("StatusID") or o.get("DeliveryStatusId") or o.get("DeliveryStatusCode"),
+            "source": src,                           # <- 'events' not 'orderevents'
+            "status_code": (o.get("StatusID") or o.get("DeliveryStatusId") or o.get("DeliveryStatusCode")),
             "track_trace": tt,
             "delivery_date": dd,
             "delivery_message": dm,
-            "monta_order_ref": refs["webshopOrderId"] or refs["orderGuid"] or refs["orderReference"],
+            "monta_order_ref": monta_ref,
         }
         return status_txt, meta

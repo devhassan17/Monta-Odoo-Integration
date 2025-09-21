@@ -15,7 +15,7 @@ class SaleOrder(models.Model):
     monta_status = fields.Char(string="Monta Status", copy=False, index=True)
     monta_status_code = fields.Char(string="Monta Status Code", copy=False)
     monta_status_source = fields.Selection(
-        selection=[("shipments", "Shipments"), ("orderevents", "Order Events"), ("orders", "Orders Header")],
+        selection=[("shipments", "Shipments"), ("events", "Order Events"), ("orders", "Orders Header")],
         string="Monta Status Source",
         copy=False,
     )
@@ -68,12 +68,12 @@ class SaleOrder(models.Model):
                 _logger.warning("[Monta] %s (%s) -> no status returned (meta=%s)", so.name, ref, meta)
                 continue
 
-            # 1) Update sale.order fields (so you can Studio-expose them)
+            # 1) Update sale.order (human-visible fields)
             vals_so = {
                 "monta_status": status,
-                "monta_status_code": (meta or {}).get("status_code"),
+                "monta_status_code": (meta or {}).get("status_code") or False,
                 "monta_status_source": (meta or {}).get("source") or "orders",
-                "monta_track_trace": (meta or {}).get("track_trace"),
+                "monta_track_trace": (meta or {}).get("track_trace") or False,
                 "monta_last_sync": fields.Datetime.now(),
             }
             try:
@@ -81,14 +81,16 @@ class SaleOrder(models.Model):
             except Exception as e:
                 _logger.exception("[Monta] %s (%s) -> write failed: %s", so.name, ref, e)
 
-            # 2) Upsert into the snapshot table (separate UI)
+            # 2) Upsert snapshot (canonical keys, per-order vals)
             try:
                 Snapshot.upsert_for_order(
                     so,
-                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.monta_order_id or so.name,
-                    order_status=status,
+                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
+                    status=status,
+                    status_code=(meta or {}).get("status_code"),
+                    source=(meta or {}).get("source") or "orders",
                     delivery_message=(meta or {}).get("delivery_message"),
-                    track_trace_url=(meta or {}).get("track_trace"),
+                    track_trace=(meta or {}).get("track_trace"),
                     delivery_date=(meta or {}).get("delivery_date"),
                     last_sync=fields.Datetime.now(),
                 )
