@@ -13,3 +13,4 @@ from . import stock_warehouse_ext
 from . import purchase_order_line # ok
 from . import monta_status_sync
 from . import monta_sync
+from . import monta_order_status_upsert
