@@ -2,17 +2,17 @@
 from odoo import api, fields, models
 
 class MontaOrderStatus(models.Model):
-    _inherit = "monta.order.status"   # extend the existing model only
+    _inherit = "monta.order.status"   # extend existing model only (no fields here)
 
     @api.model
     def _normalize_vals(self, vals):
-        """Map incoming keys and guard against invalid/unknown fields."""
+        """Map incoming keys and keep only valid fields; validate selection safely."""
         v = {}
         mapping = {
             "monta_order_ref": ["monta_order_ref"],
             "status": ["status", "order_status"],
             "status_code": ["status_code", "monta_status_code"],
-            "source": ["source", "monta_status_source"],  # no default; validate below
+            "source": ["source", "monta_status_source"],
             "delivery_message": ["delivery_message"],
             "track_trace": ["track_trace", "track_trace_url"],
             "delivery_date": ["delivery_date"],
@@ -24,23 +24,21 @@ class MontaOrderStatus(models.Model):
                     v[dest] = vals[k]
                     break
 
-        # default last_sync if the field exists
+        # default last_sync if available on the model
         if "last_sync" in self._fields and "last_sync" not in v:
             v["last_sync"] = fields.Datetime.now()
 
-        # keep only real fields on the model
+        # keep only fields that really exist
         v = {k: v[k] for k in list(v.keys()) if k in self._fields}
 
-        # If 'source' is a selection, allow only valid keys
+        # validate selection 'source' whether it's a list or a callable
         field = self._fields.get("source")
         if "source" in v and field and getattr(field, "type", None) == "selection":
             sel = field.selection
-            # selection can be a list OR a callable
             if callable(sel):
                 try:
                     options = sel(self.env)
                 except TypeError:
-                    # some old signatures expect 'self' (recordset)
                     options = sel(self)
             else:
                 options = sel or []
@@ -52,19 +50,22 @@ class MontaOrderStatus(models.Model):
 
     @api.model
     def upsert_for_order(self, so, **vals):
-        """Create/update a snapshot row per sale.order (one row per order)."""
+        """
+        Create/update a single snapshot row per sale.order (keyed by order name).
+        Safe to call repeatedly and from cron.
+        """
         if not so or not getattr(so, "id", False):
             raise ValueError("upsert_for_order requires a valid sale.order record")
 
         payload = self._normalize_vals(vals)
 
-        # attach identifiers if those fields exist
+        # identifiers (write only if fields exist on this Studio/Python model)
         if "sale_order_id" in self._fields:
             payload["sale_order_id"] = so.id
         if "order_name" in self._fields:
             payload["order_name"] = so.name
 
-        # choose lookup key
+        # choose lookup key (prefer order_name)
         domain = []
         if "order_name" in self._fields:
             domain = [("order_name", "=", so.name)]

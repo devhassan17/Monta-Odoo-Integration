@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data noupdate="1">
+    <!-- Ensure regular users can read all snapshots -->
+    <record id="rule_monta_order_status_read_user" model="ir.rule">
+      <field name="name">Monta Order Status: users can read all</field>
+      <field name="model_id" ref="model_monta_order_status"/>
+      <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+      <field name="perm_read" eval="True"/>
+      <field name="perm_write" eval="False"/>
+      <field name="perm_create" eval="False"/>
+      <field name="perm_unlink" eval="False"/>
+      <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+  </data>
+</odoo>

@@ -2,19 +2,17 @@
 <odoo>
   <data>
 
-    <!-- LIST VIEW -->
+    <!-- LIST VIEW (v18 uses <list/>) -->
     <record id="view_monta_order_status_tree" model="ir.ui.view">
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <!-- CHANGE tree -> list -->
         <list string="Monta Order Status">
           <field name="order_name"/>
           <field name="sale_order_id"/>
           <field name="status"/>
           <field name="status_code"/>
           <field name="source"/>
-          <field name="delivery_message" optional="hide"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
           <field name="delivery_date"/>
@@ -23,7 +21,7 @@
       </field>
     </record>
 
-    <!-- FORM VIEW (unchanged) -->
+    <!-- FORM VIEW -->
     <record id="view_monta_order_status_form" model="ir.ui.view">
       <field name="name">monta.order.status.form</field>
       <field name="model">monta.order.status</field>
@@ -39,11 +37,11 @@
                 <field name="source" readonly="1"/>
               </group>
               <group>
-                <field name="delivery_message" readonly="1"/>
                 <field name="monta_order_ref" readonly="1"/>
                 <field name="track_trace" readonly="1"/>
                 <field name="delivery_date" readonly="1"/>
                 <field name="last_sync" readonly="1"/>
+                <field name="delivery_message" readonly="1"/>
               </group>
             </group>
           </sheet>
@@ -51,7 +49,7 @@
       </field>
     </record>
 
-    <!-- SEARCH VIEW (unchanged) -->
+    <!-- SEARCH VIEW -->
     <record id="view_monta_order_status_search" model="ir.ui.view">
       <field name="name">monta.order.status.search</field>
       <field name="model">monta.order.status</field>
@@ -68,15 +66,25 @@
       </field>
     </record>
 
-    <!-- ACTION: view_mode must use "list" -->
+    <!-- WINDOW ACTION (force views, no hidden domain) -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Order Status</field>
       <field name="res_model">monta.order.status</field>
       <field name="view_mode">list,form</field>
+      <field name="view_id" ref="view_monta_order_status_tree"/>
+      <field name="views" eval="[
+        (ref('view_monta_order_status_tree'), 'list'),
+        (ref('view_monta_order_status_form'), 'form')
+      ]"/>
+      <field name="domain">[]</field>
+      <field name="context">{}</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
+      <field name="help" type="html">
+        <p>This table stores a snapshot of order status pulled from Monta. Use cron or the manual sync to populate it.</p>
+      </field>
     </record>
 
-    <!-- MENUS (leave as you had them) -->
+    <!-- MENUS -->
     <menuitem id="menu_monta_root" name="Monta" sequence="90" groups="base.group_user"/>
     <menuitem id="menu_monta_order_status" name="Order Status"
               parent="menu_monta_root" action="action_monta_order_status"

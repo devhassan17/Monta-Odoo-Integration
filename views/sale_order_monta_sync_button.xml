@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+    <record id="view_order_form_monta_sync_inherit" model="ir.ui.view">
+      <field name="name">sale.order.monta.sync.inherit</field>
+      <field name="model">sale.order</field>
+      <field name="inherit_id" ref="sale.view_order_form"/>
+      <field name="arch" type="xml">
+        <xpath expr="//form/header" position="inside">
+          <button name="action_monta_sync_status"
+                  type="object"
+                  string="Sync Monta"
+                  class="btn-primary"
+                  attrs="{'invisible': ['|', ('state','=','draft'), ('state','=','cancel')]}"/>
+          <button name="action_open_monta_order_status"
+                  type="object"
+                  class="oe_stat_button"
+                  icon="fa-truck">
+            <div class="o_stat_info">
+              <span class="o_stat_text">Monta Status</span>
+            </div>
+          </button>
+        </xpath>
+      </field>
+    </record>
+  </data>
+</odoo>
