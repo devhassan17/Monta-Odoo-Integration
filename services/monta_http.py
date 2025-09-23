@@ -6,16 +6,15 @@ from odoo import models
 
 _logger = logging.getLogger(__name__)
 
-
 class MontaHttp(models.AbstractModel):
     _name = "monta.http"
     _description = "HTTP client for Monta API (basic auth)"
 
     def _conf(self):
         ICP = self.env["ir.config_parameter"].sudo()
-        base = (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").strip().rstrip("/")
+        base = (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").rstrip("/")
         user = (ICP.get_param("monta.username") or "").strip()
-        pwd = (ICP.get_param("monta.password") or "").strip()
+        pwd  = (ICP.get_param("monta.password") or "").strip()
         timeout = int(ICP.get_param("monta.timeout") or 20)
         return base, user, pwd, timeout
 
