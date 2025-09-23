@@ -1,35 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- FORM VIEW: add a Monta Stock group on the right column of General Information -->
+    <!-- FORM VIEW: add a dedicated 'Monta Stock' page in the notebook -->
     <record id="view_product_template_form_monta_stock" model="ir.ui.view">
         <field name="name">product.template.form.monta.stock</field>
         <field name="model">product.template</field>
+        <!-- Base product template form in Odoo 18 -->
         <field name="inherit_id" ref="product.product_template_only_form_view"/>
         <field name="priority">50</field>
         <field name="arch" type="xml">
-            <!-- Right column group under general info -->
-            <xpath expr="//sheet//group[@name='group_right']" position="inside">
-                <group string="Monta Stock">
-                    <field name="x_monta_min_stock"/>
-                    <field name="x_monta_last_stock" readonly="1"/>
-                    <field name="x_is_sold_out" readonly="1"/>
-                </group>
+            <!-- Insert a new page at the end of the notebook (stable anchor) -->
+            <xpath expr="//sheet/notebook" position="inside">
+                <page string="Monta Stock">
+                    <group>
+                        <field name="x_monta_min_stock"/>
+                        <field name="x_monta_last_stock" readonly="1"/>
+                        <field name="x_is_sold_out" readonly="1"/>
+                    </group>
+                </page>
             </xpath>
         </field>
     </record>
 
-    <!-- TREE VIEW: show quick columns for min stock / last stock / sold out -->
+    <!-- TREE VIEW: show columns for quick visibility -->
     <record id="view_product_template_tree_monta_stock" model="ir.ui.view">
         <field name="name">product.template.tree.monta.stock</field>
         <field name="model">product.template</field>
         <field name="inherit_id" ref="product.product_template_tree_view"/>
         <field name="priority">50</field>
         <field name="arch" type="xml">
+            <!-- First try to inject after list_price -->
             <xpath expr="//tree/field[@name='list_price']" position="after">
                 <field name="x_monta_min_stock" optional="show"/>
                 <field name="x_monta_last_stock" optional="show"/>
                 <field name="x_is_sold_out" optional="show"/>
+            </xpath>
+            <!-- Fallback: if the above anchor ever changes, append at end -->
+            <xpath expr="//tree" position="inside">
+                <field name="x_monta_min_stock" modifiers="{}" position="attributes"/>
             </xpath>
         </field>
     </record>
