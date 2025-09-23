@@ -13,6 +13,7 @@
         "views/monta_order_status_views.xml",
         # optional SO buttons
         "views/sale_order_monta_sync_button.xml",
+        "views/product_template_stock_sync_views.xml",
     ],
     "installable": True,
     "auto_install": False,
