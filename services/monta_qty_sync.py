@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import SUPERUSER_ID
-from odoo.api import Environment
+from odoo import api, SUPERUSER_ID
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
@@ -20,32 +19,44 @@ class MontaQtySync:
     NO custom fields are created.
     """
 
-    def __init__(self, env):
-        # Accept either an Environment or any recordset
-        if isinstance(env, Environment):
-            self.env = env.sudo()
-        else:
-            # recordset -> its environment
-            self.env = env.env.sudo()
+    def __init__(self, env_like):
+        """
+        Build a robust sudo Environment regardless of what is passed in:
+        - If we get an Environment -> rebuild a sudo Environment
+        - If we get a recordset -> use its .env
+        - If we get anything else, raise a clear error
+        """
+        base_env = None
 
-        self.icp = self.env['ir.config_parameter'].sudo()
+        # recordset (has .env)
+        if hasattr(env_like, "env") and hasattr(env_like.env, "cr"):
+            base_env = env_like.env
+        # Environment (has .cr, .context)
+        elif hasattr(env_like, "cr") and hasattr(env_like, "context"):
+            base_env = env_like
+        else:
+            raise UserError("MontaQtySync: invalid environment object passed to service.")
+
+        # Rebuild a clean sudo environment explicitly (no .sudo() call)
+        self.env = api.Environment(base_env.cr, SUPERUSER_ID, dict(base_env.context or {}))
+        self.icp = self.env["ir.config_parameter"].sudo()
 
         # Config
-        self.base_url = (self.icp.get_param('monta.base_url') or 'https://api-v6.monta.nl').rstrip('/')
-        self.user = self.icp.get_param('monta.username') or ''
-        self.pwd = self.icp.get_param('monta.password') or ''
-        self.channel = self.icp.get_param('monta.channel') or 'Moyee_Odoo'
-        self.timeout = int(self.icp.get_param('monta.timeout') or 20)
+        self.base_url = (self.icp.get_param("monta.base_url") or "https://api-v6.monta.nl").rstrip("/")
+        self.user = self.icp.get_param("monta.username") or ""
+        self.pwd = self.icp.get_param("monta.password") or ""
+        self.channel = self.icp.get_param("monta.channel") or "Moyee_Odoo"
+        self.timeout = int(self.icp.get_param("monta.timeout") or 20)
 
         # Requests
         try:
             import requests
-            from requests.auth import HTTPBasicAuth
+            from requests.auth import HTTPBasicAuth  # noqa: F401
         except Exception as e:
             raise UserError(f"Python 'requests' library is required: {e}")
 
         self._requests = requests
-        self._auth = HTTPBasicAuth(self.user, self.pwd)
+        self._auth = requests.auth.HTTPBasicAuth(self.user, self.pwd)
 
     # -------------------- HTTP --------------------
 
@@ -58,9 +69,9 @@ class MontaQtySync:
         try:
             r = self._requests.get(
                 url,
-                params={'channel': self.channel},
+                params={"channel": self.channel},
                 auth=self._auth,
-                headers={'Accept': 'application/json'},
+                headers={"Accept": "application/json"},
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -68,17 +79,17 @@ class MontaQtySync:
             return None, None, None
 
         if not r.ok:
-            _logger.warning("Monta %s -> HTTP %s body=%s", url, r.status_code, (r.text or '')[:200])
+            _logger.warning("Monta %s -> HTTP %s body=%s", url, r.status_code, (r.text or "")[:200])
             return None, None, None
 
         try:
             data = r.json()
         except Exception:
-            _logger.warning("Non-JSON from %s: %s", url, (r.text or '')[:200])
+            _logger.warning("Non-JSON from %s: %s", url, (r.text or "")[:200])
             return None, None, None
 
         rec = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else {})
-        stock = rec.get('Stock') or {}
+        stock = rec.get("Stock") or {}
 
         def num(v):
             try:
@@ -86,24 +97,24 @@ class MontaQtySync:
             except Exception:
                 return None
 
-        stock_available = num(stock.get('StockAvailable'))
-        min_stock = num(rec.get('MinimumStock'))
-        normalized_sku = (rec.get('Sku') or sku or '').strip()
+        stock_available = num(stock.get("StockAvailable"))
+        min_stock = num(rec.get("MinimumStock"))
+        normalized_sku = (rec.get("Sku") or sku or "").strip()
         return stock_available, min_stock, normalized_sku
 
     # -------------------- Odoo helpers --------------------
 
     def _get_main_wh_stock_location(self, company):
         """Use the first warehouse of the company; adjust at its lot_stock_id."""
-        WH = self.env['stock.warehouse'].sudo().search([('company_id', '=', company.id)], limit=1, order='id')
+        WH = self.env["stock.warehouse"].sudo().search([("company_id", "=", company.id)], limit=1, order="id")
         if not WH:
             raise UserError(f"No warehouse found for company '{company.name}'")
         return WH.lot_stock_id
 
     def _available_in_location(self, product, location):
         """Available = quantity - reserved across quants for that location."""
-        Quant = self.env['stock.quant'].sudo()
-        quants = Quant.search([('product_id', '=', product.id), ('location_id', '=', location.id)])
+        Quant = self.env["stock.quant"].sudo()
+        quants = Quant.search([("product_id", "=", product.id), ("location_id", "=", location.id)])
         avail = 0.0
         for q in quants:
             avail += (q.quantity - q.reserved_quantity)
@@ -116,14 +127,16 @@ class MontaQtySync:
         """
         if target_qty is None:
             return
-        Quant = self.env['stock.quant'].sudo()
+        Quant = self.env["stock.quant"].sudo()
         current = self._available_in_location(product, location)
         delta = float(target_qty) - current
         if abs(delta) < 1e-6:
             return
         Quant._update_available_quantity(product, location, delta)
-        _logger.info("Adjusted %s at %s by %+s (to %s)",
-                     product.display_name, location.display_name, delta, target_qty)
+        _logger.info(
+            "Adjusted %s at %s by %+s (to %s)",
+            product.display_name, location.display_name, delta, target_qty
+        )
 
     def _apply_low_stock_threshold(self, tmpl, minimum):
         """
@@ -135,7 +148,7 @@ class MontaQtySync:
         minimum = float(minimum)
 
         # Prefer Website 'available_threshold' if present on this DB
-        if 'available_threshold' in tmpl._fields:
+        if "available_threshold" in tmpl._fields:
             if (tmpl.available_threshold or 0.0) != minimum:
                 tmpl.available_threshold = minimum
                 _logger.info("Set available_threshold=%s on %s", minimum, tmpl.display_name)
@@ -144,23 +157,24 @@ class MontaQtySync:
         # Fallback: Reordering Rule
         company = tmpl.company_id or self.env.company
         location = self._get_main_wh_stock_location(company)
-        wh = self.env['stock.warehouse'].sudo().search([('lot_stock_id', '=', location.id)], limit=1)
+        wh = self.env["stock.warehouse"].sudo().search([("lot_stock_id", "=", location.id)], limit=1)
         if not wh:
             return
-        Orderpoint = self.env['stock.warehouse.orderpoint'].sudo()
+        Orderpoint = self.env["stock.warehouse.orderpoint"].sudo()
         op = Orderpoint.search(
-            [('product_id', 'in', tmpl.product_variant_ids.ids), ('warehouse_id', '=', wh.id)], limit=1
+            [("product_id", "in", tmpl.product_variant_ids.ids), ("warehouse_id", "=", wh.id)],
+            limit=1,
         )
         vals = {
-            'product_id': tmpl.product_variant_id.id,
-            'warehouse_id': wh.id,
-            'location_id': location.id,
-            'company_id': company.id,
-            'product_min_qty': minimum,
-            'product_max_qty': max(minimum, minimum),  # keep same unless a buffer is desired
+            "product_id": tmpl.product_variant_id.id,
+            "warehouse_id": wh.id,
+            "location_id": location.id,
+            "company_id": company.id,
+            "product_min_qty": minimum,
+            "product_max_qty": max(minimum, minimum),
         }
         if op:
-            op.write({'product_min_qty': minimum})
+            op.write({"product_min_qty": minimum})
             _logger.info("Updated orderpoint min_qty=%s for %s (WH %s)", minimum, tmpl.display_name, wh.display_name)
         else:
             Orderpoint.create(vals)
@@ -173,19 +187,18 @@ class MontaQtySync:
         Iterate variants that have a Monta key (monta_sku OR default_code),
         fetch from Monta, set qty, apply low-stock threshold.
         """
-        Product = self.env['product.product'].sudo()
-        domain = ['|', ('monta_sku', '!=', False), ('default_code', '!=', False)]
+        Product = self.env["product.product"].sudo()
+        domain = ["|", ("monta_sku", "!=", False), ("default_code", "!=", False)]
         products = Product.search(domain, limit=limit) if limit else Product.search(domain)
         _logger.info("MontaQtySync: processing %s products", len(products))
 
         for p in products:
-            sku = (p.monta_sku or p.default_code or '').strip()
+            sku = (p.monta_sku or p.default_code or "").strip()
             if not sku:
                 continue
 
             stock_available, min_stock, normalized_sku = self._get_product_stock(sku)
             if stock_available is None and min_stock is None:
-                # nothing to apply for this SKU
                 continue
 
             tmpl = p.product_tmpl_id.sudo()
