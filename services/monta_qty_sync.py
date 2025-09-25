@@ -32,23 +32,44 @@ class MontaQtySync:
     """
 
     def __init__(self, env):
-        # IMPORTANT: do NOT call env.sudo() here; safe for server-action context
+        # IMPORTANT: do NOT call env.sudo() here; safe for server-action/cron context
         self.env = env
         ICP = env["ir.config_parameter"].sudo()
-        self.base = (ICP.get_param("monta.api.base") or "https://api-v6.monta.nl").rstrip("/")
-        self.user = ICP.get_param("monta.api.user") or ""
-        self.pwd = ICP.get_param("monta.api.password") or ""
-        self.channel = ICP.get_param("monta.api.channel") or ""
+
+        # Helper to read either the "new" keys you use, or the legacy ones.
+        def _param(*names, default=None):
+            for n in names:
+                v = ICP.get_param(n)
+                if v and str(v).strip():
+                    return str(v).strip()
+            return default
+
+        # Accept both schemes:
+        #   new: monta.base_url / monta.username / monta.password / monta.channel / monta.timeout
+        #   old: monta.api.base_url / monta.api.user / monta.api.password / monta.api.channel / monta.api.timeout
+        self.base = (_param("monta.base_url", "monta.api.base_url", default="https://api-v6.monta.nl") or "").rstrip("/")
+        self.user = _param("monta.username", "monta.api.user", default="") or ""
+        self.pwd = _param("monta.password", "monta.api.password", default="") or ""
+        self.channel = _param("monta.channel", "monta.api.channel", default="Moyee_Odoo") or ""
         try:
-            self.timeout = int(ICP.get_param("monta.api.timeout") or "20")
+            self.timeout = int(_param("monta.timeout", "monta.api.timeout", default="20"))
         except Exception:
             self.timeout = 20
 
         if not self.user or not self.pwd:
-            _logger.warning("MontaQtySync: Missing Basic Auth credentials (monta.api.user / monta.api.password).")
+            _logger.warning(
+                "MontaQtySync: Missing Basic Auth credentials "
+                "(set monta.username/monta.password or monta.api.user/monta.api.password)."
+            )
+        else:
+            _logger.info(
+                "MontaQtySync: using base=%s channel=%s timeout=%s (user=****, pwd=****)",
+                self.base, self.channel, self.timeout
+            )
 
     # -------- HTTP --------
     def _get_product_stock(self, sku: str) -> Optional[MontaStock]:
+        # Monta allows slashes if encoded as %2F; urllib.parse.quote handles this.
         safe_sku = urllib.parse.quote(sku, safe="")
         url = f"{self.base}/product/{safe_sku}{STOCK_PATH_SUFFIX}"
         params = {"channel": self.channel} if self.channel else {}
@@ -81,14 +102,25 @@ class MontaQtySync:
         stock_available = None
         minimum_stock = None
         if isinstance(data, dict):
-            if data.get("StockAvailable") is not None:
-                stock_available = float(data["StockAvailable"])
+            # Some tenants return flattened fields; some under Stock{}
             if data.get("MinimumStock") is not None:
-                minimum_stock = float(data["MinimumStock"])
+                try:
+                    minimum_stock = float(data["MinimumStock"])
+                except Exception:
+                    minimum_stock = None
+
+            if data.get("StockAvailable") is not None:
+                try:
+                    stock_available = float(data["StockAvailable"])
+                except Exception:
+                    stock_available = None
+
             stock_node = data.get("Stock")
-            if stock_node and isinstance(stock_node, dict):
-                if stock_node.get("StockAvailable") is not None:
+            if isinstance(stock_node, dict) and stock_node.get("StockAvailable") is not None:
+                try:
                     stock_available = float(stock_node["StockAvailable"])
+                except Exception:
+                    pass
 
         if stock_available is None and minimum_stock is None:
             return None
@@ -136,14 +168,17 @@ class MontaQtySync:
                 continue
             quants = Quant.search([("product_id", "=", comp.id), ("location_id", "child_of", wh_location.id)])
             onhand = sum(q.quantity for q in quants)
-            possible = min(possible, onhand / need)
+            if need > 0:
+                possible = min(possible, onhand / need)
 
         if math.isinf(possible):
             possible = 0.0
+        # never promise more packs than Monta component availability suggests
         capped = min(possible, max(0.0, monta_avail))
-        return max(0.0, float(capped)), f"components allow ~{int(capped)} pack(s)"
+        return max(0.0, float(capped)), f"components allow ~{int(max(0, math.floor(capped)))} pack(s)"
 
     def _set_absolute_onhand(self, product, target_qty: float, wh_location) -> Optional[str]:
+        # Never adjust kits directly (phantom BoM / pack)
         if self._is_kit(product):
             return "is kit (phantom) – skip direct qty change"
         if target_qty < 0:
@@ -175,9 +210,12 @@ class MontaQtySync:
             )
             return None
         except Exception as e:
-            _logger.warning("Skipping direct qty update for [%s] %s (reason: %s)",
-                            product.default_code or product.display_name,
-                            product.display_name, e)
+            _logger.warning(
+                "Skipping direct qty update for [%s] %s (reason: %s)",
+                product.default_code or product.display_name,
+                product.display_name,
+                e,
+            )
             return str(e)
 
     # -------- main --------
@@ -189,6 +227,7 @@ class MontaQtySync:
             _logger.warning("No internal stock location found for company %s; aborting.", company.name)
             return
 
+        # include items having either monta_sku or default_code
         domain = [
             ("active", "=", True),
             ("type", "in", ["product", "consu"]),
@@ -199,6 +238,7 @@ class MontaQtySync:
         _logger.info("MontaQtySync: processing %s products", len(products))
 
         for prod in products:
+            # packs may have no SKU: we use component SKUs via kit check; for non-kits use monta_sku/default_code
             sku = (prod.monta_sku or prod.default_code or "").strip()
             if not sku:
                 continue
@@ -207,10 +247,10 @@ class MontaQtySync:
             if not ms:
                 continue
 
-            # Always update website threshold
+            # Always update website threshold from Monta MinimumStock
             self._set_template_threshold(prod.product_tmpl_id, ms.minimum)
 
-            # Non-kits: set on-hand; Kits: compute only
+            # Non-kits: set on-hand absolutely; Kits: compute feasibility only (no write)
             reason = self._set_absolute_onhand(prod, ms.available, wh_loc)
             if reason and ("kit" in reason or "phantom" in reason):
                 packs, desc = self._kit_max_packs_from_components(prod, wh_loc, ms.available)
