@@ -25,7 +25,19 @@ class MontaOrderStatus(models.Model):
     # Status
     status = fields.Char(string="Order Status")
     status_code = fields.Char(string="Status Code")
-    source = fields.Char(string="Source", default="orders")
+
+    # IMPORTANT: keep Selection (not Char) to avoid registry cleanup crash
+    source = fields.Selection(
+        selection=[
+            ("orders", "orders"),
+            ("shipments", "shipments"),
+            ("orderevents", "orderevents"),
+            ("events", "events"),  # backward compat if used anywhere
+        ],
+        string="Source",
+        default="orders",
+        index=True,
+    )
 
     # Extra info
     delivery_message = fields.Char(string="Delivery Message")
@@ -33,7 +45,7 @@ class MontaOrderStatus(models.Model):
     delivery_date = fields.Date(string="Delivery Date")
     last_sync = fields.Datetime(string="Last Sync (UTC)", default=fields.Datetime.now, index=True)
 
-    # Must exist (your inbound writer uses it)
+    # Raw payload (needed by your inbound writer)
     status_raw = fields.Text(string="Raw Status (JSON)")
 
     _sql_constraints = [
