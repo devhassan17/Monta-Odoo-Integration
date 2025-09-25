@@ -1,294 +1,282 @@
-# -*- coding: utf-8 -*-
-import json
+# Monta-Odoo-Integration/services/monta_qty_sync.py
+# Pull Monta StockAvailable + MinimumStock and push to Odoo:
+# - Set absolute available qty at company warehouse stock location (for NON-kits)
+# - Update website available_threshold on product template = Monta MinimumStock
+# - For kits/phantom packs: DO NOT write qty on kit; compute packable qty from components and only log/update threshold
+
 import logging
 import math
-from datetime import datetime
-from urllib.parse import quote
+import urllib.parse
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import requests
-from odoo import api, SUPERUSER_ID
+from requests.auth import HTTPBasicAuth
+
+from odoo import _
+from odoo.tools import float_is_zero
 
 _logger = logging.getLogger(__name__)
+
+# --- CONFIG SOURCES ---
+# Expect these system parameters (already used elsewhere in your module):
+#   monta.api.base        -> e.g. https://api-v6.monta.nl
+#   monta.api.user        -> Basic auth username
+#   monta.api.password    -> Basic auth password
+#   monta.api.channel     -> e.g. Moyee_Odoo
+#   monta.api.timeout     -> optional, default 20
+
+STOCK_PATH_SUFFIX = "/stock"  # GET /product/{sku}/stock
+
+
+@dataclass
+class MontaStock:
+    available: float
+    minimum: float
 
 
 class MontaQtySync:
     """
-    Pulls StockAvailable + MinimumStock from Monta and applies in Odoo:
-      • Set absolute available qty at the company's main WH 'Stock' location
-      • Set product.template.available_threshold = MinimumStock
-      • Never push negatives to Odoo; values are clamped to 0
-      • Never update phantom (kit) products directly; compute theoretical packs
+    Pulls Monta stock and writes to Odoo without creating custom fields:
+      • Quant is normalized to Monta StockAvailable (non-kits)
+      • Template.available_threshold := Monta MinimumStock
+      • For kits, we never write kit qty (Odoo restriction). We compute possible packs.
     """
 
     def __init__(self, env):
-        # Always run as superuser for stock + settings write
-        self.env = env.sudo()
-        ICP = self.env["ir.config_parameter"].sudo()
-
-        # Config with sane defaults
+        # NOTE: no env.sudo() here; caller already passes a sudo env (fixes RPC error)
+        self.env = env
+        ICP = env["ir.config_parameter"].sudo()
         self.base = (ICP.get_param("monta.api.base") or "https://api-v6.monta.nl").rstrip("/")
         self.user = ICP.get_param("monta.api.user") or ""
         self.pwd = ICP.get_param("monta.api.password") or ""
-        self.channel = ICP.get_param("monta.api.channel") or "Moyee_Odoo"
-        self.timeout = int(ICP.get_param("monta.api.timeout") or 25)
+        self.channel = ICP.get_param("monta.api.channel") or ""
+        try:
+            self.timeout = int(ICP.get_param("monta.api.timeout") or "20")
+        except Exception:
+            self.timeout = 20
 
-    # ----------------------------- HTTP helpers -----------------------------
+        if not self.user or not self.pwd:
+            _logger.warning("MontaQtySync: Missing Basic Auth credentials (monta.api.user / monta.api.password).")
 
-    def _encode_sku(self, sku: str) -> str:
-        """Encode SKU for path-segment usage (handles spaces, '/', etc.)."""
-        return quote(str(sku), safe="")
+    # ----------------------- HTTP -----------------------
 
-    def _get_json(self, url, params=None):
-        auth = (self.user, self.pwd) if self.user or self.pwd else None
+    def _get_product_stock(self, sku: str) -> Optional[MontaStock]:
+        """
+        Calls GET {base}/product/{sku}/stock?channel=... and extracts:
+          StockAvailable  (float)
+          MinimumStock    (int or float)
+        Returns None if 404 or unexpected shape.
+        """
+        safe_sku = urllib.parse.quote(sku, safe="")
+        url = f"{self.base}/product/{safe_sku}{STOCK_PATH_SUFFIX}"
+        params = {}
+        if self.channel:
+            params["channel"] = self.channel
+
         try:
             r = requests.get(
                 url,
-                params=params or {},
-                auth=auth,
+                params=params,
+                auth=HTTPBasicAuth(self.user, self.pwd),
                 headers={"Accept": "application/json"},
                 timeout=self.timeout,
             )
         except Exception as e:
-            return None, 0, f"HTTP error: {e}"
+            _logger.warning("Monta GET %s failed: %s", url, e)
+            return None
+
+        if r.status_code == 404:
+            _logger.warning("Monta %s -> HTTP 404 body=%r", url, (r.text or "")[:200])
+            return None
 
         if not r.ok:
-            body = (r.text or "")[:300]
-            return None, r.status_code, body
+            _logger.warning("Monta %s -> HTTP %s body=%r", url, r.status_code, (r.text or "")[:200])
+            return None
 
         try:
-            return r.json(), r.status_code, None
+            data = r.json() or {}
         except Exception:
-            return None, r.status_code, "Non-JSON body"
+            _logger.warning("Monta %s -> non-JSON body=%r", url, (r.text or "")[:200])
+            return None
 
-    # ---------------------------- Monta parsing -----------------------------
-
-    def _get_product_stock(self, raw_sku):
-        """
-        Returns tuple: (stock_available: float|None, min_stock: float|None, normalized_sku)
-        Calls: GET {base}/product/{sku}/stock?channel={channel}
-        """
-        sku = (raw_sku or "").strip()
-        if not sku:
-            return None, None, sku
-
-        url = f"{self.base}/product/{self._encode_sku(sku)}/stock"
-        params = {"channel": self.channel}
-        data, code, err = self._get_json(url, params)
-
-        if err or not isinstance(data, dict):
-            _logger.warning("Monta %s -> HTTP %s body=%r", url, code, err)
-            return None, None, sku
-
-        # StockAvailable could be at top-level or nested under "Stock"
+        # Monta docs show StockAvailable / MinimumStock at root or inside "Stock"
         stock_available = None
-        candidates = ("StockAvailable", "Available", "FreeToSell", "Stock")
-        for c in candidates:
-            if c in data and isinstance(data[c], (int, float, str)):
-                try:
-                    stock_available = float(data[c])
-                    break
-                except Exception:
-                    pass
+        minimum_stock = None
 
-        if stock_available is None and isinstance(data.get("Stock"), dict):
-            for c in ("StockAvailable", "Available", "FreeToSell"):
-                if c in data["Stock"] and data["Stock"][c] is not None:
-                    try:
-                        stock_available = float(data["Stock"][c])
-                        break
-                    except Exception:
-                        pass
+        if isinstance(data, dict):
+            # root-level
+            if data.get("StockAvailable") is not None:
+                stock_available = float(data["StockAvailable"])
+            if data.get("MinimumStock") is not None:
+                minimum_stock = float(data["MinimumStock"])
+            # nested
+            stock_node = data.get("Stock")
+            if stock_node and isinstance(stock_node, dict):
+                if stock_node.get("StockAvailable") is not None:
+                    stock_available = float(stock_node["StockAvailable"])  # prefer nested if present
 
-        min_stock = None
-        if "MinimumStock" in data and data["MinimumStock"] is not None:
-            try:
-                min_stock = float(data["MinimumStock"])
-            except Exception:
-                min_stock = None
+        if stock_available is None and minimum_stock is None:
+            # Nothing usable
+            return None
 
-        return stock_available, min_stock, data.get("Sku") or sku
-
-    # --------------------------- Odoo stock helpers -------------------------
-
-    def _main_stock_location(self, company):
-        """
-        Return the 'Stock' internal location under the first warehouse of the company.
-        Fallback to any internal location of that company.
-        """
-        Warehouse = self.env["stock.warehouse"].sudo()
-        Location = self.env["stock.location"].sudo()
-
-        wh = Warehouse.search([("company_id", "=", company.id)], limit=1)
-        if wh:
-            # In modern Odoo, warehouse lot_stock_id is the main internal location
-            stock_loc = wh.lot_stock_id
-            if stock_loc and stock_loc.usage == "internal":
-                return stock_loc
-
-        # Fallback: any internal location of company
-        loc = Location.search(
-            [("company_id", "=", company.id), ("usage", "=", "internal")], limit=1
-        )
-        return loc or Location.search([("usage", "=", "internal")], limit=1)
-
-    def _available_in_location(self, product, location):
-        """Current available (sum of quants) at given location."""
-        Quant = self.env["stock.quant"].sudo()
-        qty = 0.0
-        # performance-friendly: aggregate from quants domain
-        quants = Quant.search(
-            [("product_id", "=", product.id), ("location_id", "child_of", location.id)]
-        )
-        for q in quants:
-            qty += q.quantity - q.reserved_quantity
-        return qty
-
-    def _set_absolute_qty(self, product, location, target_qty):
-        """
-        Force available quantity at location to target by posting delta with
-        stock.quant._update_available_quantity. Clamp negatives to 0.
-        """
-        if target_qty is None:
-            return
-
-        target_qty = max(0.0, float(target_qty))
-        Quant = self.env["stock.quant"].sudo()
-        current = self._available_in_location(product, location)
-        delta = target_qty - current
-        # ignore float noise
-        if abs(delta) < 1e-6:
-            return
-        try:
-            Quant._update_available_quantity(product, location, delta)
-        except Exception as e:
-            _logger.warning(
-                "Skipping direct qty update for [%s] %s (reason: %s)",
-                product.default_code or "",
-                product.display_name,
-                e,
-            )
-            return
-        _logger.info(
-            "Adjusted [%s] %s at %s by %+s (to %s)",
-            product.default_code or "",
-            product.display_name,
-            location.display_name,
-            delta,
-            target_qty,
+        return MontaStock(
+            available=float(stock_available or 0.0),
+            minimum=float(minimum_stock or 0.0),
         )
 
-    # ------------------------- Kit (phantom BOM) math -----------------------
+    # ----------------------- Odoo helpers -----------------------
 
-    def _find_phantom_bom(self, product_tmpl):
-        """
-        Find a phantom (kit) BoM for the template.
-        """
-        BoM = self.env["mrp.bom"].sudo()
-        return BoM.search(
-            [("product_tmpl_id", "=", product_tmpl.id), ("type", "=", "phantom")],
+    def _company_main_stock_location(self, company):
+        """Pick the company's 'Stock' location (or first internal)."""
+        StockLocation = self.env["stock.location"]
+        # try an internal location named like 'Stock' under the company WH
+        loc = StockLocation.search(
+            [("usage", "=", "internal"), ("company_id", "=", company.id)],
+            order="complete_name asc",
             limit=1,
         )
+        return loc
 
-    def _available_packs_from_components(self, product_variant, location):
-        """
-        Compute how many kit packs are possible from its components in 'location'.
-        Clamp negative component availability to 0. Return int >= 0.
-        """
-        bom = self._find_phantom_bom(product_variant.product_tmpl_id)
+    def _set_template_threshold(self, template, minimum: float):
+        """Set website available threshold to Monta minimum (no new fields)."""
+        # available_threshold exists on product.template in website_sale
+        try:
+            template.with_context(tracking_disable=True).write({"available_threshold": minimum})
+            _logger.info("Set available_threshold=%s on %s", minimum, template.display_name)
+        except Exception as e:
+            _logger.warning("Failed to set available_threshold on %s: %s", template.display_name, e)
+
+    def _is_kit(self, product) -> bool:
+        """Return True if product is a kit (phantom BOM)."""
+        MrpBom = self.env["mrp.bom"]
+        bom = MrpBom.search([("product_id", "=", product.id)], limit=1)
         if not bom:
-            return 0
+            bom = MrpBom.search([("product_tmpl_id", "=", product.product_tmpl_id.id), ("product_id", "=", False)], limit=1)
+        return bool(bom and bom.type == "phantom")
 
-        candidates = []
+    def _kit_max_packs_from_components(self, product, wh_location, monta_avail: float) -> Tuple[float, str]:
+        """
+        Compute max pack qty allowed by component on-hand in Odoo.
+        We DO NOT change kit qty directly (Odoo disallows it).
+        Returns (possible_packs, msg_suffix).
+        """
+        MrpBom = self.env["mrp.bom"]
+        Quant = self.env["stock.quant"]
+
+        bom = MrpBom.search([("product_id", "=", product.id)], limit=1)
+        if not bom:
+            bom = MrpBom.search([("product_tmpl_id", "=", product.product_tmpl_id.id), ("product_id", "=", False)], limit=1)
+        if not bom or bom.type != "phantom":
+            return 0.0, "no phantom BoM"
+
+        possible = math.inf
         for line in bom.bom_line_ids:
-            comp = line.product_id  # product.product
-            avail_comp = self._available_in_location(comp, location)
-            avail_comp = max(0.0, avail_comp)  # clamp
-
-            # convert available into the line uom
-            avail_in_line_uom = comp.uom_id._compute_quantity(
-                avail_comp, line.product_uom_id or comp.uom_id
-            )
-            req = float(line.product_qty or 0.0)
-            if req <= 0:
+            comp = line.product_id
+            need = line.product_qty or 0.0
+            if float_is_zero(need, precision_rounding=comp.uom_id.rounding):
                 continue
-            candidates.append(math.floor(avail_in_line_uom / req))
+            # on-hand in this warehouse location (sum quants)
+            quants = Quant.search([("product_id", "=", comp.id), ("location_id", "child_of", wh_location.id)])
+            onhand = sum(q.quantity for q in quants)
+            possible = min(possible, onhand / need)
 
-        return int(max(0, min(candidates))) if candidates else 0
+        if math.isinf(possible):
+            possible = 0.0
 
-    # ------------------------------- Runner ---------------------------------
+        # Also cap by Monta available if you want the website to align with upstream
+        capped = min(possible, max(0.0, monta_avail))
+        return max(0.0, float(capped)), f"components allow ~{int(capped)} pack(s)"
+
+    def _set_absolute_onhand(self, product, target_qty: float, wh_location) -> Optional[str]:
+        """
+        Adjust product on-hand to exactly target_qty at wh_location.
+        Never write on-hand on a KIT/phantom product (returns reason).
+        """
+        if self._is_kit(product):
+            return "is kit (phantom) – skip direct qty change"
+
+        # Prevent crazy negatives: allow negative only if user really wants it.
+        if target_qty < 0:
+            return "negative target – skip direct qty change"
+
+        try:
+            now_qty = product.with_context(location=wh_location.id).qty_available
+        except Exception:
+            now_qty = 0.0
+
+        delta = target_qty - now_qty
+        if float_is_zero(delta, precision_rounding=product.uom_id.rounding):
+            return None  # already in sync
+
+        try:
+            wiz = self.env["stock.change.product.qty"].create({
+                "product_id": product.id,
+                "new_quantity": target_qty,
+                "location_id": wh_location.id,
+            })
+            wiz.change_product_qty()
+            _logger.info(
+                "Adjusted [%s] %s at %s by %+s (to %s)",
+                product.default_code or product.display_name,
+                product.display_name,
+                wh_location.complete_name,
+                delta,
+                target_qty,
+            )
+            return None
+        except Exception as e:
+            _logger.warning("Skipping direct qty update for [%s] %s (reason: %s)",
+                            product.default_code or product.display_name,
+                            product.display_name, e)
+            return str(e)
+
+    # ----------------------- Main run -----------------------
 
     def run(self, limit=None):
-        """
-        For every product variant having a SKU (default_code):
-          • Pull StockAvailable + MinimumStock from Monta
-          • If product is NOT a kit (no phantom BoM) -> set absolute physical qty
-          • If product IS a kit -> don't touch qty; log packs possible from components
-          • Set product.template.available_threshold from Monta MinimumStock
-        """
-        Product = self.env["product.product"].sudo()
-        dom = [("default_code", "!=", False), ("active", "=", True)]
-        products = Product.search(dom, limit=limit)
+        Product = self.env["product.product"]
+        company = self.env.company
+        wh_loc = self._company_main_stock_location(company)
+        if not wh_loc:
+            _logger.warning("No internal stock location found for company %s; aborting.", company.name)
+            return
+
+        domain = [
+            ("active", "=", True),
+            ("type", "in", ["product", "consu"]),
+            "|", ("monta_sku", "!=", False),
+                 ("default_code", "!=", False),
+        ]
+        products = Product.search(domain, limit=limit)
         _logger.info("MontaQtySync: processing %s products", len(products))
 
-        for p in products:
-            raw_sku = p.default_code
-            stock_available, min_stock, normalized_sku = self._get_product_stock(raw_sku)
+        for prod in products:
+            sku = (prod.monta_sku or prod.default_code or "").strip()
+            if not sku:
+                continue
 
-            # Apply clamps for physical stock
-            if stock_available is not None:
-                try:
-                    stock_available = max(0.0, float(stock_available))
-                except Exception:
-                    stock_available = None
+            ms = self._get_product_stock(sku)
+            if not ms:
+                continue
 
-            # Update available_threshold at template level if Monta provides MinimumStock
-            if min_stock is not None and p.product_tmpl_id.exists():
-                try:
-                    p.product_tmpl_id.write({"available_threshold": float(min_stock)})
+            # 1) Always update website threshold at template
+            self._set_template_threshold(prod.product_tmpl_id, ms.minimum)
+
+            # 2) Sync on-hand for non-kits; kits are handled virtually
+            reason = self._set_absolute_onhand(prod, ms.available, wh_loc)
+            if reason:
+                # For kits: compute packable qty from components (log info only)
+                if "kit" in reason or "phantom" in reason:
+                    packs, desc = self._kit_max_packs_from_components(prod, wh_loc, ms.available)
                     _logger.info(
-                        "Set available_threshold=%s on %s",
-                        float(min_stock),
-                        p.product_tmpl_id.display_name,
+                        "KIT [%s] %s: %s at %s (StockAvailable from Monta=%s, MinStock=%s)",
+                        prod.default_code or prod.display_name,
+                        prod.display_name,
+                        desc,
+                        wh_loc.complete_name,
+                        ms.available,
+                        ms.minimum,
                     )
-                except Exception as e:
-                    _logger.warning(
-                        "Could not set available_threshold for %s: %s",
-                        p.product_tmpl_id.display_name,
-                        e,
-                    )
-
-            # If we can't read stock, continue
-            if stock_available is None:
-                continue
-
-            # Choose target location
-            location = self._main_stock_location(p.company_id or self.env.company)
-            if not location:
-                _logger.warning(
-                    "No internal Stock location found for company %s; skip %s",
-                    (p.company_id or self.env.company).name,
-                    p.display_name,
-                )
-                continue
-
-            # Phantom BoM (kit) -> never update qty directly
-            bom = self._find_phantom_bom(p.product_tmpl_id)
-            if bom:
-                packs_by_components = self._available_packs_from_components(p, location)
-                # clamp negative components result to 0
-                packs_by_components = max(0, packs_by_components)
-                _logger.info(
-                    "KIT [%s] %s: components allow ~%s pack(s) at %s "
-                    "(StockAvailable from Monta=%s, MinStock=%s)",
-                    p.default_code or "",
-                    p.display_name,
-                    packs_by_components,
-                    location.display_name,
-                    stock_available,
-                    min_stock,
-                )
-                # Do not touch kit quants
-                continue
-
-            # Normal product -> set absolute quantity
-            self._set_absolute_qty(p, location, stock_available)
+                else:
+                    # Non-kit skip / errors already logged in _set_absolute_onhand
+                    pass
