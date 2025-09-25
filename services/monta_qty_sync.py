@@ -1,8 +1,4 @@
 # Monta-Odoo-Integration/services/monta_qty_sync.py
-# Pull Monta StockAvailable + MinimumStock and push to Odoo:
-# - Set absolute available qty at company warehouse stock location (for NON-kits)
-# - Update website available_threshold on product template = Monta MinimumStock
-# - For kits/phantom packs: DO NOT write qty on kit; compute packable qty from components and only log/update threshold
 
 import logging
 import math
@@ -18,14 +14,6 @@ from odoo.tools import float_is_zero
 
 _logger = logging.getLogger(__name__)
 
-# --- CONFIG SOURCES ---
-# Expect these system parameters (already used elsewhere in your module):
-#   monta.api.base        -> e.g. https://api-v6.monta.nl
-#   monta.api.user        -> Basic auth username
-#   monta.api.password    -> Basic auth password
-#   monta.api.channel     -> e.g. Moyee_Odoo
-#   monta.api.timeout     -> optional, default 20
-
 STOCK_PATH_SUFFIX = "/stock"  # GET /product/{sku}/stock
 
 
@@ -37,14 +25,14 @@ class MontaStock:
 
 class MontaQtySync:
     """
-    Pulls Monta stock and writes to Odoo without creating custom fields:
-      • Quant is normalized to Monta StockAvailable (non-kits)
-      • Template.available_threshold := Monta MinimumStock
-      • For kits, we never write kit qty (Odoo restriction). We compute possible packs.
+    Pulls Monta stock and writes to Odoo without custom fields:
+      • For non-kits, set on-hand to Monta StockAvailable at the main stock location
+      • Always set product.template.available_threshold = Monta MinimumStock
+      • For kits/phantom packs, never write kit stock; compute feasible packs from components
     """
 
     def __init__(self, env):
-        # NOTE: no env.sudo() here; caller already passes a sudo env (fixes RPC error)
+        # IMPORTANT: do NOT call env.sudo() here; safe for server-action context
         self.env = env
         ICP = env["ir.config_parameter"].sudo()
         self.base = (ICP.get_param("monta.api.base") or "https://api-v6.monta.nl").rstrip("/")
@@ -59,20 +47,11 @@ class MontaQtySync:
         if not self.user or not self.pwd:
             _logger.warning("MontaQtySync: Missing Basic Auth credentials (monta.api.user / monta.api.password).")
 
-    # ----------------------- HTTP -----------------------
-
+    # -------- HTTP --------
     def _get_product_stock(self, sku: str) -> Optional[MontaStock]:
-        """
-        Calls GET {base}/product/{sku}/stock?channel=... and extracts:
-          StockAvailable  (float)
-          MinimumStock    (int or float)
-        Returns None if 404 or unexpected shape.
-        """
         safe_sku = urllib.parse.quote(sku, safe="")
         url = f"{self.base}/product/{safe_sku}{STOCK_PATH_SUFFIX}"
-        params = {}
-        if self.channel:
-            params["channel"] = self.channel
+        params = {"channel": self.channel} if self.channel else {}
 
         try:
             r = requests.get(
@@ -89,7 +68,6 @@ class MontaQtySync:
         if r.status_code == 404:
             _logger.warning("Monta %s -> HTTP 404 body=%r", url, (r.text or "")[:200])
             return None
-
         if not r.ok:
             _logger.warning("Monta %s -> HTTP %s body=%r", url, r.status_code, (r.text or "")[:200])
             return None
@@ -100,47 +78,33 @@ class MontaQtySync:
             _logger.warning("Monta %s -> non-JSON body=%r", url, (r.text or "")[:200])
             return None
 
-        # Monta docs show StockAvailable / MinimumStock at root or inside "Stock"
         stock_available = None
         minimum_stock = None
-
         if isinstance(data, dict):
-            # root-level
             if data.get("StockAvailable") is not None:
                 stock_available = float(data["StockAvailable"])
             if data.get("MinimumStock") is not None:
                 minimum_stock = float(data["MinimumStock"])
-            # nested
             stock_node = data.get("Stock")
             if stock_node and isinstance(stock_node, dict):
                 if stock_node.get("StockAvailable") is not None:
-                    stock_available = float(stock_node["StockAvailable"])  # prefer nested if present
+                    stock_available = float(stock_node["StockAvailable"])
 
         if stock_available is None and minimum_stock is None:
-            # Nothing usable
             return None
 
-        return MontaStock(
-            available=float(stock_available or 0.0),
-            minimum=float(minimum_stock or 0.0),
-        )
+        return MontaStock(float(stock_available or 0.0), float(minimum_stock or 0.0))
 
-    # ----------------------- Odoo helpers -----------------------
-
+    # -------- Odoo helpers --------
     def _company_main_stock_location(self, company):
-        """Pick the company's 'Stock' location (or first internal)."""
         StockLocation = self.env["stock.location"]
-        # try an internal location named like 'Stock' under the company WH
-        loc = StockLocation.search(
+        return StockLocation.search(
             [("usage", "=", "internal"), ("company_id", "=", company.id)],
             order="complete_name asc",
             limit=1,
         )
-        return loc
 
     def _set_template_threshold(self, template, minimum: float):
-        """Set website available threshold to Monta minimum (no new fields)."""
-        # available_threshold exists on product.template in website_sale
         try:
             template.with_context(tracking_disable=True).write({"available_threshold": minimum})
             _logger.info("Set available_threshold=%s on %s", minimum, template.display_name)
@@ -148,7 +112,6 @@ class MontaQtySync:
             _logger.warning("Failed to set available_threshold on %s: %s", template.display_name, e)
 
     def _is_kit(self, product) -> bool:
-        """Return True if product is a kit (phantom BOM)."""
         MrpBom = self.env["mrp.bom"]
         bom = MrpBom.search([("product_id", "=", product.id)], limit=1)
         if not bom:
@@ -156,11 +119,6 @@ class MontaQtySync:
         return bool(bom and bom.type == "phantom")
 
     def _kit_max_packs_from_components(self, product, wh_location, monta_avail: float) -> Tuple[float, str]:
-        """
-        Compute max pack qty allowed by component on-hand in Odoo.
-        We DO NOT change kit qty directly (Odoo disallows it).
-        Returns (possible_packs, msg_suffix).
-        """
         MrpBom = self.env["mrp.bom"]
         Quant = self.env["stock.quant"]
 
@@ -176,27 +134,18 @@ class MontaQtySync:
             need = line.product_qty or 0.0
             if float_is_zero(need, precision_rounding=comp.uom_id.rounding):
                 continue
-            # on-hand in this warehouse location (sum quants)
             quants = Quant.search([("product_id", "=", comp.id), ("location_id", "child_of", wh_location.id)])
             onhand = sum(q.quantity for q in quants)
             possible = min(possible, onhand / need)
 
         if math.isinf(possible):
             possible = 0.0
-
-        # Also cap by Monta available if you want the website to align with upstream
         capped = min(possible, max(0.0, monta_avail))
         return max(0.0, float(capped)), f"components allow ~{int(capped)} pack(s)"
 
     def _set_absolute_onhand(self, product, target_qty: float, wh_location) -> Optional[str]:
-        """
-        Adjust product on-hand to exactly target_qty at wh_location.
-        Never write on-hand on a KIT/phantom product (returns reason).
-        """
         if self._is_kit(product):
             return "is kit (phantom) – skip direct qty change"
-
-        # Prevent crazy negatives: allow negative only if user really wants it.
         if target_qty < 0:
             return "negative target – skip direct qty change"
 
@@ -207,7 +156,7 @@ class MontaQtySync:
 
         delta = target_qty - now_qty
         if float_is_zero(delta, precision_rounding=product.uom_id.rounding):
-            return None  # already in sync
+            return None
 
         try:
             wiz = self.env["stock.change.product.qty"].create({
@@ -231,8 +180,7 @@ class MontaQtySync:
                             product.display_name, e)
             return str(e)
 
-    # ----------------------- Main run -----------------------
-
+    # -------- main --------
     def run(self, limit=None):
         Product = self.env["product.product"]
         company = self.env.company
@@ -259,24 +207,19 @@ class MontaQtySync:
             if not ms:
                 continue
 
-            # 1) Always update website threshold at template
+            # Always update website threshold
             self._set_template_threshold(prod.product_tmpl_id, ms.minimum)
 
-            # 2) Sync on-hand for non-kits; kits are handled virtually
+            # Non-kits: set on-hand; Kits: compute only
             reason = self._set_absolute_onhand(prod, ms.available, wh_loc)
-            if reason:
-                # For kits: compute packable qty from components (log info only)
-                if "kit" in reason or "phantom" in reason:
-                    packs, desc = self._kit_max_packs_from_components(prod, wh_loc, ms.available)
-                    _logger.info(
-                        "KIT [%s] %s: %s at %s (StockAvailable from Monta=%s, MinStock=%s)",
-                        prod.default_code or prod.display_name,
-                        prod.display_name,
-                        desc,
-                        wh_loc.complete_name,
-                        ms.available,
-                        ms.minimum,
-                    )
-                else:
-                    # Non-kit skip / errors already logged in _set_absolute_onhand
-                    pass
+            if reason and ("kit" in reason or "phantom" in reason):
+                packs, desc = self._kit_max_packs_from_components(prod, wh_loc, ms.available)
+                _logger.info(
+                    "KIT [%s] %s: %s at %s (StockAvailable from Monta=%s, MinStock=%s)",
+                    prod.default_code or prod.display_name,
+                    prod.display_name,
+                    desc,
+                    wh_loc.complete_name,
+                    ms.available,
+                    ms.minimum,
+                )

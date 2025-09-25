@@ -1,5 +1,4 @@
 # Monta-Odoo-Integration/models/monta_qty_cron.py
-# Sync product qty + min stock from Monta every 6 hours
 
 from odoo import api, models, SUPERUSER_ID
 from ..services.monta_qty_sync import MontaQtySync
@@ -16,15 +15,18 @@ class ProductProduct(models.Model):
         """
         Entry point for the 6-hour cron job or manual run.
 
-        We sudo() HERE and pass that env into the service.
-        The service no longer calls env.sudo() internally (fixes RPC_ERROR).
+        NOTE: Do NOT call self.env.sudo() here (safe_eval context can complain).
+        The service already sudo()s only on the models that need it (ICP, etc.).
         """
         _logger.info("Running Monta Qty Sync (limit=%s)", limit)
-        MontaQtySync(self.env.sudo()).run(limit=limit)
+        MontaQtySync(self.env).run(limit=limit)
 
 
 def post_init_hook(cr, registry):
-    """Create the cron if it doesn't exist yet (idempotent)."""
+    """
+    Create the cron if it doesn't exist (idempotent).
+    You may already have the cron from earlier – that's fine.
+    """
     env = api.Environment(cr, SUPERUSER_ID, {})
     cron_xmlid = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
     cron = env.ref(cron_xmlid, raise_if_not_found=False)
