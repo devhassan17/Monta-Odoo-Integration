@@ -1,3 +1,4 @@
+# models/monta_order_status.py
 # -*- coding: utf-8 -*-
 import logging
 from odoo import api, fields, models
@@ -21,7 +22,7 @@ class MontaOrderStatus(models.Model):
     order_name = fields.Char(string="Order Name", index=True, required=True)
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
-    # Status (match views & inbound code)
+    # Status
     status = fields.Char(string="Order Status")
     status_code = fields.Char(string="Status Code")
     source = fields.Char(string="Source", default="orders")
@@ -29,17 +30,17 @@ class MontaOrderStatus(models.Model):
     # Extra info
     delivery_message = fields.Char(string="Delivery Message")
     track_trace = fields.Char(string="Track & Trace URL")
-    delivery_date = fields.Date(string="Delivery Date")   # Monta usually sends a date
+    delivery_date = fields.Date(string="Delivery Date")
     last_sync = fields.Datetime(string="Last Sync (UTC)", default=fields.Datetime.now, index=True)
 
-    # NEW: needed by sale_order_inbound.py (your logs show a create() with 'status_raw')
+    # Must exist (your inbound writer uses it)
     status_raw = fields.Text(string="Raw Status (JSON)")
 
     _sql_constraints = [
         ("monta_order_name_unique", "unique(order_name)", "Monta order snapshot must be unique by order name."),
     ]
 
-    # -------- helpers used by your cron / upsert --------
+    # ---------- helpers your cron/upserts rely on ----------
     @api.model
     def _normalize_vals(self, vals):
         """Accept both legacy and canonical keys so other code doesn’t break."""
@@ -52,7 +53,7 @@ class MontaOrderStatus(models.Model):
             "track_trace": vals.get("track_trace", vals.get("track_trace_url")),
             "delivery_date": vals.get("delivery_date"),
             "last_sync": vals.get("last_sync") or fields.Datetime.now(),
-            "status_raw": vals.get("status_raw"),  # safe passthrough
+            "status_raw": vals.get("status_raw"),
         }
 
     @api.model

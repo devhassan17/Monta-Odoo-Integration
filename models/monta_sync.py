@@ -4,35 +4,13 @@ from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
 
+# IMPORTANT:
+# This file must EXTEND the model only. Do NOT redefine the model with _name.
+# The fields (including status_raw) are defined in models/monta_order_status.py.
 class MontaOrderStatus(models.Model):
-    _name = "monta.order.status"
-    _description = "Monta Order Status snapshot"
-    _order = "last_sync desc"
+    _inherit = "monta.order.status"
 
-    order_name     = fields.Char(required=True, index=True)
-    sale_order_id  = fields.Many2one("sale.order", ondelete="cascade", index=True)
-
-    # core status
-    status         = fields.Char(string="Order Status")
-    status_code    = fields.Char(string="Status Code")
-    source         = fields.Selection(
-        [("orders","orders"), ("shipments","shipments"), ("events","events")],
-        default="orders",
-        string="Source"
-    )
-
-    # the extras you asked for
-    delivery_message = fields.Char(string="Delivery Message")
-    monta_order_ref  = fields.Char(string="Monta Order Id/Number")
-
-    # tracking / dates
-    track_trace    = fields.Char(string="Track & Trace URL")
-    delivery_date  = fields.Date(string="Delivery Date")
-    last_sync      = fields.Datetime(string="Last Sync Time", index=True, default=fields.Datetime.now)
-
-    _sql_constraints = [
-        ("monta_order_name_unique", "unique(order_name)", "Monta order name must be unique."),
-    ]
+    # ------------------ helpers (no field declarations here) ------------------
 
     @staticmethod
     def _first(obj):
@@ -110,6 +88,8 @@ class MontaOrderStatus(models.Model):
             "track_trace": tnt or False,
             "delivery_date": delivery or False,
             "last_sync": fields.Datetime.now(),
+            # if you want to stash the raw payload as text:
+            # "status_raw": json.dumps(data, ensure_ascii=False),
         }
 
     def _mirror_to_sale(self, rec):
