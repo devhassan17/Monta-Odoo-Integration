@@ -56,60 +56,60 @@ class SaleOrder(models.Model):
             )
         return ok
 
-    # ------------- EDD immediate pull + step logs -------------
-    def _edd_pretty(self, dt_str):
-        """Return dd/MM/YYYY HH:mm:ss for log readability."""
-        try:
-            if not dt_str:
-                return ''
-            y, m, d = int(dt_str[0:4]), int(dt_str[5:7]), int(dt_str[8:10])
-            hh, mm, ss = int(dt_str[11:13]), int(dt_str[14:16]), int(dt_str[17:19])
-            return f"{d:02d}/{m:02d}/{y:04d} {hh:02d}:{mm:02d}:{ss:02d}"
-        except Exception:
-            return dt_str or ''
+    # # ------------- EDD immediate pull + step logs -------------
+    # def _edd_pretty(self, dt_str):
+    #     """Return dd/MM/YYYY HH:mm:ss for log readability."""
+    #     try:
+    #         if not dt_str:
+    #             return ''
+    #         y, m, d = int(dt_str[0:4]), int(dt_str[5:7]), int(dt_str[8:10])
+    #         hh, mm, ss = int(dt_str[11:13]), int(dt_str[14:16]), int(dt_str[17:19])
+    #         return f"{d:02d}/{m:02d}/{y:04d} {hh:02d}:{mm:02d}:{ss:02d}"
+    #     except Exception:
+    #         return dt_str or ''
 
-    def _pull_and_apply_edd_now(self):
-        """
-        Pull Monta order and apply ETA to commitment_date immediately
-        so the sales page shows Expected Delivery right after order is sent/updated.
-        """
-        try:
-            # Step 1: Request sent
-            self._create_monta_log(
-                {'edd_auto': {'step': 'Request Sent To Monta'}},
-                level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta'
-            )
-            before = self.commitment_date
-            self.action_monta_pull_now()
-            after = self.commitment_date
-            # Step 2..5: summarize
-            pretty = self._edd_pretty(after)
-            msg = {
-                'edd_auto': {
-                    'step': 'EDD Result',
-                    'Date Get': True,
-                    'Date is that': after,
-                    'Date is added to Commitment date': (before or '') != (after or ''),
-                    'Date is showing': bool(after),
-                    'pretty_for_ui': pretty,
-                    'order_url_hint': f"/odoo/sales/{self.id}",
-                }
-            }
-            self._create_monta_log(msg, level='info', tag='Monta EDD',
-                                   console_summary=f"[EDD] Set {after} (pretty {pretty})")
-            try:
-                self.message_post(body=(
-                    "<b>EDD Auto</b><br/>"
-                    "✓ Request Sent To Monta<br/>"
-                    "✓ Date Get<br/>"
-                    f"• Date is that: <code>{after or '-'}</code><br/>"
-                    f"• Date is added to Commitment date: <b>{'Yes' if (before or '') != (after or '') else 'No'}</b><br/>"
-                    f"✓ Date is showing: <b>{pretty or '-'}</b>"
-                ))
-            except Exception:
-                pass
-        except Exception as e:
-            _logger.error("[Monta EDD] Immediate pull failed for %s: %s", self.name, e, exc_info=True)
+    # def _pull_and_apply_edd_now(self):
+    #     """
+    #     Pull Monta order and apply ETA to commitment_date immediately
+    #     so the sales page shows Expected Delivery right after order is sent/updated.
+    #     """
+    #     try:
+    #         # Step 1: Request sent
+    #         self._create_monta_log(
+    #             {'edd_auto': {'step': 'Request Sent To Monta'}},
+    #             level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta'
+    #         )
+    #         before = self.commitment_date
+    #         self.action_monta_pull_now()
+    #         after = self.commitment_date
+    #         # Step 2..5: summarize
+    #         pretty = self._edd_pretty(after)
+    #         msg = {
+    #             'edd_auto': {
+    #                 'step': 'EDD Result',
+    #                 'Date Get': True,
+    #                 'Date is that': after,
+    #                 'Date is added to Commitment date': (before or '') != (after or ''),
+    #                 'Date is showing': bool(after),
+    #                 'pretty_for_ui': pretty,
+    #                 'order_url_hint': f"/odoo/sales/{self.id}",
+    #             }
+    #         }
+    #         self._create_monta_log(msg, level='info', tag='Monta EDD',
+    #                                console_summary=f"[EDD] Set {after} (pretty {pretty})")
+    #         try:
+    #             self.message_post(body=(
+    #                 "<b>EDD Auto</b><br/>"
+    #                 "✓ Request Sent To Monta<br/>"
+    #                 "✓ Date Get<br/>"
+    #                 f"• Date is that: <code>{after or '-'}</code><br/>"
+    #                 f"• Date is added to Commitment date: <b>{'Yes' if (before or '') != (after or '') else 'No'}</b><br/>"
+    #                 f"✓ Date is showing: <b>{pretty or '-'}</b>"
+    #             ))
+    #         except Exception:
+    #             pass
+    #     except Exception as e:
+    #         _logger.error("[Monta EDD] Immediate pull failed for %s: %s", self.name, e, exc_info=True)
 
     # ---------------- logging ----------------
     def _log_pack_variant_skus_for_order(self):
