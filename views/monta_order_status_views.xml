@@ -2,13 +2,13 @@
 <odoo>
   <data>
 
-    <!-- LIST (tree) VIEW -->
+    <!-- ===== LIST (TREE) VIEW ===== -->
     <record id="view_monta_order_status_tree" model="ir.ui.view">
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <!-- Odoo 16/17 supports <list>; use <tree> if you're on <=15 -->
-        <list string="Monta Order Status" default_order="last_sync desc">
+        <!-- Use <tree> if Odoo 15 or earlier -->
+        <list string="Monta Orders" default_order="last_sync desc" create="false" delete="false" editable="false">
           <field name="order_name"/>
           <field name="sale_order_id"/>
           <field name="status"/>
@@ -22,12 +22,12 @@
       </field>
     </record>
 
-    <!-- FORM VIEW -->
+    <!-- ===== FORM VIEW ===== -->
     <record id="view_monta_order_status_form" model="ir.ui.view">
       <field name="name">monta.order.status.form</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <form string="Monta Order Status">
+        <form string="Monta Order">
           <sheet>
             <group>
               <group>
@@ -46,19 +46,20 @@
             <group>
               <field name="delivery_message" readonly="1"/>
               <field name="track_trace" widget="url" readonly="1"/>
-              <field name="status_raw" widget="text" readonly="1"/>
+              <!-- Optional raw JSON/text from Monta if you store it -->
+              <field name="status_raw" widget="text" readonly="1" invisible="1"/>
             </group>
           </sheet>
         </form>
       </field>
     </record>
 
-    <!-- SEARCH VIEW -->
+    <!-- ===== SEARCH VIEW ===== -->
     <record id="view_monta_order_status_search" model="ir.ui.view">
       <field name="name">monta.order.status.search</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <search string="Search Monta Order Status">
+        <search string="Search Monta Orders">
           <field name="order_name"/>
           <field name="sale_order_id"/>
           <field name="status"/>
@@ -66,8 +67,9 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
-          <filter string="Has Monta Ref" name="has_monta_ref"
-                  domain="[('monta_order_ref','!=',False)]"/>
+          <!-- Default filter: only show orders that exist on Monta -->
+          <filter string="On Monta" name="has_monta_ref"
+                  domain="[('monta_order_ref','!=',False), ('monta_order_ref','!=','')]"/>
           <group expand="0" string="Group By">
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
             <filter string="Status" name="grp_status" context="{'group_by':'status'}"/>
@@ -78,7 +80,7 @@
       </field>
     </record>
 
-    <!-- ACTION: only show entries that exist in Monta -->
+    <!-- ===== ACTION (applies strict domain + default search filter) ===== -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Orders</field>
       <field name="res_model">monta.order.status</field>
@@ -87,16 +89,17 @@
         (ref('view_monta_order_status_tree'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
-      <!-- Only show orders that are available on Monta -->
-      <field name="domain">[('monta_order_ref','!=',False)]</field>
-      <field name="context">{}</field>
+      <!-- Only show orders that are actually on Monta -->
+      <field name="domain">[('monta_order_ref','!=',False), ('monta_order_ref','!=','')]</field>
+      <!-- Apply the default search filter automatically -->
+      <field name="context">{'search_default_has_monta_ref': 1}</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
       <field name="help" type="html">
-        <p>This table shows snapshots pulled from Monta. Records without a Monta reference are hidden.</p>
+        <p>Only orders that exist on Monta are listed here. Use the search bar or group-by tools to refine.</p>
       </field>
     </record>
 
-    <!-- MENUS -->
+    <!-- ===== MENU ===== -->
     <menuitem id="menu_monta_root" name="Monta" sequence="90" groups="base.group_user"/>
     <menuitem id="menu_monta_order_status" name="Order Status"
               parent="menu_monta_root" action="action_monta_order_status"
