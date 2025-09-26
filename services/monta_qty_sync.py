@@ -50,7 +50,7 @@ class MontaQtySync:
         self.base = (_param("monta.base_url", "monta.api.base_url", default="https://api-v6.monta.nl") or "").rstrip("/")
         self.user = _param("monta.username", "monta.api.user", default="") or ""
         self.pwd = _param("monta.password", "monta.api.password", default="") or ""
-        self.channel = _param("monta.channel", "monta.api.channel", default="Moyee_Odoo") or ""
+        self.channel = _param("monta.channel", "monta.api.channel", default="MoyeeCoffe_odoo") or ""
         try:
             self.timeout = int(_param("monta.timeout", "monta.api.timeout", default="20"))
         except Exception:

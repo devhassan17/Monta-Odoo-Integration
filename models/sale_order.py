@@ -11,8 +11,8 @@ from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_compo
 
 _logger = logging.getLogger(__name__)
 
-# Guard constant is now unused (kept empty to avoid confusion)
-ALLOWED_INSTANCE_URL = "https://moyeecoffee-odoo-monta-plugin-22993258.dev.odoo.com/"
+# Hard guard removed; control via monta.allowed_base_urls
+ALLOWED_INSTANCE_URL = ""
 
 
 class SaleOrder(models.Model):
@@ -44,9 +44,9 @@ class SaleOrder(models.Model):
 
     def _is_allowed_instance(self):
         """
-        New behavior:
-        - If 'monta.allowed_base_urls' is set (comma-separated), allow only when web.base.url matches.
-        - If not set, allow all (no blocking).
+        Allowed when:
+        - 'monta.allowed_base_urls' is empty (no blocking), or
+        - current web.base.url matches one of the comma-separated URLs.
         """
         ICP = self.env['ir.config_parameter'].sudo()
         web_url = (ICP.get_param('web.base.url') or '').strip().rstrip('/') + '/'
@@ -157,16 +157,20 @@ class SaleOrder(models.Model):
     # ---------------- payload ----------------
     def _prepare_monta_order_payload(self):
         self.ensure_one()
+        ICP = self.env['ir.config_parameter'].sudo()
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or '', partner.street2 or '')
         lines = self._prepare_monta_lines()
         invoice_id_digits = re.sub(r'\D', '', self.name or '')
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
 
+        # Origin: configurable via System Parameter 'monta.origin'
+        origin_cfg = (ICP.get_param('monta.origin') or '').strip()
+
         payload = {
             "WebshopOrderId": self.name,
             "Reference": self.client_order_ref or "",
-            "Origin": "Moyee_Odoo",
+            # "Origin": "Moyee_Odoo",  # removed hard-code to avoid Code 2 errors
             "ConsumerDetails": {
                 "DeliveryAddress": {
                     "Company": partner.company_name or partner.name or "",
@@ -204,6 +208,13 @@ class SaleOrder(models.Model):
                 "Currency": self.currency_id.name or "EUR"
             }
         }
+
+        # Only include Origin if you configured it (prevents "invalid or not provided")
+        if origin_cfg:
+            payload["Origin"] = origin_cfg
+        else:
+            _logger.info("[Monta Payload] No 'monta.origin' configured; omitting Origin field.")
+
         return payload
 
     # ---------------- logging to DB + server ----------------
