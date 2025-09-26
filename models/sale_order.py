@@ -12,7 +12,7 @@ from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_compo
 _logger = logging.getLogger(__name__)
 
 # Guard constant is now unused (kept empty to avoid confusion)
-ALLOWED_INSTANCE_URL = ""
+ALLOWED_INSTANCE_URL = "https://moyeecoffee-odoo-monta-plugin-22993258.dev.odoo.com/"
 
 
 class SaleOrder(models.Model):
