@@ -11,8 +11,8 @@ from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_compo
 
 _logger = logging.getLogger(__name__)
 
-# Only send orders from this instance (guards against staging/live duplicates)
-ALLOWED_INSTANCE_URL = "https://moyeecoffee-odoo-monta-plugin-22993258.dev.odoo.com/"
+# Guard constant is now unused (kept empty to avoid confusion)
+ALLOWED_INSTANCE_URL = ""
 
 
 class SaleOrder(models.Model):
@@ -43,15 +43,23 @@ class SaleOrder(models.Model):
             return True
 
     def _is_allowed_instance(self):
+        """
+        New behavior:
+        - If 'monta.allowed_base_urls' is set (comma-separated), allow only when web.base.url matches.
+        - If not set, allow all (no blocking).
+        """
         ICP = self.env['ir.config_parameter'].sudo()
         web_url = (ICP.get_param('web.base.url') or '').strip().rstrip('/') + '/'
-        allowed = (ALLOWED_INSTANCE_URL or '').strip().rstrip('/') + '/'
-        ok = web_url.lower() == allowed.lower()
+        allowed_conf = (ICP.get_param('monta.allowed_base_urls') or '').strip()
+        if not allowed_conf:
+            return True
+        allowed_list = [u.strip().rstrip('/') + '/' for u in allowed_conf.split(',') if u.strip()]
+        ok = (web_url.lower() in [a.lower() for a in allowed_list])
         if not ok:
-            _logger.warning("[Monta Guard] Not sending order %s. web.base.url=%s expected=%s",
-                            self.name, web_url, allowed)
+            _logger.warning("[Monta Guard] Not sending order %s. web.base.url=%s allowed_list=%s",
+                            self.name, web_url, allowed_list)
             self._create_monta_log(
-                {'guard': {'web_base_url': web_url, 'allowed': allowed, 'blocked': True}},
+                {'guard': {'web_base_url': web_url, 'allowed_list': allowed_list, 'blocked': True}},
                 level='info', tag='Monta Guard', console_summary='[Monta Guard] blocked by instance URL'
             )
         return ok
@@ -70,19 +78,15 @@ class SaleOrder(models.Model):
 
     # def _pull_and_apply_edd_now(self):
     #     """
-    #     Pull Monta order and apply ETA to commitment_date immediately
-    #     so the sales page shows Expected Delivery right after order is sent/updated.
+    #     (Disabled) Old behavior pulled ETA immediately and wrote to commitment_date.
+    #     Kept for reference, but no longer called.
     #     """
     #     try:
-    #         # Step 1: Request sent
-    #         self._create_monta_log(
-    #             {'edd_auto': {'step': 'Request Sent To Monta'}},
-    #             level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta'
-    #         )
+    #         self._create_monta_log({'edd_auto': {'step': 'Request Sent To Monta'}},
+    #                                level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta')
     #         before = self.commitment_date
     #         self.action_monta_pull_now()
     #         after = self.commitment_date
-    #         # Step 2..5: summarize
     #         pretty = self._edd_pretty(after)
     #         msg = {
     #             'edd_auto': {
@@ -285,8 +289,7 @@ class SaleOrder(models.Model):
                 'monta_needs_sync': False,
             })
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Create', '[Monta] order created')
-            # Pull ETA now so commitment_date is set immediately
-            self._pull_and_apply_edd_now()
+            # (Disabled) Immediate EDD pull to commitment_date is now disabled
         else:
             self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
             self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Create', '[Monta] create failed')
@@ -310,8 +313,7 @@ class SaleOrder(models.Model):
                 'monta_needs_sync': False,
             })
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Update', '[Monta] order updated')
-            # Pull ETA now so commitment_date is set immediately
-            self._pull_and_apply_edd_now()
+            # (Disabled) Immediate EDD pull to commitment_date is now disabled
             return status, body
 
         reason_codes = []
@@ -341,8 +343,7 @@ class SaleOrder(models.Model):
                 })
                 self._create_monta_log({'status': c_status, 'body': c_body}, 'info', 'Monta Create',
                                        '[Monta] order created (after update fallback)')
-                # Pull ETA now so commitment_date is set immediately
-                self._pull_and_apply_edd_now()
+                # (Disabled) Immediate EDD pull to commitment_date is now disabled
                 return c_status, c_body
 
         self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
@@ -401,15 +402,15 @@ class SaleOrder(models.Model):
             vals.setdefault('monta_needs_sync', True)
         res = super(SaleOrder, self).write(vals)
 
-        # NEW: If order just got a monta id or was marked sent/updated via some other flow, pull EDD now
-        keys = set(vals.keys())
-        if {'monta_order_id', 'monta_sync_state'} & keys:
-            for order in self:
-                try:
-                    if vals.get('monta_order_id') or vals.get('monta_sync_state') in ('sent', 'updated'):
-                        order._pull_and_apply_edd_now()
-                except Exception as e:
-                    _logger.error("[Monta EDD] write-trigger failed for %s: %s", order.name, e, exc_info=True)
+        # (Disabled) Old behavior triggered EDD pull here; no longer needed
+        # keys = set(vals.keys())
+        # if {'monta_order_id', 'monta_sync_state'} & keys:
+        #     for order in self:
+        #         try:
+        #             if vals.get('monta_order_id') or vals.get('monta_sync_state') in ('sent', 'updated'):
+        #                 order._pull_and_apply_edd_now()
+        #         except Exception as e:
+        #             _logger.error("[Monta EDD] write-trigger failed for %s: %s", order.name, e, exc_info=True)
 
         # push updates automatically for confirmed orders
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
