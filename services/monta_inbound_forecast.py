@@ -1,3 +1,4 @@
+---BEGIN FILE---
 # -*- coding: utf-8 -*-
 import json, pytz, requests, logging
 from datetime import datetime, timedelta
@@ -97,8 +98,12 @@ class MontaInboundForecastService(models.AbstractModel):
     def _collect_lines(self, po, line_dt_iso):
         """
         Build lines for Monta InboundForecast.
-        If a PO line is a pack/kit, expand it into its leaf component SKUs using utils.pack.
-        Quantities are aggregated per component SKU.
+
+        Rules:
+        - If a PO line is a pack/kit => expand to leaf components (utils.pack).
+        - If a PO line has NO SKU, we will still attempt to expand; if expansion
+          yields components, we use those. We only error if neither a SKU nor components exist.
+        - Quantities are aggregated per component SKU and rounded to int for Monta.
         """
         from collections import defaultdict
         from ..utils.pack import expand_to_leaf_components, is_pack_like
@@ -113,18 +118,30 @@ class MontaInboundForecastService(models.AbstractModel):
             if qty <= 0:
                 continue
 
+            sku = (getattr(product, 'monta_sku', False) or getattr(product, 'default_code', '') or '').strip()
+            try_expand = False
+
             if is_pack_like(env, product, company_id):
-                leaves = expand_to_leaf_components(env, company_id, product, qty)
-                for comp, q in leaves:
-                    sku = (getattr(comp, 'monta_sku', False) or getattr(comp, 'default_code', '') or '').strip()
-                    if not sku:
-                        raise ValueError(f"Component of pack '{l.display_name}' has no SKU (monta_sku/default_code).")
-                    rows_map[sku] += float(q or 0.0)
-            else:
-                sku = (getattr(product, 'monta_sku', False) or getattr(product, 'default_code', '') or '').strip()
-                if not sku:
-                    raise ValueError(f"Line '{l.display_name}' has no SKU (monta_sku/default_code).")
-                rows_map[sku] += qty
+                try_expand = True
+            elif not sku:
+                # No SKU on the line product -> try to expand optimistically
+                try_expand = True
+
+            if try_expand:
+                leaves = expand_to_leaf_components(env, company_id, product, qty) or []
+                leaves = [(c, float(q or 0.0)) for (c, q) in leaves if q and float(q) > 0]
+                if leaves:
+                    for comp, q in leaves:
+                        csku = (getattr(comp, 'monta_sku', False) or getattr(comp, 'default_code', '') or '').strip()
+                        if not csku:
+                            raise ValueError(f"Component of pack '{l.display_name}' has no SKU (monta_sku/default_code).")
+                        rows_map[csku] += float(q or 0.0)
+                    continue  # handled via expansion
+
+            # Fallback: treat as a normal single-SKU line
+            if not sku:
+                raise ValueError(f"Line '{l.display_name}' has no SKU (monta_sku/default_code).")
+            rows_map[sku] += qty
 
         rows = [{"Sku": sku, "Quantity": int(round(q)), "DeliveryDate": line_dt_iso}
                 for sku, q in rows_map.items() if q > 0]
@@ -180,13 +197,17 @@ class MontaInboundForecastService(models.AbstractModel):
         return existing
 
     def _upsert_lines(self, base, auth, po, edd, existing_skus):
+        """
+        Upsert forecast lines for a PO using the same pack-expansion logic as creation.
+        """
         url_group = f"{base}/inboundforecast/group/{po.name}"
-        for l in po.order_line:
-            sku = (l.product_id.monta_sku or l.product_id.default_code or '').strip()
-            if not sku:
-                raise ValueError(f"Line '{l.display_name}' has no SKU.")
-            qty = int(l.product_qty or 0)
-            if qty <= 0:
+        # Build rows via _collect_lines to ensure pack expansion + aggregation
+        rows = self._collect_lines(po, edd)
+
+        for row in rows:
+            sku = (row.get("Sku") or "").strip()
+            qty = int(row.get("Quantity") or 0)
+            if not sku or qty <= 0:
                 continue
             line_payload = {
                 "Sku": sku,
@@ -272,3 +293,4 @@ class MontaInboundForecastService(models.AbstractModel):
             return True
         _logger.error("[Monta IF] Delete failed for %s: HTTP %s %s", po.name, st, body)
         return False
+---END FILE---
