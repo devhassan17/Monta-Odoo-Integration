@@ -95,16 +95,41 @@ class MontaInboundForecastService(models.AbstractModel):
 
     # ---------- builders ----------
     def _collect_lines(self, po, line_dt_iso):
-        rows = []
+        """
+        Build lines for Monta InboundForecast.
+        If a PO line is a pack/kit, expand it into its leaf component SKUs using utils.pack.
+        Quantities are aggregated per component SKU.
+        """
+        from collections import defaultdict
+        from ..utils.pack import expand_to_leaf_components, is_pack_like
+
+        env = self.env
+        company_id = getattr(po.company_id, 'id', getattr(env.company, 'id', False))
+        rows_map = defaultdict(float)
+
         for l in po.order_line:
-            sku = (l.product_id.monta_sku or l.product_id.default_code or '').strip()
-            if not sku:
-                raise ValueError(f"Line '{l.display_name}' has no SKU (monta_sku/default_code).")
-            q = int(l.product_qty or 0)
-            if q > 0:
-                rows.append({"Sku": sku, "Quantity": q, "DeliveryDate": line_dt_iso})
+            product = l.product_id
+            qty = float(l.product_qty or 0.0)
+            if qty <= 0:
+                continue
+
+            if is_pack_like(env, product, company_id):
+                leaves = expand_to_leaf_components(env, company_id, product, qty)
+                for comp, q in leaves:
+                    sku = (getattr(comp, 'monta_sku', False) or getattr(comp, 'default_code', '') or '').strip()
+                    if not sku:
+                        raise ValueError(f"Component of pack '{l.display_name}' has no SKU (monta_sku/default_code).")
+                    rows_map[sku] += float(q or 0.0)
+            else:
+                sku = (getattr(product, 'monta_sku', False) or getattr(product, 'default_code', '') or '').strip()
+                if not sku:
+                    raise ValueError(f"Line '{l.display_name}' has no SKU (monta_sku/default_code).")
+                rows_map[sku] += qty
+
+        rows = [{"Sku": sku, "Quantity": int(round(q)), "DeliveryDate": line_dt_iso}
+                for sku, q in rows_map.items() if q > 0]
         if not rows:
-            raise ValueError("PO has no positive-quantity lines.")
+            raise ValueError("PO has no positive-quantity component lines after pack expansion.")
         return rows
 
     def _group_payload(self, po, tz):
@@ -182,7 +207,6 @@ class MontaInboundForecastService(models.AbstractModel):
 
     # ---------- public entry ----------
     def send_for_po(self, po):
-        # Feature flag still respected (use System Parameter: monta.inbound_enable = 1 / true)
         ICP = self.env['ir.config_parameter'].sudo()
         inbound_enable = (ICP.get_param('monta.inbound_enable') or '').strip().lower() in ('1', 'true', 'yes', 'on')
         if not inbound_enable:
@@ -202,10 +226,8 @@ class MontaInboundForecastService(models.AbstractModel):
             raise ValueError("SupplierCode is missing/invalid. Set vendor.x_monta_supplier_code "
                              "or configure ICP 'monta.supplier_code_map' / 'monta.supplier_code_override'.")
 
-        # 1) Idempotent existence check
         st, body = self._get_group(base, auth, po)
         if st == 404:
-            # 2a) Create with lines
             st2, body2 = self._create_group_with_lines(base, auth, po, header, self._collect_lines(po, edd), edd)
             if 200 <= (st2 or 0) < 300:
                 uid = body2.get("UniqueId")
@@ -216,19 +238,14 @@ class MontaInboundForecastService(models.AbstractModel):
                         pass
                 _logger.info("[Monta IF] ✅ Created group for %s", po.name)
                 return True
-            # if POST failed for some reason but conflict-like, fall through to PUT + upsert
             body = body2
-        elif 200 <= (st or 0) < 300:
-            pass
-        else:
+        elif not (200 <= (st or 0) < 300):
             raise RuntimeError(f"GET group failed for {po.name}: HTTP {st} {body}")
 
-        # 2b) Ensure header exists/updated
         st3, body3 = self._put_header(base, auth, po, header)
         if not (200 <= (st3 or 0) < 300):
             raise RuntimeError(f"PUT header failed for {po.name}: HTTP {st3} {body3}")
 
-        # 3) Upsert lines (always)
         existing = self._get_existing_skus(body if st == 200 else body3 if isinstance(body3, dict) else {})
         self._upsert_lines(base, auth, po, edd, existing)
 
