@@ -64,57 +64,6 @@ class SaleOrder(models.Model):
             )
         return ok
 
-    # # ------------- EDD immediate pull + step logs -------------
-    # def _edd_pretty(self, dt_str):
-    #     """Return dd/MM/YYYY HH:mm:ss for log readability."""
-    #     try:
-    #         if not dt_str:
-    #             return ''
-    #         y, m, d = int(dt_str[0:4]), int(dt_str[5:7]), int(dt_str[8:10])
-    #         hh, mm, ss = int(dt_str[11:13]), int(dt_str[14:16]), int(dt_str[17:19])
-    #         return f"{d:02d}/{m:02d}/{y:04d} {hh:02d}:{mm:02d}:{ss:02d}"
-    #     except Exception:
-    #         return dt_str or ''
-
-    # def _pull_and_apply_edd_now(self):
-    #     """
-    #     (Disabled) Old behavior pulled ETA immediately and wrote to commitment_date.
-    #     Kept for reference, but no longer called.
-    #     """
-    #     try:
-    #         self._create_monta_log({'edd_auto': {'step': 'Request Sent To Monta'}},
-    #                                level='info', tag='Monta EDD', console_summary='[EDD] Request Sent To Monta')
-    #         before = self.commitment_date
-    #         self.action_monta_pull_now()
-    #         after = self.commitment_date
-    #         pretty = self._edd_pretty(after)
-    #         msg = {
-    #             'edd_auto': {
-    #                 'step': 'EDD Result',
-    #                 'Date Get': True,
-    #                 'Date is that': after,
-    #                 'Date is added to Commitment date': (before or '') != (after or ''),
-    #                 'Date is showing': bool(after),
-    #                 'pretty_for_ui': pretty,
-    #                 'order_url_hint': f"/odoo/sales/{self.id}",
-    #             }
-    #         }
-    #         self._create_monta_log(msg, level='info', tag='Monta EDD',
-    #                                console_summary=f"[EDD] Set {after} (pretty {pretty})")
-    #         try:
-    #             self.message_post(body=(
-    #                 "<b>EDD Auto</b><br/>"
-    #                 "✓ Request Sent To Monta<br/>"
-    #                 "✓ Date Get<br/>"
-    #                 f"• Date is that: <code>{after or '-'}</code><br/>"
-    #                 f"• Date is added to Commitment date: <b>{'Yes' if (before or '') != (after or '') else 'No'}</b><br/>"
-    #                 f"✓ Date is showing: <b>{pretty or '-'}</b>"
-    #             ))
-    #         except Exception:
-    #             pass
-    #     except Exception as e:
-    #         _logger.error("[Monta EDD] Immediate pull failed for %s: %s", self.name, e, exc_info=True)
-
     # ---------------- logging ----------------
     def _log_pack_variant_skus_for_order(self):
         packs_scanned = 0
@@ -300,60 +249,15 @@ class SaleOrder(models.Model):
         return status, body
 
     def _monta_update(self):
+        """Disabled. We only allow create (POST) and cancel (DELETE) currently."""
         self.ensure_one()
-        webshop_id = self.monta_order_id or self.name
-        _logger.info("[Monta] Updating order %s (idempotent by name)", webshop_id)
-        path = f"/order/{webshop_id}"
-        status, body = self._monta_request('PUT', path, self._prepare_monta_order_payload())
-        if 200 <= status < 300:
-            self.write({
-                'monta_order_id': webshop_id,
-                'monta_sync_state': 'updated' if self.monta_sync_state != 'sent' else 'sent',
-                'monta_last_push': fields.Datetime.now(),
-                'monta_needs_sync': False,
-            })
-            self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Update', '[Monta] order updated')
-            # (Disabled) Immediate EDD pull to commitment_date is now disabled
-            return status, body
-
-        reason_codes = []
+        msg = {"note": "Update disabled by configuration; skipping PUT."}
         try:
-            reason_codes = [r.get('Code') for r in (body or {}).get('OrderInvalidReasons', [])]
+            self._create_monta_log(msg, level='info', tag='Monta Update', console_summary='[Monta] update disabled')
+            self.message_post(body="<b>Monta update skipped</b><br/><pre>Update disabled; only create/cancel allowed.</pre>")
         except Exception:
             pass
-        if status == 400 and 42 in reason_codes:
-            self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
-            self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Update',
-                                   '[Monta] order under verification; will retry later')
-            try:
-                self.message_post(body=f"<b>Monta update deferred (verification).</b><br/><pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>")
-            except Exception:
-                pass
-            return status, body
-
-        if status in (400, 404):
-            _logger.warning("[Monta] Update failed (%s) for %s; attempting create...", status, webshop_id)
-            c_status, c_body = self._monta_request('POST', '/order', self._prepare_monta_order_payload())
-            if 200 <= c_status < 300:
-                self.write({
-                    'monta_order_id': webshop_id,
-                    'monta_sync_state': 'sent',
-                    'monta_last_push': fields.Datetime.now(),
-                    'monta_needs_sync': False,
-                })
-                self._create_monta_log({'status': c_status, 'body': c_body}, 'info', 'Monta Create',
-                                       '[Monta] order created (after update fallback)')
-                # (Disabled) Immediate EDD pull to commitment_date is now disabled
-                return c_status, c_body
-
-        self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
-        self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Update',
-                               '[Monta] update failed (will retry)')
-        try:
-            self.message_post(body=f"<b>Monta update failed.</b><br/><pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>")
-        except Exception:
-            pass
-        return status, body
+        return 0, msg
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
@@ -390,10 +294,8 @@ class SaleOrder(models.Model):
                 order._log_all_skus_now()
             except Exception as e:
                 _logger.error("[Monta] SKU logging failed for %s: %s", order.name, e, exc_info=True)
-            if not order.monta_order_id:
-                order._monta_create()
-            else:
-                order._monta_update()
+            # Always create (POST). Update is disabled.
+            order._monta_create()
         return res
 
     def write(self, vals):
@@ -403,21 +305,13 @@ class SaleOrder(models.Model):
         res = super(SaleOrder, self).write(vals)
 
         # (Disabled) Old behavior triggered EDD pull here; no longer needed
-        # keys = set(vals.keys())
-        # if {'monta_order_id', 'monta_sync_state'} & keys:
-        #     for order in self:
-        #         try:
-        #             if vals.get('monta_order_id') or vals.get('monta_sync_state') in ('sent', 'updated'):
-        #                 order._pull_and_apply_edd_now()
-        #         except Exception as e:
-        #             _logger.error("[Monta EDD] write-trigger failed for %s: %s", order.name, e, exc_info=True)
 
-        # push updates automatically for confirmed orders
+        # push updates automatically for confirmed orders — now uses create (POST)
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
             try:
                 order._log_all_skus_now()
                 if order._should_push_now():
-                    order._monta_update()
+                    order._monta_create()
             except Exception as e:
                 _logger.error("[Monta Sync] Order %s write-sync failed: %s", order.name, e, exc_info=True)
         return res
@@ -430,6 +324,6 @@ class SaleOrder(models.Model):
 
     def unlink(self):
         for order in self:
-            if order.state in ('sale', 'done') and (order.monta_order_id or order.name):
+            if order.state in ('sale', 'done') and (order.monta_order_id or self.name):
                 order._monta_delete(note="Deleted from Odoo (unlink)")
         return super(SaleOrder, self).unlink()
