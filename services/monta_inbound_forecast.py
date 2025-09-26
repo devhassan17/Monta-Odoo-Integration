@@ -1,4 +1,4 @@
----BEGIN FILE---
+
 # -*- coding: utf-8 -*-
 import json, pytz, requests, logging
 from datetime import datetime, timedelta
