@@ -1,4 +1,3 @@
-# models/monta_order_status.py
 # -*- coding: utf-8 -*-
 import logging
 from odoo import api, fields, models, _
@@ -23,18 +22,17 @@ class MontaOrderStatus(models.Model):
     order_name = fields.Char(string="Order Name", index=True, required=True)
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
-    # Status (stored, not computed)
+    # Status (stored)
     status = fields.Char(string="Order Status")
-    # accept int, but tolerate legacy strings by casting on write
     status_code = fields.Integer(string="Status Code")
 
-    # Keep Selection to avoid registry cleanups changing choices dynamically
+    # Keep Selection fixed to avoid registry churn
     source = fields.Selection(
         selection=[
             ("orders", "orders"),
             ("shipments", "shipments"),
             ("orderevents", "orderevents"),
-            ("events", "events"),  # backward compat
+            ("events", "events"),
         ],
         string="Source",
         default="orders",
@@ -47,10 +45,10 @@ class MontaOrderStatus(models.Model):
     delivery_date = fields.Date(string="Delivery Date")
     last_sync = fields.Datetime(string="Last Sync (UTC)", default=fields.Datetime.now, index=True)
 
-    # Raw payload (needed by inbound writer)
+    # Raw payload (optional)
     status_raw = fields.Text(string="Raw Status (JSON)")
 
-    # Fast flag to show "available on Monta"
+    # Fast flag: available on Monta
     on_monta = fields.Boolean(
         string="Available on Monta",
         compute="_compute_on_monta",
@@ -74,50 +72,53 @@ class MontaOrderStatus(models.Model):
         if v in (False, None, ""):
             return 0
         try:
-            return int(v)
+            return int(str(v).strip())
         except Exception:
             return 0
 
     @api.model
     def _normalize_vals(self, vals):
-        """Accept both legacy and canonical keys so other code doesn’t break.
-        IMPORTANT: we DO NOT include keys that are falsy to avoid overwriting with blanks.
+        """
+        Map incoming keys and ignore falsy to avoid overwrites with blanks.
         """
         out = {}
 
-        # Monta ref: only set if provided and non-empty
+        # Monta ref: set only when non-empty
         ref = vals.get("monta_order_ref")
         if ref is not None and str(ref).strip() != "":
             out["monta_order_ref"] = str(ref).strip()
 
-        # Status (char)
-        status = vals.get("status", vals.get("order_status"))
+        # Status text
+        status = vals.get("status") or vals.get("order_status")
         if status is not None:
             out["status"] = status
 
-        # Status code (int) – cast safely
-        sc = vals.get("status_code", vals.get("monta_status_code"))
+        # Status code
+        sc = vals.get("status_code")
+        if sc is None:
+            sc = vals.get("monta_status_code")
         if sc is not None:
             out["status_code"] = self._safe_int(sc)
 
         # Source (selection)
-        src = vals.get("source", vals.get("monta_status_source"))
+        src = vals.get("source") or vals.get("monta_status_source")
         if src is not None:
-            out["source"] = src
+            # validate selection
+            allowed = [opt[0] for opt in (self._fields["source"].selection or [])]
+            if src in allowed:
+                out["source"] = src
 
-        # Delivery message/url/date
+        # Other fields
         if vals.get("delivery_message") is not None:
             out["delivery_message"] = vals.get("delivery_message")
 
-        if vals.get("track_trace") is not None:
-            out["track_trace"] = vals.get("track_trace")
-        elif vals.get("track_trace_url") is not None:
-            out["track_trace"] = vals.get("track_trace_url")
+        track = vals.get("track_trace") or vals.get("track_trace_url")
+        if track is not None:
+            out["track_trace"] = track
 
         if vals.get("delivery_date") is not None:
             out["delivery_date"] = vals.get("delivery_date")
 
-        # last_sync always refreshed unless explicitly passed
         out["last_sync"] = vals.get("last_sync") or fields.Datetime.now()
 
         if vals.get("status_raw") is not None:
@@ -125,25 +126,23 @@ class MontaOrderStatus(models.Model):
 
         return out
 
-    # ---------- API used by your cron/upserts ----------
+    # ---------- PUBLIC API ----------
     @api.model
     def upsert_for_order(self, so, **vals):
         """
-        Create or update a single snapshot row per sale.order (keyed by order_name).
-        SAFE semantics:
+        Create/update one snapshot row per sale.order (keyed by order_name).
+        Safety:
         - Never overwrite monta_order_ref with blank/False.
-        - Cast status_code to int safely.
-        - Prevent the same non-empty monta_order_ref from appearing on multiple orders.
+        - Cast status_code to int.
+        - Block duplicate non-empty monta_order_ref across orders.
         """
         if not so or not so.id:
-            raise ValueError("upsert_for_order requires a valid sale.order record")
+            raise ValueError("upsert_for_order requires a valid sale.order")
 
         base_vals = self._normalize_vals(vals)
         base_vals.update({"sale_order_id": so.id, "order_name": so.name})
 
-        rec = self.sudo().search([("order_name", "=", so.name)], limit=1)
-
-        # Duplicate MontaRef protection (only for non-empty refs)
+        # Duplicate Monta ref protection
         incoming_ref = base_vals.get("monta_order_ref")
         if incoming_ref:
             clash = self.sudo().search(
@@ -151,24 +150,21 @@ class MontaOrderStatus(models.Model):
                 limit=1,
             )
             if clash:
-                # Ref already belongs to a different order — do not propagate it.
                 _logger.warning(
                     "Blocked duplicate Monta ref %s for order %s (already used by %s).",
                     incoming_ref, so.name, clash.order_name
                 )
-                # Remove the ref from vals so we don't write it
                 base_vals.pop("monta_order_ref", None)
 
+        rec = self.sudo().search([("order_name", "=", so.name)], limit=1)
         if rec:
-            # merge without blanking existing ref
-            return rec.sudo().write(base_vals) or rec
-
+            rec.write(base_vals)
+            return rec
         return self.sudo().create(base_vals)
 
     # ---------- CONSTRAINTS ----------
     @api.constrains("monta_order_ref", "order_name")
     def _check_unique_nonempty_monta_ref(self):
-        """Ensure a non-empty monta_order_ref is unique across orders."""
         for r in self:
             ref = (r.monta_order_ref or "").strip()
             if not ref:
@@ -178,3 +174,25 @@ class MontaOrderStatus(models.Model):
                 raise ValidationError(
                     _("Monta Order Ref '%s' already exists on order %s; refs must be unique.") % (ref, dup.order_name)
                 )
+
+
+# ---- Sale Order helpers (optional mirror + manual action) ----
+class SaleOrder(models.Model):
+    _inherit = "sale.order"
+
+    monta_status = fields.Char(string="Monta Status", copy=False, index=True)
+    monta_status_code = fields.Char(string="Monta Status Code", copy=False)
+    monta_status_source = fields.Selection(
+        selection=[("shipments", "Shipments"), ("orderevents", "Order Events"), ("orders", "Orders Header")],
+        string="Monta Status Source",
+        copy=False,
+    )
+    monta_track_trace = fields.Char(string="Monta Track & Trace", copy=False)
+    monta_last_sync = fields.Datetime(string="Monta Last Sync", copy=False)
+
+    def action_open_monta_order_status(self):
+        self.ensure_one()
+        action = self.env.ref("Monta-Odoo-Integration.action_monta_order_status").read()[0]
+        action["domain"] = [("order_name", "=", self.name)]
+        action["context"] = {"search_default_order_name": self.name}
+        return action
