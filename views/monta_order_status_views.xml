@@ -2,7 +2,7 @@
 <odoo>
   <data>
 
-    <!-- LIST VIEW (read-only) -->
+    <!-- LIST VIEW -->
     <record id="view_monta_order_status_list" model="ir.ui.view">
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
@@ -46,6 +46,8 @@
               <field name="delivery_message" readonly="1"/>
               <field name="track_trace" widget="url" readonly="1"/>
               <field name="status_raw" widget="text" readonly="1" invisible="1"/>
+              <field name="monta_account_key" readonly="1" invisible="1"/>
+              <field name="is_current_account" readonly="1" invisible="1"/>
             </group>
           </sheet>
         </form>
@@ -65,7 +67,8 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
-          <filter string="On Monta" name="has_monta_ref" domain="[('on_monta','=',True)]"/>
+          <!-- Only this tenant + actually on Monta -->
+          <filter string="On Monta" name="has_monta_ref" domain="[('on_monta','=',True), ('is_current_account','=',True)]"/>
           <group expand="0" string="Group By">
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
             <filter string="Status" name="grp_status" context="{'group_by':'status'}"/>
@@ -85,12 +88,10 @@
         (ref('view_monta_order_status_list'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
-      <field name="domain">[('on_monta','=',True)]</field>
+      <!-- show only current Monta tenant + available on Monta -->
+      <field name="domain">[('is_current_account','=',True), ('on_monta','=',True)]</field>
       <field name="context">{'search_default_has_monta_ref': 1}</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
-      <field name="help" type="html">
-        <p>Only orders that exist on Monta are listed here.</p>
-      </field>
     </record>
 
     <!-- MENU -->
