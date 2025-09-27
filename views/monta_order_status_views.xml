@@ -2,7 +2,7 @@
 <odoo>
   <data>
 
-    <!-- ===== LIST VIEW (Odoo 18 uses <list>) ===== -->
+    <!-- LIST VIEW (read-only) -->
     <record id="view_monta_order_status_list" model="ir.ui.view">
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
@@ -21,7 +21,7 @@
       </field>
     </record>
 
-    <!-- ===== FORM VIEW ===== -->
+    <!-- FORM VIEW -->
     <record id="view_monta_order_status_form" model="ir.ui.view">
       <field name="name">monta.order.status.form</field>
       <field name="model">monta.order.status</field>
@@ -52,7 +52,7 @@
       </field>
     </record>
 
-    <!-- ===== SEARCH VIEW ===== -->
+    <!-- SEARCH VIEW -->
     <record id="view_monta_order_status_search" model="ir.ui.view">
       <field name="name">monta.order.status.search</field>
       <field name="model">monta.order.status</field>
@@ -65,9 +65,9 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
-          <!-- Default filter: only records that truly exist on Monta -->
+          <!-- Default filter: only records with a true on_monta flag -->
           <filter string="On Monta" name="has_monta_ref"
-                  domain="[('monta_order_ref','!=',False), ('monta_order_ref','!=','')]"/>
+                  domain="[('on_monta','=',True)]"/>
           <group expand="0" string="Group By">
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
             <filter string="Status" name="grp_status" context="{'group_by':'status'}"/>
@@ -78,7 +78,7 @@
       </field>
     </record>
 
-    <!-- ===== ACTION (strict domain + default filter applied) ===== -->
+    <!-- ACTION -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Orders</field>
       <field name="res_model">monta.order.status</field>
@@ -87,7 +87,8 @@
         (ref('view_monta_order_status_list'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
-      <field name="domain">[('monta_order_ref','!=',False), ('monta_order_ref','!=','')]</field>
+      <!-- Only orders available on Monta -->
+      <field name="domain">[('on_monta','=',True)]</field>
       <field name="context">{'search_default_has_monta_ref': 1}</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
       <field name="help" type="html">
@@ -95,7 +96,7 @@
       </field>
     </record>
 
-    <!-- ===== MENU ===== -->
+    <!-- MENU -->
     <menuitem id="menu_monta_root" name="Monta" sequence="90" groups="base.group_user"/>
     <menuitem id="menu_monta_order_status" name="Order Status"
               parent="menu_monta_root" action="action_monta_order_status"
