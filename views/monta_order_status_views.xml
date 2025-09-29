@@ -67,7 +67,7 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
-          <!-- Quick filters -->
+          <!-- Optional filters -->
           <filter string="On Monta" name="has_monta_ref" domain="[('on_monta','=',True)]"/>
           <filter string="Current Account" name="only_current_account" domain="[('is_current_account','=',True)]"/>
           <group expand="0" string="Group By">
@@ -89,8 +89,7 @@
         (ref('view_monta_order_status_list'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
-      <!-- Show only rows for the PRESENT Monta account; do NOT force 'On Monta' -->
-      <field name="domain">[('is_current_account','=',True)]</field>
+      <!-- No domain here: show ALL records (old + new Monta accounts) -->
       <field name="search_view_id" ref="view_monta_order_status_search"/>
     </record>
 
