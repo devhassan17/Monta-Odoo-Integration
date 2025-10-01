@@ -65,8 +65,7 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
-          <!-- Optional toggles -->
-          <filter string="On Monta" name="has_monta_ref" domain="[('on_monta','=',True)]"/>
+          <filter string="On Monta" name="has_monta_ref" domain="[('monta_order_ref','!=',False)]"/>
           <group expand="0" string="Group By">
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
             <filter string="Status" name="grp_status" context="{'group_by':'status'}"/>
@@ -77,7 +76,7 @@
       </field>
     </record>
 
-    <!-- ACTION: show ALL records (old + new accounts) -->
+    <!-- ACTION: show all rows (old + new accounts) -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Orders</field>
       <field name="res_model">monta.order.status</field>

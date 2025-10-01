@@ -6,12 +6,20 @@ from urllib.parse import urljoin
 
 class MontaStatusResolver:
     """
-    Best-match + freshest status:
-      1) Find the right order (tries orderNumber, reference, search, clientReference,
-         webshopOrderId, internalWebshopOrderId, eorderGuid).
-      2) Hydrate via /orders/<Id> when available.
-      3) Status source precedence: SHIPMENTS → ORDER EVENTS → ORDER HEADER.
-      4) Returns (status_text, meta) with track & trace, delivery date/message, and a stable Monta ref.
+    Robust, tenant-safe resolver.
+
+    Lookup order in this order (each may return a list OR dict):
+      1) /orders?orderNumber=<ref>          (most reliable for BCnnnnn)
+      2) /orders?reference=<ref>
+      3) /orders?clientReference=<ref>
+      4) /orders?webshopOrderId=<ref>
+      5) /orders?internalWebshopOrderId=<ref>
+      6) /orders?eorderGuid=<ref>
+      7) /orders?search=<ref>               (broad search)
+    Then hydrate via /orders/<Id> when available.
+
+    Freshness precedence for status:
+      shipments  →  orderevents  →  order header
     """
 
     def __init__(self, env):
@@ -21,7 +29,7 @@ class MontaStatusResolver:
         self.user = (ICP.get_param("monta.username") or "").strip()
         self.pwd  = (ICP.get_param("monta.password") or "").strip()
         self.timeout = int(ICP.get_param("monta.timeout") or 20)
-        # Set system param monta.match_loose=0 to require exact matches only
+        # set monta.match_loose = "0" in System Parameters if you want exact-only matching
         self.allow_loose = (ICP.get_param("monta.match_loose") or "1").strip() != "0"
 
         if not (self.base and self.user and self.pwd):
@@ -49,9 +57,10 @@ class MontaStatusResolver:
     def _lower(s):
         return str(s or "").strip().lower()
 
-    def _match_score(self, target, rec):
+    def _score(self, target, rec):
         """
-        Score how well 'rec' matches 'target' across reference fields.
+        Score how well 'rec' matches 'target' across common reference fields.
+        Returns (score:int, matched_value:str)
         """
         t = self._lower(target)
         if not t or not isinstance(rec, dict):
@@ -59,7 +68,8 @@ class MontaStatusResolver:
 
         fields = [
             "OrderNumber", "Reference", "ClientReference",
-            "WebshopOrderId", "InternalWebshopOrderId", "EorderGUID", "EorderGuid"
+            "WebshopOrderId", "InternalWebshopOrderId",
+            "EorderGUID", "EorderGuid"
         ]
         best = (0, "")
         for f in fields:
@@ -68,8 +78,10 @@ class MontaStatusResolver:
                 continue
             if s == t:
                 sc = 100
-            elif self.allow_loose and (s.startswith(t) or t in s):
-                sc = 80 if s.startswith(t) else 60
+            elif self.allow_loose and s.startswith(t):
+                sc = 85
+            elif self.allow_loose and t in s:
+                sc = 70
             else:
                 sc = 0
             if sc > best[0]:
@@ -78,20 +90,31 @@ class MontaStatusResolver:
                     break
         return best
 
-    def _best_candidate(self, order_ref, lst):
-        if not isinstance(lst, list) or not lst:
-            return None
-        threshold = 100 if not self.allow_loose else 60
-        winner = (0, None)
-        for rec in lst:
-            sc, _ = self._match_score(order_ref, rec)
-            if sc > winner[0]:
-                winner = (sc, rec)
-                if sc >= 100:
-                    break
-        return winner[1] if winner[0] >= threshold else None
+    def _first_match(self, target, payload):
+        """Accept list or dict; pick best match by score."""
+        if isinstance(payload, dict):
+            # Some tenants return a single object
+            sc, _ = self._score(target, payload)
+            return payload if sc >= (100 if not self.allow_loose else 60) else None
+        if isinstance(payload, list) and payload:
+            threshold = 100 if not self.allow_loose else 60
+            best_sc, best_rec = 0, None
+            for rec in payload:
+                sc, _ = self._score(target, rec)
+                if sc > best_sc:
+                    best_sc, best_rec = sc, rec
+                    if sc >= 100:
+                        break
+            if best_sc >= threshold:
+                return best_rec
+            # fallback: if nothing scored high, try a contains-hit on OrderNumber/Reference
+            t = self._lower(target)
+            for rec in payload:
+                for k in ("OrderNumber", "Reference"):
+                    if t and t in self._lower(rec.get(k)):
+                        return rec
+        return None
 
-    # ------------- field pickers -------------
     @staticmethod
     def _pick(d, *keys):
         if not isinstance(d, dict):
@@ -133,60 +156,57 @@ class MontaStatusResolver:
             return f"DeliveryStatusId={o['DeliveryStatusId']}"
         return "Received / Pending workflow"
 
-    # ----------- order lookup (extended) -----------
-    def _find_order(self, order_ref):
+    # ----------- order lookup (very defensive) -----------
+    def _find_order(self, order_ref, tried):
         """
-        Try multiple Monta params to find the order in a tenant.
+        Try many params. 'tried' is a list we fill for diagnostics.
         """
-        # 1) Exact orderNumber (this fixes BC00096-type lookups)
-        for key in ("orderNumber", "reference", "clientReference", "webshopOrderId"):
-            sc, lst = self._get("orders", {key: order_ref})
-            if 200 <= sc < 300 and isinstance(lst, list) and lst:
-                cand = self._best_candidate(order_ref, lst)
-                if cand:
-                    return cand
-
-        # 2) Fallback: internal / GUID style params
-        for key in ("internalWebshopOrderId", "eorderGuid"):
-            sc, lst = self._get("orders", {key: order_ref})
-            if 200 <= sc < 300 and isinstance(lst, list) and lst:
-                cand = self._best_candidate(order_ref, lst)
-                if cand:
-                    return cand
-
-        # 3) Broad search
-        sc, lst = self._get("orders", {"search": order_ref})
-        if 200 <= sc < 300 and isinstance(lst, list) and lst:
-            return self._best_candidate(order_ref, lst)
-
+        params_list = [
+            {"orderNumber": order_ref},
+            {"reference": order_ref},
+            {"clientReference": order_ref},
+            {"webshopOrderId": order_ref},
+            {"internalWebshopOrderId": order_ref},
+            {"eorderGuid": order_ref},
+            {"search": order_ref},
+        ]
+        for p in params_list:
+            tried.append(p.copy())
+            sc, payload = self._get("orders", p)
+            if not (200 <= sc < 300) or payload in (None, {}, []):
+                continue
+            cand = self._first_match(order_ref, payload)
+            if cand:
+                return cand
         return None
 
     # ---------------- resolve ----------------
     def resolve(self, order_ref):
         """
-        Returns: (status_text, meta) or (None, {'reason': ...})
+        Returns: (status_text, meta) or (None, {'reason': ..., 'tried': [...]})
         """
-        cand = self._find_order(order_ref)
+        tried = []
+        cand = self._find_order(order_ref, tried)
         if not cand:
-            return None, {"reason": "Order not found or not matching searched reference"}
+            return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
 
-        # hydrate by Id
+        # hydrate by Id if possible
         if cand.get("Id"):
             scid, full = self._get(f"orders/{cand['Id']}")
             if 200 <= scid < 300 and isinstance(full, dict) and full:
                 cand = full
 
-        # stable identifiers for downstream queries
+        # stable identifiers
         refs = {
             "orderId": cand.get("Id"),
+            "orderNumber": cand.get("OrderNumber") or order_ref,
             "orderReference": cand.get("Reference") or order_ref,
             "clientReference": cand.get("ClientReference") or order_ref,
             "orderGuid": cand.get("EorderGUID") or cand.get("EorderGuid"),
             "webshopOrderId": cand.get("WebshopOrderId") or cand.get("InternalWebshopOrderId"),
-            "orderNumber": cand.get("OrderNumber") or order_ref,
         }
 
-        # 1) SHIPMENTS (freshest)
+        # SHIPMENTS first
         ship_status = ship_tt = ship_date = ship_msg = ship_src = None
         for params, lbl in [
             ({"orderId": refs["orderId"]}, "shipments"),
@@ -202,9 +222,11 @@ class MontaStatusResolver:
             scS, ships = self._get("shipments", params)
             if 200 <= scS < 300 and isinstance(ships, list) and ships:
                 for sh in ships:
-                    st = (self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
-                          or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
-                          or str(sh.get("ShipmentStatus") or ""))
+                    st = (
+                        self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
+                        or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
+                        or str(sh.get("ShipmentStatus") or "")
+                    )
                     if st:
                         ship_status = st
                         ship_tt = ship_tt or self._pick(sh, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
@@ -215,7 +237,7 @@ class MontaStatusResolver:
             if ship_status:
                 break
 
-        # 2) ORDER EVENTS
+        # ORDER EVENTS next (latest one)
         event_status = event_msg = event_tt = event_date = event_src = None
         if not ship_status:
             for params, lbl in [
@@ -242,7 +264,7 @@ class MontaStatusResolver:
                     if event_status:
                         break
 
-        # 3) ORDER HEADER
+        # ORDER HEADER last
         order_status = (
             self._pick(cand, "DeliveryStatusDescription", "Status", "CurrentStatus") or self._derive_order_status(cand)
         )
@@ -259,7 +281,7 @@ class MontaStatusResolver:
 
         status_code = self._pick(cand, "StatusID", "DeliveryStatusId", "DeliveryStatusCode")
 
-        # Prefer OrderNumber as the stable Monta reference if present
+        # Prefer the number you see in Monta
         stable_ref = (
             refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
             or refs["clientReference"] or refs["orderReference"] or order_ref
