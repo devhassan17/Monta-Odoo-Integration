@@ -1,13 +1,11 @@
-# models/monta_order_status_upsert.py
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models
 
 class MontaOrderStatus(models.Model):
-    _inherit = "monta.order.status"   # extend existing model only (no fields here)
+    _inherit = "monta.order.status"
 
     @api.model
     def _normalize_vals(self, vals):
-        """Map incoming keys and keep only valid fields; validate selection safely."""
         v = {}
         mapping = {
             "monta_order_ref": ["monta_order_ref"],
@@ -25,14 +23,11 @@ class MontaOrderStatus(models.Model):
                     v[dest] = vals[k]
                     break
 
-        # default last_sync if available on the model
         if "last_sync" in self._fields and "last_sync" not in v:
             v["last_sync"] = fields.Datetime.now()
 
-        # keep only fields that really exist
         v = {k: v[k] for k in list(v.keys()) if k in self._fields}
 
-        # validate selection 'source' whether it's a list or a callable
         field = self._fields.get("source")
         if "source" in v and field and getattr(field, "type", None) == "selection":
             sel = field.selection
@@ -51,22 +46,16 @@ class MontaOrderStatus(models.Model):
 
     @api.model
     def upsert_for_order(self, so, **vals):
-        """
-        Create/update a single snapshot row per sale.order (keyed by order name).
-        Safe to call repeatedly and from cron.
-        """
         if not so or not getattr(so, "id", False):
             raise ValueError("upsert_for_order requires a valid sale.order record")
 
         payload = self._normalize_vals(vals)
 
-        # identifiers (write only if fields exist on this Studio/Python model)
         if "sale_order_id" in self._fields:
             payload["sale_order_id"] = so.id
         if "order_name" in self._fields:
             payload["order_name"] = so.name
 
-        # choose lookup key (prefer order_name)
         domain = []
         if "order_name" in self._fields:
             domain = [("order_name", "=", so.name)]

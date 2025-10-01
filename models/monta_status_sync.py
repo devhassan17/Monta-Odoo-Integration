@@ -1,4 +1,3 @@
-# models/monta_status_sync.py
 # -*- coding: utf-8 -*-
 """
 sale.order fields + sync methods for Monta status
@@ -8,7 +7,6 @@ import logging
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
-
 
 class SaleOrder(models.Model):
     _inherit = "sale.order"
@@ -25,6 +23,7 @@ class SaleOrder(models.Model):
 
     def _monta_candidate_reference(self):
         self.ensure_one()
+        # For your numbering BCnnnnn, this is correct.
         return self.name
 
     def action_monta_sync_status(self):
@@ -44,14 +43,13 @@ class SaleOrder(models.Model):
     def _monta_sync_batch(self):
         from ..services.monta_status_resolver import MontaStatusResolver
 
-        env = self.env
         try:
-            resolver = MontaStatusResolver(env)
+            resolver = MontaStatusResolver(self.env)
         except Exception as e:
             _logger.exception("[Monta] Resolver init failed (check System Parameters): %s", e)
             return
 
-        Snapshot = env["monta.order.status"].sudo()
+        Snapshot = self.env["monta.order.status"].sudo()
 
         for so in self:
             ref = so._monta_candidate_reference()
@@ -66,10 +64,16 @@ class SaleOrder(models.Model):
                 continue
 
             if not status:
+                # record “not found” reason on snapshot so you can see it
+                Snapshot.upsert_for_order(
+                    so,
+                    order_status=False,
+                    delivery_message=(meta or {}).get("reason"),
+                    last_sync=fields.Datetime.now(),
+                )
                 _logger.warning("[Monta] %s (%s) -> no status returned (meta=%s)", so.name, ref, meta)
                 continue
 
-            # 1) Update sale.order fields (so you can Studio-expose them)
             vals_so = {
                 "monta_status": status,
                 "monta_status_code": (meta or {}).get("status_code"),
@@ -82,11 +86,10 @@ class SaleOrder(models.Model):
             except Exception as e:
                 _logger.exception("[Monta] %s (%s) -> write failed: %s", so.name, ref, e)
 
-            # 2) Upsert into the snapshot table (separate UI)
             try:
                 Snapshot.upsert_for_order(
                     so,
-                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.monta_order_id or so.name,
+                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
                     order_status=status,
                     delivery_message=(meta or {}).get("delivery_message"),
                     track_trace_url=(meta or {}).get("track_trace"),

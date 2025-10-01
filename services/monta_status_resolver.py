@@ -3,23 +3,21 @@ import time
 import requests
 from urllib.parse import urljoin
 
-
 class MontaStatusResolver:
     """
     Robust, tenant-safe resolver.
 
-    Lookup order in this order (each may return a list OR dict):
-      1) /orders?orderNumber=<ref>          (most reliable for BCnnnnn)
+    Order lookup tries, in order (each may return list OR paged dict):
+      1) /orders?orderNumber=<ref>
       2) /orders?reference=<ref>
       3) /orders?clientReference=<ref>
       4) /orders?webshopOrderId=<ref>
       5) /orders?internalWebshopOrderId=<ref>
       6) /orders?eorderGuid=<ref>
-      7) /orders?search=<ref>               (broad search)
-    Then hydrate via /orders/<Id> when available.
+      7) /orders?search=<ref>
 
     Freshness precedence for status:
-      shipments  →  orderevents  →  order header
+      shipments  →  orderevents  →  orders (header)
     """
 
     def __init__(self, env):
@@ -29,7 +27,7 @@ class MontaStatusResolver:
         self.user = (ICP.get_param("monta.username") or "").strip()
         self.pwd  = (ICP.get_param("monta.password") or "").strip()
         self.timeout = int(ICP.get_param("monta.timeout") or 20)
-        # set monta.match_loose = "0" in System Parameters if you want exact-only matching
+        # set monta.match_loose = "0" for exact-only matching
         self.allow_loose = (ICP.get_param("monta.match_loose") or "1").strip() != "0"
 
         if not (self.base and self.user and self.pwd):
@@ -39,7 +37,11 @@ class MontaStatusResolver:
 
         self.s = requests.Session()
         self.s.auth = (self.user, self.pwd)
-        self.s.headers.update({"Accept": "application/json", "Cache-Control": "no-cache", "Pragma": "no-cache"})
+        self.s.headers.update({
+            "Accept": "application/json",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        })
 
     # ---------------- HTTP ----------------
     def _get(self, path, params=None):
@@ -52,16 +54,34 @@ class MontaStatusResolver:
         except Exception:
             return r.status_code, None
 
-    # ------------- match helpers -------------
+    # ---------------- helpers ----------------
     @staticmethod
     def _lower(s):
         return str(s or "").strip().lower()
 
+    @staticmethod
+    def _as_list(payload):
+        """
+        Normalise Monta responses:
+          - raw list   -> list
+          - paged dict -> Items / items / data / Data / results / Results / value
+          - single dict-> wrap as [dict]
+          - else       -> []
+        """
+        if payload is None:
+            return []
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for k in ("Items", "items", "Data", "data", "results", "Results", "value"):
+                if k in payload and isinstance(payload[k], list):
+                    return payload[k]
+            # some tenants return a single object
+            return [payload]
+        return []
+
     def _score(self, target, rec):
-        """
-        Score how well 'rec' matches 'target' across common reference fields.
-        Returns (score:int, matched_value:str)
-        """
+        """Score record by how well it matches target on common reference fields."""
         t = self._lower(target)
         if not t or not isinstance(rec, dict):
             return (0, "")
@@ -69,7 +89,7 @@ class MontaStatusResolver:
         fields = [
             "OrderNumber", "Reference", "ClientReference",
             "WebshopOrderId", "InternalWebshopOrderId",
-            "EorderGUID", "EorderGuid"
+            "EorderGUID", "EorderGuid",
         ]
         best = (0, "")
         for f in fields:
@@ -90,30 +110,19 @@ class MontaStatusResolver:
                     break
         return best
 
-    def _first_match(self, target, payload):
-        """Accept list or dict; pick best match by score."""
-        if isinstance(payload, dict):
-            # Some tenants return a single object
-            sc, _ = self._score(target, payload)
-            return payload if sc >= (100 if not self.allow_loose else 60) else None
-        if isinstance(payload, list) and payload:
-            threshold = 100 if not self.allow_loose else 60
-            best_sc, best_rec = 0, None
-            for rec in payload:
-                sc, _ = self._score(target, rec)
-                if sc > best_sc:
-                    best_sc, best_rec = sc, rec
-                    if sc >= 100:
-                        break
-            if best_sc >= threshold:
-                return best_rec
-            # fallback: if nothing scored high, try a contains-hit on OrderNumber/Reference
-            t = self._lower(target)
-            for rec in payload:
-                for k in ("OrderNumber", "Reference"):
-                    if t and t in self._lower(rec.get(k)):
-                        return rec
-        return None
+    def _pick_best(self, target, payload):
+        lst = self._as_list(payload)
+        if not lst:
+            return None
+        threshold = 100 if not self.allow_loose else 60
+        best_sc, best_rec = 0, None
+        for rec in lst:
+            sc, _ = self._score(target, rec)
+            if sc > best_sc:
+                best_sc, best_rec = sc, rec
+                if sc >= 100:
+                    break
+        return best_rec if best_sc >= threshold else None
 
     @staticmethod
     def _pick(d, *keys):
@@ -156,11 +165,8 @@ class MontaStatusResolver:
             return f"DeliveryStatusId={o['DeliveryStatusId']}"
         return "Received / Pending workflow"
 
-    # ----------- order lookup (very defensive) -----------
+    # ----------- order lookup -----------
     def _find_order(self, order_ref, tried):
-        """
-        Try many params. 'tried' is a list we fill for diagnostics.
-        """
         params_list = [
             {"orderNumber": order_ref},
             {"reference": order_ref},
@@ -173,9 +179,9 @@ class MontaStatusResolver:
         for p in params_list:
             tried.append(p.copy())
             sc, payload = self._get("orders", p)
-            if not (200 <= sc < 300) or payload in (None, {}, []):
+            if not (200 <= sc < 300):
                 continue
-            cand = self._first_match(order_ref, payload)
+            cand = self._pick_best(order_ref, payload)
             if cand:
                 return cand
         return None
@@ -190,13 +196,12 @@ class MontaStatusResolver:
         if not cand:
             return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
 
-        # hydrate by Id if possible
+        # hydrate full order if possible
         if cand.get("Id"):
             scid, full = self._get(f"orders/{cand['Id']}")
             if 200 <= scid < 300 and isinstance(full, dict) and full:
                 cand = full
 
-        # stable identifiers
         refs = {
             "orderId": cand.get("Id"),
             "orderNumber": cand.get("OrderNumber") or order_ref,
@@ -216,28 +221,27 @@ class MontaStatusResolver:
             ({"orderGuid": refs["orderGuid"]}, "shipments"),
             ({"webshopOrderId": refs["webshopOrderId"]}, "shipments"),
         ]:
-            params = {k: v for k, v in params.items() if v}
-            if not params:
+            p = {k: v for k, v in params.items() if v}
+            if not p:
                 continue
-            scS, ships = self._get("shipments", params)
-            if 200 <= scS < 300 and isinstance(ships, list) and ships:
-                for sh in ships:
-                    st = (
-                        self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
-                        or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
-                        or str(sh.get("ShipmentStatus") or "")
-                    )
-                    if st:
-                        ship_status = st
-                        ship_tt = ship_tt or self._pick(sh, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
-                        ship_date = ship_date or self._pick(sh, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
-                        ship_msg  = ship_msg  or self._pick(sh, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
-                        ship_src = lbl
-                        break
+            scS, ships = self._get("shipments", p)
+            for sh in self._as_list(ships):
+                st = (
+                    self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
+                    or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
+                    or str(sh.get("ShipmentStatus") or "")
+                )
+                if st:
+                    ship_status = st
+                    ship_tt = ship_tt or self._pick(sh, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
+                    ship_date = ship_date or self._pick(sh, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
+                    ship_msg  = ship_msg  or self._pick(sh, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
+                    ship_src = lbl
+                    break
             if ship_status:
                 break
 
-        # ORDER EVENTS next (latest one)
+        # EVENTS if no shipment status
         event_status = event_msg = event_tt = event_date = event_src = None
         if not ship_status:
             for params, lbl in [
@@ -248,31 +252,30 @@ class MontaStatusResolver:
                 ({"orderGuid": refs["orderGuid"], "limit": 1, "sort": "desc"}, "orderevents"),
                 ({"webshopOrderId": refs["webshopOrderId"], "limit": 1, "sort": "desc"}, "orderevents"),
             ]:
-                params = {k: v for k, v in params.items() if v}
-                scE, ev = self._get("orderevents", params)
-                if 200 <= scE < 300 and isinstance(ev, list) and ev:
-                    e = ev[0]
+                p = {k: v for k, v in params.items() if v}
+                scE, ev = self._get("orderevents", p)
+                lst = self._as_list(ev)
+                if lst:
+                    e = lst[0]
                     event_status = (
                         self._pick(e, "DeliveryStatusDescription", "Status", "CurrentStatus", "ActionCode")
                         or self._pick(e.get("Order") or {}, "Status", "CurrentStatus")
                         or self._pick(e.get("Shipment") or {}, "ShipmentStatus", "Status", "CurrentStatus")
                     )
-                    event_msg = self._pick(e, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
-                    event_tt = self._pick(e.get("Shipment") or {}, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
+                    event_msg  = self._pick(e, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
+                    event_tt   = self._pick(e.get("Shipment") or {}, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
                     event_date = self._pick(e.get("Shipment") or {}, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
-                    event_src = lbl
+                    event_src  = lbl
                     if event_status:
                         break
 
         # ORDER HEADER last
-        order_status = (
-            self._pick(cand, "DeliveryStatusDescription", "Status", "CurrentStatus") or self._derive_order_status(cand)
-        )
-        order_tt = self._pick(cand, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
+        order_status = self._pick(cand, "DeliveryStatusDescription", "Status", "CurrentStatus") or self._derive_order_status(cand)
+        order_tt   = self._pick(cand, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
         order_date = self._pick(cand, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
-        order_msg = self._pick(cand, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
+        order_msg  = self._pick(cand, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
 
-        # Choose freshest
+        # choose freshest
         src = ship_src or event_src or "orders"
         status_txt = ship_status or event_status or order_status
         tt = ship_tt or event_tt or order_tt
@@ -281,7 +284,6 @@ class MontaStatusResolver:
 
         status_code = self._pick(cand, "StatusID", "DeliveryStatusId", "DeliveryStatusCode")
 
-        # Prefer the number you see in Monta
         stable_ref = (
             refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
             or refs["clientReference"] or refs["orderReference"] or order_ref
