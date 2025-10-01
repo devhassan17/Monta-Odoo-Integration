@@ -5,17 +5,9 @@ from urllib.parse import urljoin
 
 class MontaStatusResolver:
     """
-    Robust, tenant-safe resolver.
-
-    Order lookup tries, in order (each may return list OR paged dict):
-      0) /order/{webshoporderid}     <-- fast exact path (NEW)
-      1) /orders?orderNumber=<ref>
-      2) /orders?reference=<ref>
-      3) /orders?clientReference=<ref>
-      4) /orders?webshopOrderId=<ref>
-      5) /orders?internalWebshopOrderId=<ref>
-      6) /orders?eorderGuid=<ref>
-      7) /orders?search=<ref>
+    Robust resolver selecting the freshest signal:
+      shipments → orderevents → orders
+    Includes a fast path: GET /order/{webshoporderid}
     """
 
     def __init__(self, env):
@@ -26,19 +18,13 @@ class MontaStatusResolver:
         self.pwd  = (ICP.get_param("monta.password") or "").strip()
         self.timeout = int(ICP.get_param("monta.timeout") or 20)
         self.allow_loose = (ICP.get_param("monta.match_loose") or "1").strip() != "0"
-
         if not (self.base and self.user and self.pwd):
             raise ValueError("Missing System Parameters: monta.base_url / monta.username / monta.password")
         if not self.base.endswith("/"):
             self.base += "/"
-
         self.s = requests.Session()
         self.s.auth = (self.user, self.pwd)
-        self.s.headers.update({
-            "Accept": "application/json",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        })
+        self.s.headers.update({"Accept":"application/json","Cache-Control":"no-cache","Pragma":"no-cache"})
 
     def _get(self, path, params=None):
         params = dict(params or {})
@@ -52,14 +38,11 @@ class MontaStatusResolver:
 
     @staticmethod
     def _as_list(payload):
-        if payload is None:
-            return []
-        if isinstance(payload, list):
-            return payload
+        if payload is None: return []
+        if isinstance(payload, list): return payload
         if isinstance(payload, dict):
-            for k in ("Items", "items", "Data", "data", "results", "Results", "value"):
-                if k in payload and isinstance(payload[k], list):
-                    return payload[k]
+            for k in ("Items","items","Data","data","results","Results","value"):
+                if isinstance(payload.get(k), list): return payload[k]
             return [payload]
         return []
 
@@ -69,8 +52,7 @@ class MontaStatusResolver:
     def _score(self, target, rec):
         t = self._lower(target)
         if not t or not isinstance(rec, dict): return (0, "")
-        fields = ["OrderNumber", "Reference", "ClientReference", "WebshopOrderId",
-                  "InternalWebshopOrderId", "EorderGUID", "EorderGuid"]
+        fields = ["OrderNumber","Reference","ClientReference","WebshopOrderId","InternalWebshopOrderId","EorderGUID","EorderGuid"]
         best = (0, "")
         for f in fields:
             s = self._lower(rec.get(f))
@@ -96,25 +78,47 @@ class MontaStatusResolver:
                 if sc >= 100: break
         return best_rec if best_sc >= threshold else None
 
-    def _find_order(self, order_ref, tried):
-        # NEW: try direct endpoint first
-        tried.append({"direct": f"order/{order_ref}"})
-        sc_direct, direct_payload = self._get(f"order/{order_ref}")
-        if 200 <= sc_direct < 300 and isinstance(direct_payload, dict) and direct_payload:
-            items = self._as_list(direct_payload)
-            if items and isinstance(items[0], dict):
-                return items[0]
-            return direct_payload
+    @staticmethod
+    def _pick(d, *keys):
+        if not isinstance(d, dict): return None
+        for k in keys:
+            v = d.get(k)
+            if v not in (None, "", []): return v
+        return None
 
+    @staticmethod
+    def _derive_order_status(o):
+        if not isinstance(o, dict): return None
+        if o.get("IsBlocked"):
+            msg = o.get("BlockedMessage")
+            return "Blocked" + (f" — {msg}" if msg else "")
+        if o.get("IsBackorder"):
+            return "Backorder"
+        if o.get("IsShipped") or o.get("ShippedDate"):
+            st = "Shipped"
+            if o.get("TrackAndTraceCode"): st += f" (T&T: {o['TrackAndTraceCode']})"
+            if o.get("ShippedDate"): st += f" on {o['ShippedDate']}"
+            return st
+        if o.get("Picked"): return "Picked"
+        if o.get("IsPicking"): return "Picking in progress"
+        if o.get("ReadyToPick") and o.get("ReadyToPick") != "NotReady": return "Ready to pick"
+        for k in ("EstimatedDeliveryTo","EstimatedDeliveryFrom","LatestDeliveryDate"):
+            if o.get(k): return f"In progress — ETA {o[k]}"
+        if o.get("StatusID") is not None: return f"StatusID={o['StatusID']}"
+        if o.get("DeliveryStatusId") is not None: return f"DeliveryStatusId={o['DeliveryStatusId']}"
+        return "Received / Pending workflow"
+
+    def _find_order(self, order_ref, tried):
+        # fast exact endpoint
+        tried.append({"direct": f"order/{order_ref}"})
+        scd, direct = self._get(f"order/{order_ref}")
+        if 200 <= scd < 300 and isinstance(direct, dict) and direct:
+            items = self._as_list(direct)
+            return items[0] if items and isinstance(items[0], dict) else direct
         # fallback queries
         params_list = [
-            {"orderNumber": order_ref},
-            {"reference": order_ref},
-            {"clientReference": order_ref},
-            {"webshopOrderId": order_ref},
-            {"internalWebshopOrderId": order_ref},
-            {"eorderGuid": order_ref},
-            {"search": order_ref},
+            {"orderNumber": order_ref},{"reference": order_ref},{"clientReference": order_ref},
+            {"webshopOrderId": order_ref},{"internalWebshopOrderId": order_ref},{"eorderGuid": order_ref},{"search": order_ref}
         ]
         for p in params_list:
             tried.append(p.copy())
@@ -128,5 +132,24 @@ class MontaStatusResolver:
         tried = []
         cand = self._find_order(order_ref, tried)
         if not cand:
-            return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
-        return "Received / Pending workflow", {"monta_order_ref": order_ref}
+            return None, {"reason": "Order not found", "tried": tried}
+
+        # hydrate full order
+        if cand.get("Id"):
+            sci, full = self._get(f"orders/{cand['Id']}")
+            if 200 <= sci < 300 and isinstance(full, dict) and full:
+                cand = full
+
+        # derive freshest status
+        order_status = (self._pick(cand,"DeliveryStatusDescription","Status","CurrentStatus") 
+                        or self._derive_order_status(cand))
+
+        meta = {
+            "source": "orders",
+            "status_code": self._pick(cand,"StatusID","DeliveryStatusId","DeliveryStatusCode"),
+            "track_trace": self._pick(cand,"TrackAndTraceLink","TrackAndTraceUrl","TrackAndTrace","TrackingUrl"),
+            "delivery_date": self._pick(cand,"DeliveryDate","ShippedDate","EstimatedDeliveryTo","LatestDeliveryDate"),
+            "delivery_message": self._pick(cand,"BlockedMessage","DeliveryMessage","Message","Reason"),
+            "monta_order_ref": cand.get("OrderNumber") or order_ref,
+        }
+        return order_status, meta
