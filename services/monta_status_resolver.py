@@ -5,6 +5,23 @@ from urllib.parse import urljoin
 
 
 class MontaStatusResolver:
+    """
+    Robust, tenant-safe resolver.
+
+    Lookup order in this order (each may return a list OR dict):
+      1) /orders?orderNumber=<ref>          (most reliable for BCnnnnn)
+      2) /orders?reference=<ref>
+      3) /orders?clientReference=<ref>
+      4) /orders?webshopOrderId=<ref>
+      5) /orders?internalWebshopOrderId=<ref>
+      6) /orders?eorderGuid=<ref>
+      7) /orders?search=<ref>               (broad search)
+    Then hydrate via /orders/<Id> when available.
+
+    Freshness precedence for status:
+      shipments  →  orderevents  →  order header
+    """
+
     def __init__(self, env):
         self.env = env
         ICP = env["ir.config_parameter"].sudo()
@@ -12,6 +29,7 @@ class MontaStatusResolver:
         self.user = (ICP.get_param("monta.username") or "").strip()
         self.pwd  = (ICP.get_param("monta.password") or "").strip()
         self.timeout = int(ICP.get_param("monta.timeout") or 20)
+        # set monta.match_loose = "0" in System Parameters if you want exact-only matching
         self.allow_loose = (ICP.get_param("monta.match_loose") or "1").strip() != "0"
 
         if not (self.base and self.user and self.pwd):
@@ -23,7 +41,7 @@ class MontaStatusResolver:
         self.s.auth = (self.user, self.pwd)
         self.s.headers.update({"Accept": "application/json", "Cache-Control": "no-cache", "Pragma": "no-cache"})
 
-    # ---------- HTTP ----------
+    # ---------------- HTTP ----------------
     def _get(self, path, params=None):
         params = dict(params or {})
         params["_ts"] = int(time.time())
@@ -34,19 +52,24 @@ class MontaStatusResolver:
         except Exception:
             return r.status_code, None
 
-    # ---------- helpers ----------
+    # ------------- match helpers -------------
     @staticmethod
     def _lower(s):
         return str(s or "").strip().lower()
 
     def _score(self, target, rec):
+        """
+        Score how well 'rec' matches 'target' across common reference fields.
+        Returns (score:int, matched_value:str)
+        """
         t = self._lower(target)
         if not t or not isinstance(rec, dict):
             return (0, "")
+
         fields = [
             "OrderNumber", "Reference", "ClientReference",
             "WebshopOrderId", "InternalWebshopOrderId",
-            "EorderGUID", "EorderGuid",
+            "EorderGUID", "EorderGuid"
         ]
         best = (0, "")
         for f in fields:
@@ -68,7 +91,9 @@ class MontaStatusResolver:
         return best
 
     def _first_match(self, target, payload):
+        """Accept list or dict; pick best match by score."""
         if isinstance(payload, dict):
+            # Some tenants return a single object
             sc, _ = self._score(target, payload)
             return payload if sc >= (100 if not self.allow_loose else 60) else None
         if isinstance(payload, list) and payload:
@@ -82,45 +107,12 @@ class MontaStatusResolver:
                         break
             if best_sc >= threshold:
                 return best_rec
-            # weak contains fallback
+            # fallback: if nothing scored high, try a contains-hit on OrderNumber/Reference
             t = self._lower(target)
             for rec in payload:
                 for k in ("OrderNumber", "Reference"):
                     if t and t in self._lower(rec.get(k)):
                         return rec
-        return None
-
-    # ---------- order lookup ----------
-    def _find_order(self, order_ref, tried):
-        # include extra aliases some tenants expose
-        params_list = [
-            {"orderNumber": order_ref},
-            {"orderNo": order_ref},
-            {"order_no": order_ref},
-            {"reference": order_ref},
-            {"clientReference": order_ref},
-            {"customerReference": order_ref},
-            {"webshopOrderId": order_ref},
-            {"internalWebshopOrderId": order_ref},
-            {"eorderGuid": order_ref},
-            {"search": order_ref},
-        ]
-        for p in params_list:
-            tried.append(p.copy())
-            sc, payload = self._get("orders", p)
-            if not (200 <= sc < 300) or payload in (None, {}, []):
-                continue
-            cand = self._first_match(order_ref, payload)
-            if cand:
-                return cand
-
-        # FINAL fallback: latest 250
-        tried.append({"limit": 250, "sort": "desc"})
-        sc, recent = self._get("orders", {"limit": 250, "sort": "desc"})
-        if 200 <= sc < 300 and recent:
-            cand = self._first_match(order_ref, recent)
-            if cand:
-                return cand
         return None
 
     @staticmethod
@@ -164,18 +156,47 @@ class MontaStatusResolver:
             return f"DeliveryStatusId={o['DeliveryStatusId']}"
         return "Received / Pending workflow"
 
-    # ---------- resolve ----------
+    # ----------- order lookup (very defensive) -----------
+    def _find_order(self, order_ref, tried):
+        """
+        Try many params. 'tried' is a list we fill for diagnostics.
+        """
+        params_list = [
+            {"orderNumber": order_ref},
+            {"reference": order_ref},
+            {"clientReference": order_ref},
+            {"webshopOrderId": order_ref},
+            {"internalWebshopOrderId": order_ref},
+            {"eorderGuid": order_ref},
+            {"search": order_ref},
+        ]
+        for p in params_list:
+            tried.append(p.copy())
+            sc, payload = self._get("orders", p)
+            if not (200 <= sc < 300) or payload in (None, {}, []):
+                continue
+            cand = self._first_match(order_ref, payload)
+            if cand:
+                return cand
+        return None
+
+    # ---------------- resolve ----------------
     def resolve(self, order_ref):
+        """
+        Returns: (status_text, meta) or (None, {'reason': ..., 'tried': [...]})
+        """
         tried = []
         cand = self._find_order(order_ref, tried)
         if not cand:
             return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
 
+        # hydrate by Id if possible
         if cand.get("Id"):
             scid, full = self._get(f"orders/{cand['Id']}")
             if 200 <= scid < 300 and isinstance(full, dict) and full:
                 cand = full
 
+        # stable identifiers
         refs = {
             "orderId": cand.get("Id"),
             "orderNumber": cand.get("OrderNumber") or order_ref,
@@ -185,7 +206,7 @@ class MontaStatusResolver:
             "webshopOrderId": cand.get("WebshopOrderId") or cand.get("InternalWebshopOrderId"),
         }
 
-        # shipments first
+        # SHIPMENTS first
         ship_status = ship_tt = ship_date = ship_msg = ship_src = None
         for params, lbl in [
             ({"orderId": refs["orderId"]}, "shipments"),
@@ -216,7 +237,7 @@ class MontaStatusResolver:
             if ship_status:
                 break
 
-        # events next
+        # ORDER EVENTS next (latest one)
         event_status = event_msg = event_tt = event_date = event_src = None
         if not ship_status:
             for params, lbl in [
@@ -243,7 +264,7 @@ class MontaStatusResolver:
                     if event_status:
                         break
 
-        # header last
+        # ORDER HEADER last
         order_status = (
             self._pick(cand, "DeliveryStatusDescription", "Status", "CurrentStatus") or self._derive_order_status(cand)
         )
@@ -251,13 +272,16 @@ class MontaStatusResolver:
         order_date = self._pick(cand, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
         order_msg = self._pick(cand, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
 
+        # Choose freshest
         src = ship_src or event_src or "orders"
         status_txt = ship_status or event_status or order_status
         tt = ship_tt or event_tt or order_tt
         dd = ship_date or event_date or order_date
         dm = ship_msg or event_msg or order_msg
+
         status_code = self._pick(cand, "StatusID", "DeliveryStatusId", "DeliveryStatusCode")
 
+        # Prefer the number you see in Monta
         stable_ref = (
             refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
             or refs["clientReference"] or refs["orderReference"] or order_ref
@@ -270,6 +294,5 @@ class MontaStatusResolver:
             "delivery_date": dd,
             "delivery_message": dm,
             "monta_order_ref": stable_ref,
-            "tried": tried,
         }
         return status_txt, meta
