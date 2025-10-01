@@ -1,4 +1,3 @@
-#models/monta_order_status.py
 # -*- coding: utf-8 -*-
 import hashlib
 import logging
@@ -19,6 +18,7 @@ class MontaOrderStatus(models.Model):
     _description = "Monta Order Status snapshot"
     _order = "last_sync desc, id desc"
 
+    # ---------------- fields ----------------
     monta_account_key = fields.Char(string="Monta Account Key", index=True)
     is_current_account = fields.Boolean(
         string="Current Monta Account",
@@ -27,7 +27,9 @@ class MontaOrderStatus(models.Model):
         index=True,
     )
 
-    sale_order_id = fields.Many2one("sale.order", string="Sales Order", index=True, ondelete="cascade", required=True)
+    sale_order_id = fields.Many2one(
+        "sale.order", string="Sales Order", index=True, ondelete="cascade", required=True
+    )
     order_name = fields.Char(string="Order Name", index=True, required=True)
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
@@ -35,7 +37,12 @@ class MontaOrderStatus(models.Model):
     status_code = fields.Integer(string="Status Code")
 
     source = fields.Selection(
-        selection=[("orders", "orders"), ("shipments", "shipments"), ("orderevents", "orderevents"), ("events", "events")],
+        selection=[
+            ("orders", "orders"),
+            ("shipments", "shipments"),
+            ("orderevents", "orderevents"),
+            ("events", "events"),
+        ],
         string="Source",
         default="orders",
         index=True,
@@ -47,7 +54,6 @@ class MontaOrderStatus(models.Model):
     last_sync = fields.Datetime(string="Last Sync (UTC)", default=fields.Datetime.now, index=True)
 
     status_raw = fields.Text(string="Raw Status (JSON)")
-
     on_monta = fields.Boolean(string="Available on Monta", compute="_compute_on_monta", store=True, index=True)
 
     _sql_constraints = [
@@ -55,12 +61,22 @@ class MontaOrderStatus(models.Model):
          "Monta order snapshot must be unique per account and order."),
     ]
 
+    # ---------------- helpers ----------------
     @api.model
     def _current_account_key(self) -> str:
         ICP = self.env["ir.config_parameter"].sudo()
         base = (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").strip()
         user = (ICP.get_param("monta.username") or "").strip()
         return _hash_account(base, user) if (base and user) else ""
+
+    @api.model
+    def _db_has_column(self, column_name: str) -> bool:
+        """True if the physical DB column exists (handles half-upgraded DBs gracefully)."""
+        self.env.cr.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
+            (self._table, column_name),
+        )
+        return bool(self.env.cr.fetchone())
 
     @api.depends("monta_account_key")
     def _compute_is_current_account(self):
@@ -91,9 +107,7 @@ class MontaOrderStatus(models.Model):
         status = vals.get("status") or vals.get("order_status")
         if status is not None:
             out["status"] = status
-        sc = vals.get("status_code")
-        if sc is None:
-            sc = vals.get("monta_status_code")
+        sc = vals.get("status_code") if "status_code" in vals else vals.get("monta_status_code")
         if sc is not None:
             out["status_code"] = self._safe_int(sc)
         src = vals.get("source") or vals.get("monta_status_source")
@@ -101,18 +115,19 @@ class MontaOrderStatus(models.Model):
             allowed = [opt[0] for opt in (self._fields["source"].selection or [])]
             if src in allowed:
                 out["source"] = src
-        if vals.get("delivery_message") is not None:
+        if "delivery_message" in vals:
             out["delivery_message"] = vals.get("delivery_message")
         track = vals.get("track_trace") or vals.get("track_trace_url")
         if track is not None:
             out["track_trace"] = track
-        if vals.get("delivery_date") is not None:
+        if "delivery_date" in vals:
             out["delivery_date"] = vals.get("delivery_date")
         out["last_sync"] = vals.get("last_sync") or fields.Datetime.now()
-        if vals.get("status_raw") is not None:
+        if "status_raw" in vals:
             out["status_raw"] = vals.get("status_raw")
         return out
 
+    # ---------------- upsert ----------------
     @api.model
     def upsert_for_order(self, so, **vals):
         if not so or not so.id:
@@ -122,31 +137,60 @@ class MontaOrderStatus(models.Model):
             raise ValidationError(_("Monta credentials (base URL/username) are not configured."))
 
         base_vals = self._normalize_vals(vals)
-        base_vals.update({"sale_order_id": so.id, "order_name": so.name, "monta_account_key": account_key})
+        base_vals.update({"sale_order_id": so.id, "order_name": so.name})
+
+        # Only include monta_account_key in write/create & domain if the column exists
+        has_col = self._db_has_column("monta_account_key")
+        if has_col:
+            base_vals["monta_account_key"] = account_key
+        else:
+            _logger.warning(
+                "[Monta] DB column %s.%s is missing; proceeding without account scoping for now.",
+                self._table, "monta_account_key"
+            )
 
         incoming_ref = base_vals.get("monta_order_ref")
-        if incoming_ref:
+        if incoming_ref and has_col:
             clash = self.sudo().search([
                 ("monta_account_key", "=", account_key),
                 ("monta_order_ref", "=", incoming_ref),
                 ("order_name", "!=", so.name),
             ], limit=1)
             if clash:
-                _logger.warning("Blocked duplicate Monta ref %s for order %s in this account (already used by %s).",
-                                incoming_ref, so.name, clash.order_name)
+                _logger.warning(
+                    "Blocked duplicate Monta ref %s for order %s in this account (already used by %s).",
+                    incoming_ref, so.name, clash.order_name
+                )
                 base_vals.pop("monta_order_ref", None)
 
-        rec = self.sudo().search([("order_name", "=", so.name), ("monta_account_key", "=", account_key)], limit=1)
+        domain = [("order_name", "=", so.name)]
+        if has_col:
+            domain.append(("monta_account_key", "=", account_key))
+
+        rec = self.sudo().search(domain, limit=1)
         if rec:
             rec.write(base_vals)
             return rec
         return self.sudo().create(base_vals)
 
+    # ---------------- constraints ----------------
     @api.constrains("monta_order_ref", "order_name", "monta_account_key")
     def _check_unique_nonempty_monta_ref(self):
+        """
+        Skip the constraint logic safely if the DB column doesn't exist yet (during upgrade window).
+        """
+        has_col = self._db_has_column("monta_account_key")
         for r in self:
             ref = (r.monta_order_ref or "").strip()
             if not ref:
+                continue
+            if not has_col:
+                # Can't enforce per-account uniqueness until column exists.
+                # Log once per record to aid ops.
+                _logger.warning(
+                    "[Monta] Uniqueness check skipped for %s (missing DB column monta_account_key).",
+                    r.display_name
+                )
                 continue
             dup = self.search([
                 ("id", "!=", r.id),
@@ -154,5 +198,6 @@ class MontaOrderStatus(models.Model):
                 ("monta_order_ref", "=", ref),
             ], limit=1)
             if dup:
-                raise ValidationError(_("Monta Order Ref '%s' already exists on order %s in this account.") %
-                                      (ref, dup.order_name))
+                raise ValidationError(
+                    _("Monta Order Ref '%s' already exists on order %s in this account.") % (ref, dup.order_name)
+                )
