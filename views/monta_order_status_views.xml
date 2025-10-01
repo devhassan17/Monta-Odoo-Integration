@@ -2,7 +2,7 @@
 <odoo>
   <data>
 
-    <!-- LIST VIEW (read-only) -->
+    <!-- LIST VIEW -->
     <record id="view_monta_order_status_list" model="ir.ui.view">
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
@@ -65,6 +65,7 @@
           <field name="source"/>
           <field name="monta_order_ref"/>
           <field name="track_trace"/>
+          <!-- Optional toggles -->
           <filter string="On Monta" name="has_monta_ref" domain="[('on_monta','=',True)]"/>
           <group expand="0" string="Group By">
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
@@ -76,7 +77,7 @@
       </field>
     </record>
 
-    <!-- ACTION -->
+    <!-- ACTION: show ALL records (old + new accounts) -->
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Orders</field>
       <field name="res_model">monta.order.status</field>
@@ -85,12 +86,7 @@
         (ref('view_monta_order_status_list'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
-      <field name="domain">[('on_monta','=',True)]</field>
-      <field name="context">{'search_default_has_monta_ref': 1}</field>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
-      <field name="help" type="html">
-        <p>Only orders that exist on Monta are listed here.</p>
-      </field>
     </record>
 
     <!-- MENU -->
