@@ -1,4 +1,3 @@
-#models/sale_order_monta_actions.py
 # -*- coding: utf-8 -*-
 from odoo import models
 

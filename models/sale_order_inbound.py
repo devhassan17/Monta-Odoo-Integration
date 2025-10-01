@@ -137,7 +137,8 @@ class SaleOrderInbound(models.Model):
         """
         vals: Dict[str, Any] = {}
         eta_str, _eta_raw, _eta_dummy = self._monta__eta_from_body(body)
-        vals['commitment_date'] = eta_str
+        vals['x_monta_delivery_date'] = eta_str  # write into Studio field
+        # (commitment_date untouched)
         vals['monta_needs_sync'] = True
         return vals
 
@@ -178,7 +179,8 @@ class SaleOrderInbound(models.Model):
                     # --- ETA ---
                     eta_str, eta_raw, eta_dummy = self._monta__eta_from_body(body)
                     vals = self._monta__vals_from_order_body(body)
-                    vals['commitment_date'] = eta_str
+                    vals['x_monta_delivery_date'] = eta_str  # write into Studio field
+        # (commitment_date untouched)
 
                     order._create_monta_log(
                         {'edd_auto': {'step': 'Date Get', 'eta_raw': eta_raw, 'chosen': eta_str, 'used_dummy_2099': bool(eta_dummy)}},
@@ -192,19 +194,19 @@ class SaleOrderInbound(models.Model):
                             changes[k] = v
 
                     if changes:
-                        before = order.commitment_date
+                        before = order.x_monta_delivery_date
                         order.write(changes)
                         order._create_monta_log(
                             {'edd_auto': {
                                 'step': 'Date is added to Commitment date',
-                                'from': before, 'to': order.commitment_date, 'pretty': _pretty(order.commitment_date)}},
+                                'from': before, 'to': order.x_monta_delivery_date, 'pretty': _pretty(order.x_monta_delivery_date)}},
                             level='info', tag='Monta EDD',
-                            console_summary=f"[EDD] Added to Commitment date: {order.commitment_date}"
+                            console_summary=f"[EDD] Updated x_monta_delivery_date: {order.x_monta_delivery_date}"
                         )
                     else:
                         order._create_monta_log(
                             {'edd_auto': {'step': 'Date is added to Commitment date', 'note': 'no change'}},
-                            level='info', tag='Monta EDD', console_summary='[EDD] Commitment date unchanged'
+                            level='info', tag='Monta EDD', console_summary='[EDD] x_monta_delivery_date unchanged'
                         )
 
                     # --- STATUS (SEPARATE MODEL) ---
@@ -222,15 +224,15 @@ class SaleOrderInbound(models.Model):
                         level='info', tag='Monta Status', console_summary=f"[Status] {stat_norm} ({stat_raw})"
                     )
 
-                    # Step: Date is showing (ready for UI)
+                    # Step: x_monta_delivery_date is showing (ready for UI)
                     order._create_monta_log(
                         {'edd_auto': {
-                            'step': 'Date is showing',
-                            'value': order.commitment_date,
-                            'pretty': _pretty(order.commitment_date),
+                            'step': 'x_monta_delivery_date is showing',
+                            'value': order.x_monta_delivery_date,
+                            'pretty': _pretty(order.x_monta_delivery_date),
                             'order_url_hint': f"/odoo/sales/{order.id}",
                         }},
-                        level='info', tag='Monta EDD', console_summary='[EDD] Date is showing'
+                        level='info', tag='Monta EDD', console_summary='[EDD] x_monta_delivery_date is showing'
                     )
                 else:
                     order._create_monta_log(
