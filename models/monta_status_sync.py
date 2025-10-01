@@ -1,4 +1,3 @@
-# models/monta_status_sync.py
 # -*- coding: utf-8 -*-
 """
 sale.order fields + sync methods for Monta status
@@ -25,7 +24,8 @@ class SaleOrder(models.Model):
 
     def _monta_candidate_reference(self):
         self.ensure_one()
-        return self.name
+        # Normalize: trim & collapse whitespace
+        return (self.name or "").strip()
 
     def action_monta_sync_status(self):
         _logger.info("[Monta] Manual status sync for %d sale.order records", len(self))
@@ -65,11 +65,23 @@ class SaleOrder(models.Model):
                 _logger.exception("[Monta] %s (%s) -> resolve() raised: %s", so.name, ref, e)
                 continue
 
+            # If still not found, log what was tried and write a gentle placeholder row
             if not status:
                 _logger.warning("[Monta] %s (%s) -> no status returned (meta=%s)", so.name, ref, meta)
+                # still store a minimal snapshot to make the record visible in the list
+                try:
+                    Snapshot.upsert_for_order(
+                        so,
+                        monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
+                        order_status=False,
+                        delivery_message=(meta or {}).get("reason"),
+                        last_sync=fields.Datetime.now(),
+                    )
+                except Exception:
+                    _logger.exception("[Monta] Snapshot placeholder upsert failed for %s", so.name)
                 continue
 
-            # 1) Update sale.order fields (so you can Studio-expose them)
+            # 1) Update sale.order fields
             vals_so = {
                 "monta_status": status,
                 "monta_status_code": (meta or {}).get("status_code"),
@@ -86,7 +98,7 @@ class SaleOrder(models.Model):
             try:
                 Snapshot.upsert_for_order(
                     so,
-                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.monta_order_id or so.name,
+                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
                     order_status=status,
                     delivery_message=(meta or {}).get("delivery_message"),
                     track_trace_url=(meta or {}).get("track_trace"),
