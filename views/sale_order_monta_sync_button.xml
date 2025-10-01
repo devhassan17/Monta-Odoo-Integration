@@ -7,7 +7,7 @@
       <field name="inherit_id" ref="sale.view_order_form"/>
       <field name="arch" type="xml">
         <xpath expr="//form/header" position="inside">
-          <!-- New: use boolean expression instead of attrs -->
+          <!-- Odoo 17: use boolean modifiers; attrs/states are removed -->
           <button name="action_monta_sync_status"
                   type="object"
                   string="Sync Monta"
