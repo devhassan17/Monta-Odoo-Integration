@@ -132,50 +132,28 @@ class MontaStatusResolver:
 
     @staticmethod
     def _is_blocked_header(o):
-        """Check if order is blocked - AUTHORITATIVE"""
-        if not isinstance(o, dict):
-            return False
-            
-        # Primary blocked indicators
-        if o.get("IsBlocked"):
-            return True
-            
+        if not isinstance(o, dict): return False
+        # Check primary blocked flag
+        if o.get("IsBlocked"): return True
         # Check blocked message
         blocked_msg = MontaStatusResolver._lower(o.get("BlockedMessage") or "")
-        if "blocked" in blocked_msg:
-            return True
-            
-        # Check status descriptions
-        status_fields = ["DeliveryStatusDescription", "Status", "CurrentStatus"]
-        for field in status_fields:
-            status_text = MontaStatusResolver._lower(o.get(field) or "")
-            if "blocked" in status_text:
-                return True
-                
+        if "blocked" in blocked_msg: return True
+        # Check status descriptions for blocked
+        status_text = MontaStatusResolver._lower(o.get("DeliveryStatusDescription") or o.get("Status") or o.get("CurrentStatus") or "")
+        if "blocked" in status_text: return True
         return False
 
     @staticmethod
     def _is_backorder_header(o):
-        """Check if order is backorder - only if NOT blocked"""
-        if not isinstance(o, dict):
-            return False
-            
-        # First check if it's blocked - if blocked, it cannot be backorder
-        if MontaStatusResolver._is_blocked_header(o):
-            return False
-            
-        # Primary backorder indicators
+        if not isinstance(o, dict): return False
+        # Check primary backorder flags
         if (o.get("IsBackorder") or o.get("IsBackOrder") 
             or str(o.get("Backorder", "")).lower() in ("1", "true", "yes")):
             return True
-            
         # Check status descriptions for backorder
-        status_fields = ["DeliveryStatusDescription", "Status", "CurrentStatus"]
-        for field in status_fields:
-            status_text = MontaStatusResolver._lower(o.get(field) or "")
-            if "backorder" in status_text or "back order" in status_text:
-                return True
-                
+        status_text = MontaStatusResolver._lower(o.get("DeliveryStatusDescription") or o.get("Status") or o.get("CurrentStatus") or "")
+        if "backorder" in status_text or "back order" in status_text:
+            return True
         return False
 
     # ----------- order lookup -----------
@@ -298,28 +276,29 @@ class MontaStatusResolver:
         dd          = ship_date or event_date or header_date
         dm          = ship_msg or event_msg or header_msg
 
-        # ---- AUTHORITATIVE HEADER OVERRIDE (FIXED LOGIC) ----
-        header_blocked  = self._is_blocked_header(cand)
-        header_backord  = self._is_backorder_header(cand)
+        # ---- AUTHORITATIVE HEADER OVERRIDE - FIXED LOGIC ----
+        header_blocked = self._is_blocked_header(cand)
+        header_backord = self._is_backorder_header(cand)
 
-        # BLOCKED has absolute priority - if header says blocked, always show blocked
+        # CRITICAL FIX: Check header flags FIRST before any other status
         if header_blocked:
-            prev = status_txt
+            # If header says blocked, ALWAYS show as blocked regardless of other statuses
+            prev_status = status_txt
             status_txt = "Blocked"
             if header_msg:
                 status_txt += f" — {header_msg}"
-            _logger.info("[Monta] %s OVERRIDE -> Blocked (header authoritative; was '%s')", order_ref, prev)
+            _logger.info("[Monta] %s STATUS OVERRIDE: Blocked (header authoritative, was: %s)", order_ref, prev_status)
         
-        # BACKORDER only if NOT blocked and header says backorder
         elif header_backord:
-            # Don't override if we already have a more advanced status
+            # If header says backorder (and NOT blocked), show as backorder
+            # But don't override if we already have a more advanced status from shipments/events
             current_lower = (status_txt or "").lower()
             advanced_statuses = ["shipped", "picked", "picking", "ready to pick", "delivered", "in progress"]
             
             if not any(adv in current_lower for adv in advanced_statuses):
-                prev = status_txt
+                prev_status = status_txt
                 status_txt = "Backorder"
-                _logger.info("[Monta] %s OVERRIDE -> Backorder (header authoritative; was '%s')", order_ref, prev)
+                _logger.info("[Monta] %s STATUS OVERRIDE: Backorder (header authoritative, was: %s)", order_ref, prev_status)
 
         status_code = self._pick(cand,"StatusID","DeliveryStatusId","DeliveryStatusCode")
         stable_ref = (refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
@@ -340,10 +319,10 @@ class MontaStatusResolver:
                 "header_blocked": header_blocked, 
                 "header_backorder": header_backord,
                 "final_status": status_txt,
-                "resolution_notes": "Blocked has absolute priority over all other statuses"
+                "resolution_notes": "Header blocked has absolute priority over all statuses"
             }, ensure_ascii=False),
         }
 
-        _logger.info("[Monta] RESOLVED %s -> %s (src=%s, blocked=%s, backorder=%s)", 
-                    order_ref, status_txt, src, header_blocked, header_backord)
+        _logger.info("[Monta] FINAL RESOLUTION %s -> %s (blocked=%s, backorder=%s, src=%s)", 
+                    order_ref, status_txt, header_blocked, header_backord, src)
         return status_txt, meta

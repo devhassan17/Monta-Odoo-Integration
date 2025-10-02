@@ -1,4 +1,3 @@
-# models/monta_status_sync.py
 # -*- coding: utf-8 -*-
 """
 Sync Monta status back to sale.order + snapshot.
@@ -80,6 +79,7 @@ class SaleOrder(models.Model):
             }
             try:
                 so.write(vals_so)
+                _logger.info("[Monta] SUCCESS: %s -> %s", so.name, status)
             except Exception as e:
                 _logger.exception("[Monta] %s (%s) -> write failed: %s", so.name, ref, e)
 
