@@ -51,18 +51,21 @@ class SaleOrder(models.Model):
                 _logger.exception("[Monta] %s (%s) -> resolve() failed: %s", so.name, ref, e)
                 continue
             if not status:
-                Snapshot.upsert_for_order(so, order_status=False,
+                Snapshot.upsert_for_order(
+                    so, order_status=False,
                     delivery_message=(meta or {}).get("reason"),
-                    last_sync=fields.Datetime.now())
+                    last_sync=fields.Datetime.now()
+                )
                 continue
-            vals_so = {
+
+            so.write({
                 "monta_status": status,
                 "monta_status_code": (meta or {}).get("status_code"),
                 "monta_status_source": (meta or {}).get("source"),
                 "monta_track_trace": (meta or {}).get("track_trace"),
                 "monta_last_sync": fields.Datetime.now(),
-            }
-            so.write(vals_so)
+            })
+
             Snapshot.upsert_for_order(
                 so,
                 monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
