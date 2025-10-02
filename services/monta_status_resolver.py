@@ -9,15 +9,9 @@ _logger = logging.getLogger(__name__)
 
 class MontaStatusResolver:
     """
-    Freshest status wins:
-      1) shipments
-      2) orderevents (latest)
-      3) orders (header)
-
-    Also supports fast exact: GET /order/{webshoporderid}
-
-    This version prioritizes boolean flags (IsBlocked, IsBackorder, etc.)
-    over generic text fields so Odoo shows "Blocked" / "Backorder" correctly.
+    Freshest status wins (shipments → orderevents → orders).
+    Prioritises flags: Blocked > Backorder > Shipped > Picked > ReadyToPick.
+    Falls back to Monta text. Supports fast GET /order/{webshoporderid}.
     """
 
     def __init__(self, env):
@@ -137,17 +131,26 @@ class MontaStatusResolver:
     # ---------- status builders ----------
     @staticmethod
     def _status_from_flags(o):
-        """Strict flag mapping first."""
+        """
+        Strict flag mapping with priority:
+        Blocked > Backorder > Shipped > Picked > Picking > ReadyToPick > ETA.
+        """
         if not isinstance(o, dict):
             return None
-        # Blocked
+
+        # 1) Blocked — highest priority
         if o.get("IsBlocked"):
             msg = o.get("BlockedMessage")
             return "Blocked" + (f" — {msg}" if msg else "")
-        # Backorder (handle variants)
-        if o.get("IsBackorder") or o.get("IsBackOrder") or (str(o.get("Backorder", "")).lower() in ("1", "true", "yes")):
+
+        # 2) Backorder — only if NOT blocked
+        if (
+            o.get("IsBackorder") or o.get("IsBackOrder")
+            or str(o.get("Backorder", "")).lower() in ("1", "true", "yes")
+        ):
             return "Backorder"
-        # Shipped
+
+        # 3) Shipped
         if o.get("IsShipped") or o.get("ShippedDate"):
             st = "Shipped"
             if o.get("TrackAndTraceCode"):
@@ -155,14 +158,16 @@ class MontaStatusResolver:
             if o.get("ShippedDate"):
                 st += f" on {o['ShippedDate']}"
             return st
-        # Warehouse flow
+
+        # 4) Warehouse flow
         if o.get("Picked"):
             return "Picked"
         if o.get("IsPicking"):
             return "Picking in progress"
         if o.get("ReadyToPick") and o.get("ReadyToPick") != "NotReady":
             return "Ready to pick"
-        # ETA-ish flags
+
+        # 5) ETA-ish flags
         for k in ("EstimatedDeliveryTo", "EstimatedDeliveryFrom", "LatestDeliveryDate"):
             if o.get(k):
                 return f"In progress — ETA {o[k]}"
@@ -170,19 +175,22 @@ class MontaStatusResolver:
 
     @staticmethod
     def _status_from_text(o):
-        """If Monta text contains 'blocked' or 'backorder', reflect it even if flags are missing."""
-        def get_txt():
-            for k in ("DeliveryStatusDescription", "Status", "CurrentStatus"):
-                if o.get(k):
-                    return str(o.get(k))
-            return ""
-        raw = get_txt()
-        low = str(raw).lower()
+        """
+        Fallback textual parsing if flags are missing.
+        If text contains 'blocked' or 'backorder', reflect that explicitly.
+        """
+        txt = ""
+        for k in ("DeliveryStatusDescription", "Status", "CurrentStatus"):
+            if o.get(k):
+                txt = str(o[k])
+                break
+
+        low = txt.lower()
         if "blocked" in low:
             return "Blocked"
         if "backorder" in low or "back order" in low:
             return "Backorder"
-        return raw or None
+        return txt or None
 
     # ----------- order lookup -----------
     def _find_order(self, order_ref, tried):
@@ -332,7 +340,6 @@ class MontaStatusResolver:
             "delivery_date": dd,
             "delivery_message": dm,
             "monta_order_ref": stable_ref,
-            # Include raw JSON for debugging
             "status_raw": json.dumps({
                 "order": cand,
                 "used_source": src,
@@ -343,6 +350,6 @@ class MontaStatusResolver:
 
         _logger.info(
             "[Monta] %s -> %s (src=%s, code=%s, msg=%s)",
-            order_ref, status_txt, src, status_code, (dm or "")[:120]
+            order_ref, status_txt, src, status_code, (dm or "")[:160]
         )
         return status_txt, meta
