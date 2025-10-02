@@ -7,16 +7,11 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-BLOCKED_TERMS = ("blocked", "on hold", "holded")
-BACKORDER_TERMS = ("backorder", "back order")
-
 class MontaStatusResolver:
     """
-    Freshest status (shipments → orderevents → orders), with HEADER authority:
+    Freshest wins (shipments → orderevents → orders), but:
+    The ORDER HEADER is authoritative for Blocked / Backorder.
     Final override priority: Blocked > Backorder > (shipments/events/header).
-
-    We explicitly check DeliveryMessage / Message / Reason for "blocked",
-    because tenants often put the block reason there (not in BlockedMessage).
     """
 
     def __init__(self, env):
@@ -99,87 +94,92 @@ class MontaStatusResolver:
             if v not in (None, "", []): return v
         return None
 
-    # ---------- text detectors ----------
-    @staticmethod
-    def _contains_any(text, terms):
-        low = MontaStatusResolver._lower(text)
-        return any(t in low for t in terms)
-
-    @staticmethod
-    def _header_blocked(o):
-        """Detect Blocked from flags OR any message/text fields."""
-        if not isinstance(o, dict):
-            return False
-        if o.get("IsBlocked"):
-            return True
-        for k in ("BlockedMessage", "DeliveryMessage", "Message", "Reason",
-                  "DeliveryStatusDescription", "Status", "CurrentStatus"):
-            if MontaStatusResolver._contains_any(o.get(k), BLOCKED_TERMS):
-                return True
-        return False
-
-    @staticmethod
-    def _header_backorder(o):
-        """Detect Backorder if NOT blocked."""
-        if not isinstance(o, dict):
-            return False
-        if o.get("IsBackorder") or o.get("IsBackOrder"):
-            return True
-        if str(o.get("Backorder","")).lower() in ("1","true","yes"):
-            return True
-        for k in ("DeliveryStatusDescription", "Status", "CurrentStatus"):
-            if MontaStatusResolver._contains_any(o.get(k), BACKORDER_TERMS):
-                return True
-        return False
-
+    # ---------- status helpers ----------
     @staticmethod
     def _status_from_flags(o):
-        """Within a single payload (header), map flags with strict priority."""
-        if not isinstance(o, dict):
-            return None
-        # Blocked
-        if MontaStatusResolver._header_blocked(o):
-            msg = o.get("BlockedMessage") or o.get("DeliveryMessage") or o.get("Message") or o.get("Reason")
+        """Flags priority inside a single payload (header)"""
+        if not isinstance(o, dict): return None
+        if o.get("IsBlocked"):
+            msg = o.get("BlockedMessage")
             return "Blocked" + (f" — {msg}" if msg else "")
-        # Backorder
-        if MontaStatusResolver._header_backorder(o):
+        if (o.get("IsBackorder") or o.get("IsBackOrder")
+            or str(o.get("Backorder", "")).lower() in ("1","true","yes")):
             return "Backorder"
-        # Shipped
         if o.get("IsShipped") or o.get("ShippedDate"):
             st = "Shipped"
             if o.get("TrackAndTraceCode"): st += f" (T&T: {o['TrackAndTraceCode']})"
             if o.get("ShippedDate"): st += f" on {o['ShippedDate']}"
             return st
-        # Warehouse flow
         if o.get("Picked"): return "Picked"
         if o.get("IsPicking"): return "Picking in progress"
         if o.get("ReadyToPick") and o.get("ReadyToPick") != "NotReady": return "Ready to pick"
-        # ETA-ish flags
         for k in ("EstimatedDeliveryTo","EstimatedDeliveryFrom","LatestDeliveryDate"):
             if o.get(k): return f"In progress — ETA {o[k]}"
         return None
 
     @staticmethod
     def _status_from_text(o):
-        """Fallback to text; still prioritise Blocked over Backorder."""
-        if not isinstance(o, dict):
-            return None
-        # If any message/text says blocked -> Blocked
-        if MontaStatusResolver._header_blocked(o):
-            msg = o.get("BlockedMessage") or o.get("DeliveryMessage") or o.get("Message") or o.get("Reason")
-            return "Blocked" + (f" — {msg}" if msg else "")
-        # Else if backorder -> Backorder
-        if MontaStatusResolver._header_backorder(o):
-            return "Backorder"
-        # Else return plain text if present
+        """Text mapping when flags are absent"""
+        txt = ""
         for k in ("DeliveryStatusDescription","Status","CurrentStatus"):
             if o.get(k):
-                return str(o[k])
-        return None
+                txt = str(o[k])
+                break
+        low = txt.lower()
+        if "blocked" in low: return "Blocked"
+        if "backorder" in low or "back order" in low: return "Backorder"
+        return txt or None
+
+    @staticmethod
+    def _is_blocked_header(o):
+        """Check if order is blocked - AUTHORITATIVE"""
+        if not isinstance(o, dict):
+            return False
+            
+        # Primary blocked indicators
+        if o.get("IsBlocked"):
+            return True
+            
+        # Check blocked message
+        blocked_msg = MontaStatusResolver._lower(o.get("BlockedMessage") or "")
+        if "blocked" in blocked_msg:
+            return True
+            
+        # Check status descriptions
+        status_fields = ["DeliveryStatusDescription", "Status", "CurrentStatus"]
+        for field in status_fields:
+            status_text = MontaStatusResolver._lower(o.get(field) or "")
+            if "blocked" in status_text:
+                return True
+                
+        return False
+
+    @staticmethod
+    def _is_backorder_header(o):
+        """Check if order is backorder - only if NOT blocked"""
+        if not isinstance(o, dict):
+            return False
+            
+        # First check if it's blocked - if blocked, it cannot be backorder
+        if MontaStatusResolver._is_blocked_header(o):
+            return False
+            
+        # Primary backorder indicators
+        if (o.get("IsBackorder") or o.get("IsBackOrder") 
+            or str(o.get("Backorder", "")).lower() in ("1", "true", "yes")):
+            return True
+            
+        # Check status descriptions for backorder
+        status_fields = ["DeliveryStatusDescription", "Status", "CurrentStatus"]
+        for field in status_fields:
+            status_text = MontaStatusResolver._lower(o.get(field) or "")
+            if "backorder" in status_text or "back order" in status_text:
+                return True
+                
+        return False
 
     # ----------- order lookup -----------
     def _find_order(self, order_ref, tried):
-        # direct exact endpoint
         tried.append({"direct": f"order/{order_ref}"})
         scd, direct = self._get(f"order/{order_ref}")
         if 200 <= scd < 300 and isinstance(direct, dict) and direct:
@@ -187,15 +187,9 @@ class MontaStatusResolver:
             _logger.debug("[Monta] direct order hit for %s", order_ref)
             return items[0] if items and isinstance(items[0], dict) else direct
 
-        # search endpoints
         params_list = [
-            {"orderNumber": order_ref},
-            {"reference": order_ref},
-            {"clientReference": order_ref},
-            {"webshopOrderId": order_ref},
-            {"internalWebshopOrderId": order_ref},
-            {"eorderGuid": order_ref},
-            {"search": order_ref},
+            {"orderNumber": order_ref},{"reference": order_ref},{"clientReference": order_ref},
+            {"webshopOrderId": order_ref},{"internalWebshopOrderId": order_ref},{"eorderGuid": order_ref},{"search": order_ref}
         ]
         for p in params_list:
             tried.append(p.copy())
@@ -210,9 +204,6 @@ class MontaStatusResolver:
 
     # ---------------- resolve ----------------
     def resolve(self, order_ref):
-        """
-        Returns: (status_text, meta) or (None, {'reason': ..., 'tried': [...]})
-        """
         tried = []
         cand = self._find_order(order_ref, tried)
         if not cand:
@@ -233,7 +224,7 @@ class MontaStatusResolver:
             "webshopOrderId": cand.get("WebshopOrderId") or cand.get("InternalWebshopOrderId"),
         }
 
-        # 1) SHIPMENTS
+        # ---- Shipments (freshest if available)
         ship_status = ship_tt = ship_date = ship_msg = None
         ship_src = None
         for params, lbl in [
@@ -248,23 +239,21 @@ class MontaStatusResolver:
             if not p: continue
             scS, ships = self._get("shipments", p)
             for sh in self._as_list(ships):
-                st = (
-                    self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
-                    or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
-                    or str(sh.get("ShipmentStatus") or "")
-                )
+                st = (self._pick(sh,"DeliveryStatusDescription","ShipmentStatus","Status","CurrentStatus")
+                      or ("Shipped" if (sh.get("IsShipped") or sh.get("ShippedDate")) else None)
+                      or str(sh.get("ShipmentStatus") or ""))
                 if st:
                     ship_status = st
-                    ship_tt = ship_tt or self._pick(sh, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
-                    ship_date = ship_date or self._pick(sh, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
-                    ship_msg  = ship_msg  or self._pick(sh, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
+                    ship_tt = ship_tt or self._pick(sh,"TrackAndTraceLink","TrackAndTraceUrl","TrackAndTrace","TrackingUrl")
+                    ship_date = ship_date or self._pick(sh,"DeliveryDate","ShippedDate","EstimatedDeliveryTo","LatestDeliveryDate")
+                    ship_msg  = ship_msg  or self._pick(sh,"BlockedMessage","DeliveryMessage","Message","Reason")
                     ship_src = lbl
                     break
             if ship_status:
                 _logger.debug("[Monta] %s using shipment status '%s'", order_ref, ship_status)
                 break
 
-        # 2) ORDER EVENTS
+        # ---- Order events (if no shipment status)
         event_status = event_msg = event_tt = event_date = None
         event_src = None
         if not ship_status:
@@ -282,51 +271,57 @@ class MontaStatusResolver:
                 if lst:
                     e = lst[0]
                     event_status = (
-                        self._pick(e, "DeliveryStatusDescription", "Status", "CurrentStatus", "ActionCode")
-                        or self._pick(e.get("Order") or {}, "Status", "CurrentStatus")
-                        or self._pick(e.get("Shipment") or {}, "ShipmentStatus", "Status", "CurrentStatus")
+                        self._pick(e,"DeliveryStatusDescription","Status","CurrentStatus","ActionCode")
+                        or self._pick(e.get("Order") or {}, "Status","CurrentStatus")
+                        or self._pick(e.get("Shipment") or {}, "ShipmentStatus","Status","CurrentStatus")
                     )
-                    event_msg  = self._pick(e, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
-                    event_tt   = self._pick(e.get("Shipment") or {}, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
-                    event_date = self._pick(e.get("Shipment") or {}, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
+                    event_msg  = self._pick(e,"BlockedMessage","DeliveryMessage","Message","Reason")
+                    event_tt   = self._pick(e.get("Shipment") or {}, "TrackAndTraceLink","TrackAndTraceUrl","TrackAndTrace","TrackingUrl")
+                    event_date = self._pick(e.get("Shipment") or {}, "DeliveryDate","ShippedDate","EstimatedDeliveryTo","LatestDeliveryDate")
                     event_src  = lbl
                     if event_status:
                         _logger.debug("[Monta] %s using event status '%s'", order_ref, event_status)
                         break
 
-        # 3) ORDER HEADER (flags FIRST, then text)
+        # ---- Order header (compute both flag-based + text-based)
         header_flag = self._status_from_flags(cand)
         header_txt  = self._status_from_text(cand)
         header_status = header_flag or header_txt or "Received / Pending workflow"
-        header_tt   = self._pick(cand, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
-        header_date = self._pick(cand, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
-        header_msg  = self._pick(cand, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
+        header_tt   = self._pick(cand,"TrackAndTraceLink","TrackAndTraceUrl","TrackAndTrace","TrackingUrl")
+        header_date = self._pick(cand,"DeliveryDate","ShippedDate","EstimatedDeliveryTo","LatestDeliveryDate")
+        header_msg  = self._pick(cand,"BlockedMessage","DeliveryMessage","Message","Reason")
 
-        # choose freshest
+        # ---- Choose freshest first
         src         = ship_src or event_src or "orders"
         status_txt  = ship_status or event_status or header_status
         tt          = ship_tt or event_tt or header_tt
         dd          = ship_date or event_date or header_date
         dm          = ship_msg or event_msg or header_msg
 
-        # AUTHORITATIVE HEADER OVERRIDE
-        header_is_blocked  = self._header_blocked(cand)
-        header_is_backord  = (not header_is_blocked) and self._header_backorder(cand)
+        # ---- AUTHORITATIVE HEADER OVERRIDE (FIXED LOGIC) ----
+        header_blocked  = self._is_blocked_header(cand)
+        header_backord  = self._is_backorder_header(cand)
 
-        if header_is_blocked:
+        # BLOCKED has absolute priority - if header says blocked, always show blocked
+        if header_blocked:
             prev = status_txt
-            status_txt = "Blocked" + (f" — {header_msg}" if header_msg else "")
-            if prev != status_txt:
-                _logger.info("[Monta] %s override -> Blocked (header says blocked; was '%s')", order_ref, prev)
-        elif header_is_backord:
-            stable = (status_txt or "").lower()
-            if not any(x in stable for x in ("shipped", "picked", "picking", "ready to pick")):
+            status_txt = "Blocked"
+            if header_msg:
+                status_txt += f" — {header_msg}"
+            _logger.info("[Monta] %s OVERRIDE -> Blocked (header authoritative; was '%s')", order_ref, prev)
+        
+        # BACKORDER only if NOT blocked and header says backorder
+        elif header_backord:
+            # Don't override if we already have a more advanced status
+            current_lower = (status_txt or "").lower()
+            advanced_statuses = ["shipped", "picked", "picking", "ready to pick", "delivered", "in progress"]
+            
+            if not any(adv in current_lower for adv in advanced_statuses):
                 prev = status_txt
                 status_txt = "Backorder"
-                if prev != status_txt:
-                    _logger.info("[Monta] %s override -> Backorder (header says backorder; was '%s')", order_ref, prev)
+                _logger.info("[Monta] %s OVERRIDE -> Backorder (header authoritative; was '%s')", order_ref, prev)
 
-        status_code = self._pick(cand, "StatusID", "DeliveryStatusId", "DeliveryStatusCode")
+        status_code = self._pick(cand,"StatusID","DeliveryStatusId","DeliveryStatusCode")
         stable_ref = (refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
                       or refs["clientReference"] or refs["orderReference"] or order_ref)
 
@@ -338,11 +333,17 @@ class MontaStatusResolver:
             "delivery_message": dm,
             "monta_order_ref": stable_ref,
             "status_raw": json.dumps({
-                "order": cand, "used_source": src,
-                "ship_status": ship_status, "event_status": event_status,
-                "header_blocked": header_is_blocked, "header_backorder": header_is_backord,
+                "order": cand, 
+                "used_source": src,
+                "ship_status": ship_status, 
+                "event_status": event_status,
+                "header_blocked": header_blocked, 
+                "header_backorder": header_backord,
+                "final_status": status_txt,
+                "resolution_notes": "Blocked has absolute priority over all other statuses"
             }, ensure_ascii=False),
         }
 
-        _logger.info("[Monta] %s -> %s (src=%s, code=%s, msg=%s)", order_ref, status_txt, src, status_code, (dm or "")[:160])
+        _logger.info("[Monta] RESOLVED %s -> %s (src=%s, blocked=%s, backorder=%s)", 
+                    order_ref, status_txt, src, header_blocked, header_backord)
         return status_txt, meta
