@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
+import json
 import time
 import requests
 from urllib.parse import urljoin
+
+import logging
+_logger = logging.getLogger(__name__)
 
 class MontaStatusResolver:
     """
@@ -9,7 +13,11 @@ class MontaStatusResolver:
       1) shipments
       2) orderevents (latest)
       3) orders (header)
+
     Also supports fast exact: GET /order/{webshoporderid}
+
+    This version prioritizes boolean flags (IsBlocked, IsBackorder, etc.)
+    over generic text fields so Odoo shows "Blocked" / "Backorder" correctly.
     """
 
     def __init__(self, env):
@@ -41,9 +49,11 @@ class MontaStatusResolver:
         url = urljoin(self.base, path.lstrip("/"))
         r = self.s.get(url, params=params, timeout=self.timeout)
         try:
-            return r.status_code, r.json()
+            data = r.json()
         except Exception:
-            return r.status_code, None
+            data = None
+        _logger.debug("[Monta] GET %s params=%s -> %s", url, params, r.status_code)
+        return r.status_code, data
 
     # ---------------- helpers ----------------
     @staticmethod
@@ -124,16 +134,20 @@ class MontaStatusResolver:
                 return v
         return None
 
+    # ---------- status builders ----------
     @staticmethod
-    def _derive_status_from_flags(o):
-        """Map Monta boolean flags to friendly text before any generic fallback."""
+    def _status_from_flags(o):
+        """Strict flag mapping first."""
         if not isinstance(o, dict):
             return None
+        # Blocked
         if o.get("IsBlocked"):
             msg = o.get("BlockedMessage")
             return "Blocked" + (f" — {msg}" if msg else "")
-        if o.get("IsBackorder"):
+        # Backorder (handle variants)
+        if o.get("IsBackorder") or o.get("IsBackOrder") or (str(o.get("Backorder", "")).lower() in ("1", "true", "yes")):
             return "Backorder"
+        # Shipped
         if o.get("IsShipped") or o.get("ShippedDate"):
             st = "Shipped"
             if o.get("TrackAndTraceCode"):
@@ -141,16 +155,34 @@ class MontaStatusResolver:
             if o.get("ShippedDate"):
                 st += f" on {o['ShippedDate']}"
             return st
+        # Warehouse flow
         if o.get("Picked"):
             return "Picked"
         if o.get("IsPicking"):
             return "Picking in progress"
         if o.get("ReadyToPick") and o.get("ReadyToPick") != "NotReady":
             return "Ready to pick"
+        # ETA-ish flags
         for k in ("EstimatedDeliveryTo", "EstimatedDeliveryFrom", "LatestDeliveryDate"):
             if o.get(k):
                 return f"In progress — ETA {o[k]}"
         return None
+
+    @staticmethod
+    def _status_from_text(o):
+        """If Monta text contains 'blocked' or 'backorder', reflect it even if flags are missing."""
+        def get_txt():
+            for k in ("DeliveryStatusDescription", "Status", "CurrentStatus"):
+                if o.get(k):
+                    return str(o.get(k))
+            return ""
+        raw = get_txt()
+        low = str(raw).lower()
+        if "blocked" in low:
+            return "Blocked"
+        if "backorder" in low or "back order" in low:
+            return "Backorder"
+        return raw or None
 
     # ----------- order lookup -----------
     def _find_order(self, order_ref, tried):
@@ -159,6 +191,7 @@ class MontaStatusResolver:
         scd, direct = self._get(f"order/{order_ref}")
         if 200 <= scd < 300 and isinstance(direct, dict) and direct:
             items = self._as_list(direct)
+            _logger.debug("[Monta] direct order hit for %s", order_ref)
             return items[0] if items and isinstance(items[0], dict) else direct
 
         # 1..n) search endpoints
@@ -178,7 +211,9 @@ class MontaStatusResolver:
                 continue
             cand = self._pick_best(order_ref, payload)
             if cand:
+                _logger.debug("[Monta] matched %s via %s", order_ref, p)
                 return cand
+        _logger.info("[Monta] No order found for %s (tried=%s)", order_ref, tried)
         return None
 
     # ---------------- resolve ----------------
@@ -206,7 +241,7 @@ class MontaStatusResolver:
             "webshopOrderId": cand.get("WebshopOrderId") or cand.get("InternalWebshopOrderId"),
         }
 
-        # 1) SHIPMENTS
+        # 1) SHIPMENTS (freshest)
         ship_status = ship_tt = ship_date = ship_msg = None
         ship_src = None
         for params, lbl in [
@@ -235,9 +270,10 @@ class MontaStatusResolver:
                     ship_src = lbl
                     break
             if ship_status:
+                _logger.debug("[Monta] %s using shipment status '%s'", order_ref, ship_status)
                 break
 
-        # 2) ORDER EVENTS
+        # 2) ORDER EVENTS (if no shipment status)
         event_status = event_msg = event_tt = event_date = None
         event_src = None
         if not ship_status:
@@ -264,14 +300,13 @@ class MontaStatusResolver:
                     event_date = self._pick(e.get("Shipment") or {}, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
                     event_src  = lbl
                     if event_status:
+                        _logger.debug("[Monta] %s using event status '%s'", order_ref, event_status)
                         break
 
-        # 3) ORDER HEADER
-        header_status = (
-            self._pick(cand, "DeliveryStatusDescription", "Status", "CurrentStatus")
-            or self._derive_status_from_flags(cand)
-            or "Received / Pending workflow"
-        )
+        # 3) ORDER HEADER (flags FIRST, then text)
+        header_flag = self._status_from_flags(cand)
+        header_txt  = self._status_from_text(cand)
+        header_status = header_flag or header_txt or "Received / Pending workflow"
         header_tt   = self._pick(cand, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
         header_date = self._pick(cand, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
         header_msg  = self._pick(cand, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
@@ -283,8 +318,8 @@ class MontaStatusResolver:
         dd          = ship_date or event_date or header_date
         dm          = ship_msg or event_msg or header_msg
 
+        # code & stable ref
         status_code = self._pick(cand, "StatusID", "DeliveryStatusId", "DeliveryStatusCode")
-
         stable_ref = (
             refs["orderNumber"] or refs["webshopOrderId"] or refs["orderGuid"]
             or refs["clientReference"] or refs["orderReference"] or order_ref
@@ -297,5 +332,17 @@ class MontaStatusResolver:
             "delivery_date": dd,
             "delivery_message": dm,
             "monta_order_ref": stable_ref,
+            # Include raw JSON for debugging
+            "status_raw": json.dumps({
+                "order": cand,
+                "used_source": src,
+                "ship_status": ship_status,
+                "event_status": event_status,
+            }, ensure_ascii=False),
         }
+
+        _logger.info(
+            "[Monta] %s -> %s (src=%s, code=%s, msg=%s)",
+            order_ref, status_txt, src, status_code, (dm or "")[:120]
+        )
         return status_txt, meta
