@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Sync Monta status back to sale.order + snapshot (monta.order.status).
-"""
 import logging
 from odoo import api, fields, models
 
@@ -37,12 +34,6 @@ class SaleOrder(models.Model):
         return True
 
     def _monta_sync_batch(self):
-        """
-        For each order:
-          - resolve status from Monta
-          - WRITE full mirror onto sale.order (so fields are visible everywhere)
-          - UPSERT a snapshot row in monta.order.status for history/audit
-        """
         from ..services.monta_status_resolver import MontaStatusResolver
         Snapshot = self.env["monta.order.status"].sudo()
 
@@ -64,9 +55,12 @@ class SaleOrder(models.Model):
                 _logger.exception("[Monta] %s (%s) -> resolve() failed: %s", so.name, ref, e)
                 continue
 
-            # If nothing found, record reason on snapshot, leave SO untouched
+            # Not found -> mark as not available on Monta, upsert snapshot with reason
             if not status:
                 try:
+                    # mirror the boolean if field exists
+                    if "monta_on_monta" in so._fields:
+                        so.write({"monta_on_monta": False})
                     Snapshot.upsert_for_order(
                         so,
                         order_status=False,
@@ -79,25 +73,36 @@ class SaleOrder(models.Model):
                 _logger.warning("[Monta] %s (%s) -> no status returned (%s)", so.name, ref, meta)
                 continue
 
-            # -------- write everything onto sale.order (THIS is what makes it visible everywhere) --------
+            # Found -> write mirrors on sale.order (including Available on Monta)
             vals_so = {
                 "monta_status": status,
                 "monta_status_code": (meta or {}).get("status_code"),
                 "monta_status_source": (meta or {}).get("source") or "orders",
                 "monta_track_trace": (meta or {}).get("track_trace"),
                 "monta_last_sync": fields.Datetime.now(),
-                # New mirrors:
-                "monta_order_ref": (meta or {}).get("monta_order_ref"),
-                "monta_delivery_message": (meta or {}).get("delivery_message"),
-                "monta_delivery_date": (meta or {}).get("delivery_date"),
-                "monta_status_raw": (meta or {}).get("status_raw"),
             }
+
+            # Optional mirrors if you’ve added them (safe checks)
+            if "monta_order_ref" in so._fields:
+                vals_so["monta_order_ref"] = (meta or {}).get("monta_order_ref")
+            if "monta_delivery_message" in so._fields:
+                vals_so["monta_delivery_message"] = (meta or {}).get("delivery_message")
+            if "monta_delivery_date" in so._fields:
+                vals_so["monta_delivery_date"] = (meta or {}).get("delivery_date")
+            if "monta_status_raw" in so._fields:
+                vals_so["monta_status_raw"] = (meta or {}).get("status_raw")
+
+            # NEW: mirror Available on Monta (true if we have a stable Monta ref)
+            if "monta_on_monta" in so._fields:
+                vals_so["monta_on_monta"] = bool((meta or {}).get("monta_order_ref"))
+
+            # Write to SO
             try:
                 so.write(vals_so)
             except Exception as e:
                 _logger.exception("[Monta] %s (%s) -> write failed: %s", so.name, ref, e)
 
-            # -------- snapshot for history/audit --------
+            # Snapshot for history/audit
             try:
                 Snapshot.upsert_for_order(
                     so,
