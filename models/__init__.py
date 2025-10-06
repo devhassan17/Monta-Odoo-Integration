@@ -16,3 +16,4 @@ from . import monta_sync
 from . import monta_order_status_upsert
 from . import sale_order_monta_actions  
 from . import monta_qty_cron
+from . import sale_order_monta_fields
