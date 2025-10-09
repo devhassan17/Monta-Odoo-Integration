@@ -22,7 +22,7 @@ product SKUs, quantities, and shipment metadata). Obtain explicit consent from
 your end-users for any data transfer to Monta.
 """,
     "author": "Ali Hassan",
-    "website": "https://www.moyeecoffee.com/",
+    "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
     "depends": [
@@ -50,7 +50,7 @@ your end-users for any data transfer to Monta.
     "post_init_hook": "post_init_hook",
     "uninstall_hook": "uninstall_hook",
     # Optional: add support email (recommended)
-    # "support": "support@yourdomain.com",
+    "support": "hello@moyeecoffee.com",
     # Optional: live demo url
     # "live_test_url": "https://demo.yoursite.com/",
 }
