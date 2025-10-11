@@ -44,6 +44,8 @@ your end-users for any data transfer to Monta.
     "demo": [
         # add demo data files if you have any
     ],
+    "price":199.99,
+    "currency":"USD",
     "installable": True,
     "application": True,
     "auto_install": False,
