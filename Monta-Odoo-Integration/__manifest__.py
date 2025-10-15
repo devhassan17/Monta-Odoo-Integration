@@ -25,6 +25,7 @@ your end-users for any data transfer to Monta.
     "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
+    'images': ['static/description/banner.png'],
     "depends": [
         "sale_management",
         "mrp",
