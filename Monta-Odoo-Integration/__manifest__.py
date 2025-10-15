@@ -52,7 +52,7 @@ your end-users for any data transfer to Monta.
     "post_init_hook": "post_init_hook",
     "uninstall_hook": "uninstall_hook",
     # Optional: add support email (recommended)
-    "support": "hello@moyeecoffee.com",
+    "support": "programmer.alihassan@gmail.com",
     # Optional: live demo url
     # "live_test_url": "https://demo.yoursite.com/",
 }
