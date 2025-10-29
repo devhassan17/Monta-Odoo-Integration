@@ -3,7 +3,7 @@ import logging, time, requests
 from requests.auth import HTTPBasicAuth
 
 _logger = logging.getLogger(__name__)
-DEFAULT_TIMEOUT = 20
+DEFAULT_TIMEOUT = 5
 
 class MontaClient:
     """Thin HTTP client for Monta with basic auth and structured logging."""

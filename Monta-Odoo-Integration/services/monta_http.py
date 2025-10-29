@@ -16,7 +16,7 @@ class MontaHttp(models.AbstractModel):
         base = (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").rstrip("/")
         user = (ICP.get_param("monta.username") or "").strip()
         pwd  = (ICP.get_param("monta.password") or "").strip()
-        timeout = int(ICP.get_param("monta.timeout") or 20)
+        timeout = int(ICP.get_param("monta.timeout") or 5)
         return base, user, pwd, timeout
 
     def get_json(self, path: str, params=None):
