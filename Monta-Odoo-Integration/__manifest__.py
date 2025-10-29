@@ -21,10 +21,11 @@ privacy policy for details about what data is transmitted (order numbers, addres
 product SKUs, quantities, and shipment metadata). Obtain explicit consent from
 your end-users for any data transfer to Monta.
 """,
-    "author": "Ali Hassan",
+    "author": "Atomixweb2",
     "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
+    'images': ['static/description/banner.png'],
     "depends": [
         "sale_management",
         "mrp",
@@ -44,13 +45,15 @@ your end-users for any data transfer to Monta.
     "demo": [
         # add demo data files if you have any
     ],
+    "price":199.99,
+    "currency":"USD",
     "installable": True,
     "application": True,
     "auto_install": False,
     "post_init_hook": "post_init_hook",
     "uninstall_hook": "uninstall_hook",
     # Optional: add support email (recommended)
-    "support": "hello@moyeecoffee.com",
+    "support": "programmer.alihassan@gmail.com",
     # Optional: live demo url
     # "live_test_url": "https://demo.yoursite.com/",
 }

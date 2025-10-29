@@ -1,7 +1,7 @@
 <section class="oe_container">
   <div class="oe_row oe_spaced">
-    <h2 style="color:white; text-align: center;" >Monta NL ⇄ Odoo Integration</h2>
-    <h3 style="color:white; text-align: center;" >Seamless order synchronization and logistics automation between Monta and Odoo</h3>
+    <h2>Monta NL - Odoo Integration</h2>
+    <h3>Seamless order synchronization and logistics automation between Monta and Odoo</h3>
     <p>
       This module connects your Odoo system with Monta NL (Warehouse and Fulfilment platform)
       and keeps orders, tracking, and shipment data synchronized in real time.
@@ -10,7 +10,7 @@
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>✨ Features</h3>
+    <h3>Features</h3>
     <ul>
       <li>Automatic synchronization of orders from Monta to Odoo.</li>
       <li>Prevention of duplicate orders via order reference matching.</li>
@@ -20,12 +20,16 @@
       <li>Detailed error logging for debugging and security.</li>
     </ul>
   </div>
-  <div>
-    <img src="./Module Overview.png" alt="Monta Odoo Integration Diagram" style="max-width: 100%; height: auto; border: 1px solid #ccc; padding: 10px; background: #fff;">
+
+  <div class="oe_row oe_spaced">
+    <div class="oe_picture">
+      <!-- Show cover or overview image -->
+      <img src="./cover.png" alt="Monta Odoo Integration Overview" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
+    </div>
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>⚙️ Configuration</h3>
+    <h3>Configuration</h3>
     <p>
       Go to <strong>Settings → General Settings → Monta Integration</strong> and fill in the fields below.
       These values are stored as System Parameters.
@@ -59,6 +63,11 @@
           <td>HTTP timeout in seconds</td>
           <td><code>30</code></td>
         </tr>
+          <tr>
+          <td><code>monta.inbound_enable</code></td>
+          <td>To Enable Inbound Orders</td>
+          <td><code>1</code></td>
+        </tr>
       </tbody>
     </table>
 
@@ -67,11 +76,15 @@
       <em>Settings → Technical → System Parameters</em> if you prefer.
     </p>
   </div>
-  <div>
-    <img src="./Monta Order Dashboard.png" alt="Monta Odoo Integration Settings" style="max-width: 100%; height: auto; border: 1px solid #ccc; padding: 10px; background: #fff;">
-  </div>
+
   <div class="oe_row oe_spaced">
-    <h3>🔐 Security Notes</h3>
+    <div class="oe_picture">
+      <img src="./Module Overview.png" alt="Monta Odoo Integration Settings" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
+    </div>
+  </div>
+
+  <div class="oe_row oe_spaced">
+    <h3>Security Notes</h3>
     <ul>
       <li>
         The Monta password is stored in plain text within Odoo’s <code>ir.config_parameter</code>.
@@ -90,7 +103,7 @@
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>🧩 Technical Details</h3>
+    <h3>Technical Details</h3>
     <ul>
       <li>API Client implemented in <code>services/monta_client.py</code>.</li>
       <li>Configurable timeout parameter via System Parameters.</li>
@@ -100,7 +113,7 @@
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>📘 Installation Requirements</h3>
+    <h3>Installation Requirements</h3>
     <ul>
       <li>Odoo 18.0</li>
       <li>Python package <code>requests</code> installed</li>
@@ -109,18 +122,23 @@
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>📋 Example Use Case</h3>
+    <h3>Example Use Case</h3>
     <p>
       Once credentials are configured, the module fetches orders from Monta using the API endpoint
       <code>/orders?orderNumber=...</code>. Orders are automatically created in Odoo Sales Orders,
       including Monta reference, status, and tracking details.
     </p>
   </div>
-
+<div class="oe_row oe_spaced">
+    <div class="oe_picture">
+      <img src="./Monta Order Dashboard.png" alt="Monta Odoo Integration Dashboard" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
+    </div>
+  </div>
   <div class="oe_row oe_spaced">
-    <h3>🧠 Support</h3>
+    <h3>Support</h3>
     <p>
-      For questions or assistance, contact your system administrator or the integration developer.
+      For questions or assistance, contact your system administrator or the integration developer at
+      <a href="mailto:programmer.alihassan@gmail.com">programmer.alihassan@gmail.com</a>.
     </p>
   </div>
 </section>
