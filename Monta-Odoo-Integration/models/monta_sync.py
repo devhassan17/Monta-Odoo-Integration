@@ -290,3 +290,6 @@ class SaleOrder(models.Model):
 
         # end for so
         return True
+
+
+#
