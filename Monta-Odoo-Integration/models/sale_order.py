@@ -12,7 +12,7 @@ from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_compo
 _logger = logging.getLogger(__name__)
 
 # Hard guard removed; control via monta.allowed_base_urls
-ALLOWED_INSTANCE_URL = ""
+ALLOWED_INSTANCE_URL = "https://moyeecoffee-odoo-monta-plugin-251035672.dev.odoo.com/"
 
 
 class SaleOrder(models.Model):

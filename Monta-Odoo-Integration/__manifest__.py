@@ -21,7 +21,7 @@ privacy policy for details about what data is transmitted (order numbers, addres
 product SKUs, quantities, and shipment metadata). Obtain explicit consent from
 your end-users for any data transfer to Monta.
 """,
-    "author": "Atomixweb4",
+    "author": "Atomixweb5",
     "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
