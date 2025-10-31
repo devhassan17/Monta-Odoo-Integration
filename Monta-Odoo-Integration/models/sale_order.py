@@ -28,6 +28,7 @@ class SaleOrder(models.Model):
     ], default='draft', copy=False)
     monta_last_push = fields.Datetime(copy=False)
     monta_needs_sync = fields.Boolean(default=False, copy=False)
+    monta_retry_count = fields.Integer(default=0, copy=False, help="Number of retry attempts for failed sync")  # NEW FIELD
 
     # ---------------- helpers ----------------
     def _split_street(self, street, street2=''):
@@ -239,7 +240,7 @@ class SaleOrder(models.Model):
     # ---------------- API calls ----------------
     def _monta_create(self):
         self.ensure_one()
-        _logger.info("[Monta] Creating order %s", self.name)
+        _logger.info("[Monta] Creating order %s (retry count: %s)", self.name, self.monta_retry_count)
         status, body = self._monta_request('POST', '/order', self._prepare_monta_order_payload())
         if 200 <= status < 300:
             self.write({
@@ -247,16 +248,41 @@ class SaleOrder(models.Model):
                 'monta_sync_state': 'sent',
                 'monta_last_push': fields.Datetime.now(),
                 'monta_needs_sync': False,
+                'monta_retry_count': 0,  # Reset retry count on success
             })
             self._create_monta_log({'status': status, 'body': body}, 'info', 'Monta Create', '[Monta] order created')
-            # (Disabled) Immediate EDD pull to commitment_date is now disabled
         else:
-            self.write({'monta_sync_state': 'error', 'monta_needs_sync': True})
-            self._create_monta_log({'status': status, 'body': body}, 'error', 'Monta Create', '[Monta] create failed')
-            try:
-                self.message_post(body=f"<b>Monta create failed.</b><br/><pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>")
-            except Exception:
-                pass
+            # Check if we should retry (only once)
+            if self.monta_retry_count < 1:
+                _logger.info("[Monta] First attempt failed, scheduling retry for order %s", self.name)
+                self.write({
+                    'monta_sync_state': 'error', 
+                    'monta_needs_sync': True,
+                    'monta_retry_count': self.monta_retry_count + 1
+                })
+                # Schedule retry - this will be picked up by the write method
+                self._create_monta_log(
+                    {'status': status, 'body': body, 'retry_scheduled': True, 'retry_count': self.monta_retry_count + 1}, 
+                    'warning', 'Monta Create', '[Monta] create failed, retry scheduled'
+                )
+            else:
+                # Max retries reached, mark as permanent error
+                self.write({
+                    'monta_sync_state': 'error', 
+                    'monta_needs_sync': False,  # Don't retry anymore
+                    'monta_retry_count': self.monta_retry_count
+                })
+                self._create_monta_log(
+                    {'status': status, 'body': body, 'max_retries_reached': True}, 
+                    'error', 'Monta Create', '[Monta] create failed after max retries'
+                )
+                try:
+                    self.message_post(
+                        body=f"<b>Monta create failed after {self.monta_retry_count} attempts.</b><br/>"
+                             f"<pre>{json.dumps(body, indent=2, ensure_ascii=False)}</pre>"
+                    )
+                except Exception:
+                    pass
         return status, body
 
     def _monta_update(self):
@@ -314,8 +340,6 @@ class SaleOrder(models.Model):
         if any(f in vals for f in tracked_fields):
             vals.setdefault('monta_needs_sync', True)
         res = super(SaleOrder, self).write(vals)
-
-        # (Disabled) Old behavior triggered EDD pull here; no longer needed
 
         # push updates automatically for confirmed orders — now uses create (POST)
         for order in self.filtered(lambda o: o.state in ('sale', 'done') and o.monta_needs_sync and o.state != 'cancel'):
