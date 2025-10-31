@@ -28,7 +28,7 @@ class SaleOrder(models.Model):
     ], default='draft', copy=False)
     monta_last_push = fields.Datetime(copy=False)
     monta_needs_sync = fields.Boolean(default=False, copy=False)
-    monta_retry_count = fields.Integer(default=0, copy=False, help="Number of retry attempts for failed sync")  # NEW FIELD
+    monta_retry_count = fields.Integer(default=0, copy=False, help="Number of retry attempts for failed sync")
 
     # ---------------- helpers ----------------
     def _split_street(self, street, street2=''):
@@ -221,14 +221,19 @@ class SaleOrder(models.Model):
     # ---------------- logging to DB + server ----------------
     def _create_monta_log(self, payload, level='info', tag='Monta API', console_summary=None):
         self.ensure_one()
+        # Map 'warning' to 'info' since 'warning' might not be in the selection
+        valid_level = level
+        if level == 'warning':
+            valid_level = 'info'  # Use 'info' instead of 'warning'
+        
         vals = {
             'sale_order_id': self.id,
             'log_data': json.dumps(payload, indent=2, default=str),
-            'level': level,
-            'name': f'{tag} {self.name} - {level}',
+            'level': valid_level,
+            'name': f'{tag} {self.name} - {valid_level}',
         }
         self.env['monta.sale.log'].sudo().create(vals)
-        (_logger.info if level == 'info' else _logger.error)(f"[{tag}] {console_summary or vals['name']}")
+        (_logger.info if valid_level == 'info' else _logger.error)(f"[{tag}] {console_summary or vals['name']}")
 
     # ---------------- HTTP plumbing with instance guard ----------------
     def _monta_request(self, method, path, payload=None, headers=None):
@@ -263,7 +268,7 @@ class SaleOrder(models.Model):
                 # Schedule retry - this will be picked up by the write method
                 self._create_monta_log(
                     {'status': status, 'body': body, 'retry_scheduled': True, 'retry_count': self.monta_retry_count + 1}, 
-                    'warning', 'Monta Create', '[Monta] create failed, retry scheduled'
+                    'info', 'Monta Create', '[Monta] create failed, retry scheduled'  # Changed from 'warning' to 'info'
                 )
             else:
                 # Max retries reached, mark as permanent error
