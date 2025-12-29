@@ -19,16 +19,14 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
         "mrp",
         "purchase",
     ],
-    "data": [
-        "security/ir.model.access.csv",
-        "security/monta_order_status_rules.xml",
-
-        "views/monta_order_status_views.xml",
-        "views/sale_order_monta_sync_button.xml",
-
-        # NEW: Monta config UI
-        "views/monta_config_views.xml",
-    ],
+"data": [
+    "security/ir.model.access.csv",
+    "security/monta_order_status_rules.xml",
+    "views/monta_menu.xml",                 # <-- add this first
+    "views/monta_order_status_views.xml",
+    "views/sale_order_monta_sync_button.xml",
+    "views/monta_config_views.xml",
+],
     "installable": True,
     "application": True,
     "auto_install": False,
