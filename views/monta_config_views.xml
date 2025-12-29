@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Action -->
-    <record id="action_monta_config" model="ir.actions.act_window">
+    <!-- Server Action (singleton opener) -->
+    <record id="action_monta_config" model="ir.actions.server">
         <field name="name">Monta Configuration</field>
-        <field name="res_model">monta.config</field>
-        <field name="view_mode">form</field>
-        <field name="target">current</field>
+        <field name="model_id" ref="base.model_res_company"/>
+        <field name="state">code</field>
+        <field name="code">
+action = env['monta.config'].action_open_config()
+        </field>
     </record>
 
     <!-- Menu -->

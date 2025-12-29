@@ -22,7 +22,7 @@ class MontaConfig(models.Model):
         string="Allowed Odoo Base URLs",
         help="Comma-separated list of Odoo web.base.url values allowed to push to Monta. Leave empty to allow all."
     )
-    origin = fields.Char(string="Origin", help="Optional Monta 'Origin' field (send only if set).")
+    origin = fields.Char(string="Origin")
     match_loose = fields.Boolean(string="Loose Matching", default=True)
 
     # Companies
@@ -32,35 +32,38 @@ class MontaConfig(models.Model):
         "config_id",
         "company_id",
         string="Allowed Companies",
-        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all companies."
+        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all."
     )
 
-    # Inbound Forecast settings
-    inbound_enable = fields.Boolean(string="Enable Inbound Forecast", default=False)
-    warehouse_tz = fields.Char(string="Warehouse Timezone", default="Europe/Amsterdam")
-    inbound_warehouse_display_name = fields.Char(string="Inbound Warehouse Display Name")
-
-    supplier_code_override = fields.Char(string="Supplier Code Override")
-    supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")
-    default_supplier_code = fields.Char(string="Default Supplier Code")
-
-    # ---- singleton helpers ----
+    # ---- Singleton helpers ----
     @api.model
-    def get_singleton(self):
+    def _get_singleton(self):
         rec = self.sudo().search([], limit=1)
         if not rec:
-            rec = self.sudo().create({"name": "Monta Configuration"})
+            rec = self.sudo().create({})
         return rec
 
     @api.model
-    def get_for_company(self, company):
-        cfg = self.get_singleton()
-        if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
-            return None
-        return cfg
+    def action_open_config(self):
+        cfg = self._get_singleton()
+        return {
+            "type": "ir.actions.act_window",
+            "name": "Monta Configuration",
+            "res_model": "monta.config",
+            "view_mode": "form",
+            "target": "current",
+            "res_id": cfg.id,
+        }
+
+    # Used by services
+    @api.model
+    def get_config(self):
+        return self._get_singleton()
 
     def ensure_company_allowed(self, company):
-        cfg = self.get_singleton()
-        if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
-            raise ValidationError(_("Company '%s' is not allowed in Monta Configuration.") % company.display_name)
+        self.ensure_one()
+        if self.allowed_company_ids and company and company.id not in self.allowed_company_ids.ids:
+            raise ValidationError(
+                _("Company '%s' is not allowed in Monta Configuration.") % company.display_name
+            )
         return True
