@@ -22,7 +22,7 @@ class MontaConfig(models.Model):
         string="Allowed Odoo Base URLs",
         help="Comma-separated list of Odoo web.base.url values allowed to push to Monta. Leave empty to allow all."
     )
-    origin = fields.Char(string="Origin")
+    origin = fields.Char(string="Origin", help="Optional Monta 'Origin' field (send only if set).")
     match_loose = fields.Boolean(string="Loose Matching", default=True)
 
     # Companies
@@ -32,20 +32,64 @@ class MontaConfig(models.Model):
         "config_id",
         "company_id",
         string="Allowed Companies",
-        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all."
+        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all companies."
     )
 
-    # ---- Singleton helpers ----
+    # Inbound Forecast settings
+    inbound_enable = fields.Boolean(string="Enable Inbound Forecast", default=False)
+    warehouse_tz = fields.Char(string="Warehouse Timezone", default="Europe/Amsterdam")
+    inbound_warehouse_display_name = fields.Char(string="Inbound Warehouse Display Name")
+
+    supplier_code_override = fields.Char(string="Supplier Code Override")
+    supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")
+    default_supplier_code = fields.Char(string="Default Supplier Code")
+
+    # -------------------------
+    # Singleton helpers
+    # -------------------------
     @api.model
-    def _get_singleton(self):
+    def get_singleton(self):
+        """
+        Always keep exactly one config record in the DB.
+        """
         rec = self.sudo().search([], limit=1)
         if not rec:
-            rec = self.sudo().create({})
+            rec = self.sudo().create({"name": "Monta Configuration"})
         return rec
 
     @api.model
+    def get_config(self):
+        """
+        Preferred getter used by services.
+        """
+        return self.get_singleton()
+
+    @api.model
+    def get_for_company(self, company):
+        """
+        Backward-compatible helper used by sale_order.py.
+        Returns config if company is allowed, otherwise None.
+        """
+        cfg = self.get_singleton()
+        if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
+            return None
+        return cfg
+
+    def ensure_company_allowed(self, company):
+        """
+        Raise if company is not allowed.
+        """
+        cfg = self.get_singleton()
+        if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
+            raise ValidationError(_("Company '%s' is not allowed in Monta Configuration.") % company.display_name)
+        return True
+
+    # -------------------------
+    # UI Action: always open singleton
+    # -------------------------
+    @api.model
     def action_open_config(self):
-        cfg = self._get_singleton()
+        cfg = self.get_singleton()
         return {
             "type": "ir.actions.act_window",
             "name": "Monta Configuration",
@@ -54,16 +98,3 @@ class MontaConfig(models.Model):
             "target": "current",
             "res_id": cfg.id,
         }
-
-    # Used by services
-    @api.model
-    def get_config(self):
-        return self._get_singleton()
-
-    def ensure_company_allowed(self, company):
-        self.ensure_one()
-        if self.allowed_company_ids and company and company.id not in self.allowed_company_ids.ids:
-            raise ValidationError(
-                _("Company '%s' is not allowed in Monta Configuration.") % company.display_name
-            )
-        return True
