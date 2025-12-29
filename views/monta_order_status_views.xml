@@ -6,7 +6,6 @@
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <!-- Enable delete (was delete="0"); keep create disabled -->
         <list string="Monta Orders" create="0" delete="1" default_order="last_sync desc">
           <field name="order_name"/>
           <field name="sale_order_id"/>
@@ -85,10 +84,13 @@
       <field name="search_view_id" ref="view_monta_order_status_search"/>
     </record>
 
-    <menuitem id="menu_monta_root" name="Monta" sequence="90" groups="base.group_user"/>
-    <menuitem id="menu_monta_order_status" name="Order Status"
-              parent="menu_monta_root" action="action_monta_order_status"
-              sequence="20" groups="base.group_user"/>
+    <!-- ✅ Only ONE Monta app root exists: monta_menu_root (from monta_menu.xml) -->
+    <menuitem id="menu_monta_order_status"
+              name="Order Status"
+              parent="monta_menu_root"
+              action="action_monta_order_status"
+              sequence="20"
+              groups="base.group_user"/>
 
   </data>
 </odoo>
