@@ -4,14 +4,17 @@ from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
 
+
 class SaleOrder(models.Model):
     _inherit = "sale.order"
 
     monta_status = fields.Char(string="Monta Status", copy=False, index=True)
     monta_status_code = fields.Char(string="Monta Status Code", copy=False)
     monta_status_source = fields.Selection(
-        selection=[("shipments","Shipments"),("orderevents","Order Events"),("orders","Orders Header")],
-        string="Monta Status Source", copy=False)
+        selection=[("shipments", "Shipments"), ("orderevents", "Order Events"), ("orders", "Orders Header")],
+        string="Monta Status Source",
+        copy=False,
+    )
     monta_track_trace = fields.Char(string="Monta Track & Trace", copy=False)
     monta_last_sync = fields.Datetime(string="Monta Last Sync", copy=False)
 
@@ -26,7 +29,7 @@ class SaleOrder(models.Model):
 
     @api.model
     def cron_monta_sync_status(self, batch_limit=200):
-        domain = [("state","in",["sale","done"]), ("monta_status","!=", "Shipped")]
+        domain = [("state", "in", ["sale", "done"]), ("monta_status", "!=", "Shipped")]
         orders = self.search(domain, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Cron sync starting for %d orders", len(orders))
         orders._monta_sync_batch()
@@ -35,13 +38,11 @@ class SaleOrder(models.Model):
 
     def _monta_sync_batch(self):
         from ..services.monta_status_resolver import MontaStatusResolver
+
         Snapshot = self.env["monta.order.status"].sudo()
 
-        try:
-            resolver = MontaStatusResolver(self.env)
-        except Exception as e:
-            _logger.exception("[Monta] Resolver init failed (check System Parameters): %s", e)
-            return
+        # Cache resolvers per company (so we don't init one per order)
+        resolver_by_company = {}
 
         for so in self:
             ref = so._monta_candidate_reference()
@@ -49,6 +50,30 @@ class SaleOrder(models.Model):
                 _logger.warning("[Monta] %s has no reference; skipping", so.display_name)
                 continue
 
+            # ---- NEW: company-aware resolver ----
+            company = so.company_id or self.env.company
+            resolver = resolver_by_company.get(company.id)
+            if not resolver:
+                try:
+                    # MontaStatusResolver now reads from Monta Configuration UI per company
+                    resolver = MontaStatusResolver(self.env, company=company)
+                    resolver_by_company[company.id] = resolver
+                except Exception as e:
+                    _logger.exception(
+                        "[Monta] Resolver init failed for company %s (%s): %s",
+                        company.display_name,
+                        company.id,
+                        e,
+                    )
+                    # Optional: mark order as not on Monta
+                    try:
+                        if "monta_on_monta" in so._fields:
+                            so.write({"monta_on_monta": False})
+                    except Exception:
+                        pass
+                    continue
+
+            # Resolve using company-specific Monta configuration
             try:
                 status, meta = resolver.resolve(ref)
             except Exception as e:
@@ -58,7 +83,6 @@ class SaleOrder(models.Model):
             # Not found -> mark as not available on Monta, upsert snapshot with reason
             if not status:
                 try:
-                    # mirror the boolean if field exists
                     if "monta_on_monta" in so._fields:
                         so.write({"monta_on_monta": False})
                     Snapshot.upsert_for_order(
@@ -82,7 +106,7 @@ class SaleOrder(models.Model):
                 "monta_last_sync": fields.Datetime.now(),
             }
 
-            # Optional mirrors if you’ve added them (safe checks)
+            # Optional mirrors if present
             if "monta_order_ref" in so._fields:
                 vals_so["monta_order_ref"] = (meta or {}).get("monta_order_ref")
             if "monta_delivery_message" in so._fields:
@@ -92,7 +116,7 @@ class SaleOrder(models.Model):
             if "monta_status_raw" in so._fields:
                 vals_so["monta_status_raw"] = (meta or {}).get("status_raw")
 
-            # NEW: mirror Available on Monta (true if we have a stable Monta ref)
+            # Mirror Available on Monta (true if we have a stable Monta ref)
             if "monta_on_monta" in so._fields:
                 vals_so["monta_on_monta"] = bool((meta or {}).get("monta_order_ref"))
 

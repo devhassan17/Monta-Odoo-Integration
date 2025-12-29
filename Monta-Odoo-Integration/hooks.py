@@ -1,34 +1,33 @@
 # -*- coding: utf-8 -*-
 from odoo import SUPERUSER_ID
 
+
 # Existing (sales status) cron
-CRON_XMLID  = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
-CRON_NAME   = "Monta: Sync Sales Order Status (half-hourly)"
-CRON_MODEL  = "sale.order"
+CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
+CRON_NAME = "Monta: Sync Sales Order Status (half-hourly)"
+CRON_MODEL = "sale.order"
 CRON_METHOD = "cron_monta_sync_status"
-CRON_CODE   = f"model.{CRON_METHOD}(batch_limit=200)"
+CRON_CODE = f"model.{CRON_METHOD}(batch_limit=200)"
 CRON_INTERVAL_MIN = 30  # minutes
 
-# New crons for stock/qty sync (product model)
-CRON_QTY_XMLID   = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
-CRON_QTY_NAME    = "Monta: Sync StockAvailable + MinStock (6h)"
-CRON_QTY_MODEL   = "product.product"
-CRON_QTY_METHOD  = "cron_monta_qty_sync"
-CRON_QTY_CODE    = f"model.{CRON_QTY_METHOD}()"
-CRON_QTY_HOURS   = 6
+# Stock/qty sync (product model)
+CRON_QTY_XMLID = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
+CRON_QTY_NAME = "Monta: Sync StockAvailable + MinStock (6h)"
+CRON_QTY_MODEL = "product.product"
+CRON_QTY_METHOD = "cron_monta_qty_sync"
+CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
+CRON_QTY_HOURS = 6
 
-CRON_PULL_XMLID  = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
-CRON_PULL_NAME   = "Monta: Pull stock list (/stock) (6h)"
-CRON_PULL_MODEL  = "product.product"
+CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
+CRON_PULL_NAME = "Monta: Pull stock list (/stock) (6h)"
+CRON_PULL_MODEL = "product.product"
 CRON_PULL_METHOD = "cron_monta_stock_pull"
-CRON_PULL_CODE   = f"model.{CRON_PULL_METHOD}()"
-CRON_PULL_HOURS  = 6
+CRON_PULL_CODE = f"model.{CRON_PULL_METHOD}()"
+CRON_PULL_HOURS = 6
+
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):
-    """
-    Create a single cron and its ir.model.data mapping if it doesn't exist.
-    Idempotent: if env.ref(xmlid) exists we skip creation.
-    """
+    """Idempotent cron creation: if env.ref(xmlid) exists -> skip."""
     IrCron = env["ir.cron"].sudo()
     IrModel = env["ir.model"].sudo()
     IrModelData = env["ir.model.data"].sudo()
@@ -41,7 +40,6 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
 
     model_rec = IrModel._get(model)
     if not model_rec:
-        # Model missing in this database; can't create the cron.
         return
 
     cron = IrCron.create({
@@ -66,51 +64,14 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
 
 
 def _ensure_cron(env):
-    """
-    Ensure all crons we need exist.
-    Called from post_init_hook.
-    """
-    # keep the legacy sales-order cron creation
-    _create_cron_record(
-        env,
-        CRON_XMLID,
-        CRON_NAME,
-        CRON_MODEL,
-        CRON_CODE,
-        CRON_INTERVAL_MIN,
-        "minutes",
-    )
-
-    # create the qty-sync cron (6 hours) which calls MontaQtySync via product.product model
-    _create_cron_record(
-        env,
-        CRON_QTY_XMLID,
-        CRON_QTY_NAME,
-        CRON_QTY_MODEL,
-        CRON_QTY_CODE,
-        CRON_QTY_HOURS,
-        "hours",
-    )
-
-    # create the stock-pull cron (6 hours) which calls MontaStockPull wrapper via product.product model
-    _create_cron_record(
-        env,
-        CRON_PULL_XMLID,
-        CRON_PULL_NAME,
-        CRON_PULL_MODEL,
-        CRON_PULL_CODE,
-        CRON_PULL_HOURS,
-        "hours",
-    )
+    _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_INTERVAL_MIN, "minutes")
+    _create_cron_record(env, CRON_QTY_XMLID, CRON_QTY_NAME, CRON_QTY_MODEL, CRON_QTY_CODE, CRON_QTY_HOURS, "hours")
+    _create_cron_record(env, CRON_PULL_XMLID, CRON_PULL_NAME, CRON_PULL_MODEL, CRON_PULL_CODE, CRON_PULL_HOURS, "hours")
 
 
 def _remove_cron(env):
-    """
-    Remove our crons on uninstall. We try env.ref first (preferred), otherwise search by name/code.
-    """
     IrCron = env["ir.cron"].sudo()
 
-    # Try to remove by xmlid references first
     for xmlid in (CRON_XMLID, CRON_QTY_XMLID, CRON_PULL_XMLID):
         try:
             rec = env.ref(xmlid)
@@ -119,12 +80,6 @@ def _remove_cron(env):
         except ValueError:
             pass
 
-    # fallback cleanup by searching similar crons (defensive)
-    fallback_filters = [
-        ("name", "=", CRON_NAME),
-        ("name", "=", CRON_QTY_NAME),
-        ("name", "=", CRON_PULL_NAME),
-    ]
     for name in (CRON_NAME, CRON_QTY_NAME, CRON_PULL_NAME):
         crons = IrCron.search([
             ("name", "=", name),
@@ -135,9 +90,47 @@ def _remove_cron(env):
             crons.unlink()
 
 
-# post-init and uninstall hooks (Odoo expects these names if referenced in manifest)
+def _migrate_icp_to_monta_config(env):
+    """
+    One-time migration: copy existing ir.config_parameter values to monta.config singleton.
+    Safe if already migrated.
+    """
+    ICP = env["ir.config_parameter"].sudo()
+    Config = env["monta.config"].sudo()
+
+    config = Config.search([], limit=1)
+    if not config:
+        config = Config.create({"name": "Monta Configuration"})
+
+    # Only set values if config fields are empty (don’t overwrite UI changes)
+    def _set_if_empty(field, value):
+        if value is None:
+            return
+        if not getattr(config, field):
+            config.write({field: value})
+
+    _set_if_empty("base_url", (ICP.get_param("monta.base_url") or ICP.get_param("monta.api.base_url") or "").strip() or "https://api-v6.monta.nl")
+    _set_if_empty("username", (ICP.get_param("monta.username") or ICP.get_param("monta.api.user") or "").strip())
+    _set_if_empty("password", (ICP.get_param("monta.password") or ICP.get_param("monta.api.password") or "").strip())
+    _set_if_empty("channel", (ICP.get_param("monta.channel") or ICP.get_param("monta.api.channel") or "").strip())
+    _set_if_empty("timeout", int(ICP.get_param("monta.timeout") or ICP.get_param("monta.api.timeout") or 20))
+
+    _set_if_empty("allowed_base_urls", (ICP.get_param("monta.allowed_base_urls") or "").strip())
+    _set_if_empty("origin", (ICP.get_param("monta.origin") or "").strip())
+    _set_if_empty("match_loose", (ICP.get_param("monta.match_loose") or "1").strip() != "0")
+
+    _set_if_empty("warehouse_tz", (ICP.get_param("monta.warehouse_tz") or "Europe/Amsterdam").strip())
+    _set_if_empty("inbound_warehouse_display_name", (ICP.get_param("monta.inbound_warehouse_display_name") or "").strip())
+    _set_if_empty("inbound_enable", (ICP.get_param("monta.inbound_enable") or "").strip().lower() in ("1", "true", "yes", "on"))
+
+    _set_if_empty("supplier_code_override", (ICP.get_param("monta.supplier_code_override") or "").strip())
+    _set_if_empty("supplier_code_map", (ICP.get_param("monta.supplier_code_map") or "{}").strip())
+    _set_if_empty("default_supplier_code", (ICP.get_param("monta.default_supplier_code") or "").strip())
+
+
 def post_init_hook(env):
     _ensure_cron(env)
+    _migrate_icp_to_monta_config(env)
 
 
 def uninstall_hook(env):

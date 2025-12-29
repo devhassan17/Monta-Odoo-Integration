@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Action -->
+    <record id="action_monta_config" model="ir.actions.act_window">
+        <field name="name">Configuration</field>
+        <field name="res_model">monta.config</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+        <!-- open the singleton -->
+        <field name="context">{'default_name': 'Monta Configuration'}</field>
+    </record>
+
+    <!-- View -->
+    <record id="view_monta_config_form" model="ir.ui.view">
+        <field name="name">monta.config.form</field>
+        <field name="model">monta.config</field>
+        <field name="arch" type="xml">
+            <form string="Monta Configuration" create="1" edit="1">
+                <sheet>
+                    <group>
+                        <group string="API Credentials">
+                            <field name="base_url"/>
+                            <field name="username"/>
+                            <field name="password" password="1"/>
+                            <field name="timeout"/>
+                            <field name="channel"/>
+                        </group>
+
+                        <group string="Company / Guard">
+                            <field name="allowed_company_ids" widget="many2many_tags"/>
+                            <field name="allowed_base_urls" placeholder="https://your-odoo.com/, https://another.com/"/>
+                            <field name="origin"/>
+                            <field name="match_loose"/>
+                        </group>
+                    </group>
+
+                    <group string="Inbound Forecast">
+                        <field name="inbound_enable"/>
+                        <field name="warehouse_tz"/>
+                        <field name="inbound_warehouse_display_name"/>
+                        <group string="Supplier Code">
+                            <field name="supplier_code_override"/>
+                            <field name="default_supplier_code"/>
+                            <field name="supplier_code_map" placeholder='{"VENDOR NAME":"SUP123"}'/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Menu: assumes your Monta root menu exists; if your root xmlid differs, change parent -->
+    <menuitem id="menu_monta_config"
+              name="Configuration"
+              parent="Monta-Odoo-Integration.monta_menu_root"
+              action="action_monta_config"
+              sequence="50"
+              groups="base.group_system"/>
+
+</odoo>
