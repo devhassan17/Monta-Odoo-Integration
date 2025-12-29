@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Add Track & Trace (T&T) link column on Portal > My Orders page
+        URL source: sale.order.monta_track_trace
+    -->
+    <template id="portal_my_orders_tnt"
+              inherit_id="sale.portal_my_orders"
+              name="Portal My Orders: Track &amp; Trace">
+
+        <!-- Header: add new column after the last column (Total) -->
+        <xpath expr="//table//thead/tr/th[last()]" position="after">
+            <th class="text-end">T&amp;T</th>
+        </xpath>
+
+        <!-- Row: add new cell after the last cell (Total) -->
+        <xpath expr="//table//tbody/tr/td[last()]" position="after">
+            <td class="text-end">
+                <t t-if="order.monta_track_trace">
+                    <a t-att-href="order.monta_track_trace"
+                       target="_blank"
+                       rel="noopener noreferrer">
+                        Track
+                    </a>
+                </t>
+                <t t-else="">-</t>
+            </td>
+        </xpath>
+
+    </template>
+</odoo>

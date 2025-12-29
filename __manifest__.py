@@ -16,6 +16,7 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
     "images": ["static/description/banner.png"],
     "depends": [
         "sale_management",
+        "portal",
         "mrp",
         "purchase",
     ],
@@ -26,6 +27,7 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
     "views/monta_order_status_views.xml",
     "views/sale_order_monta_sync_button.xml",
     "views/monta_config_views.xml",
+    "views/portal_my_orders_tnt.xml",
 ],
     "installable": True,
     "application": True,
