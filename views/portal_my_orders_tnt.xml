@@ -1,19 +1,19 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version=\"1.0\" encoding=\"utf-8\"?>
 <odoo>
 
     <!-- Extend sale order row rendering in portal -->
-    <template id="portal_sale_order_row_tnt"
-              inherit_id="portal.portal_table_row"
-              name="Portal Sale Order Row: T&amp;T">
+    <template id=\"portal_sale_order_row_tnt\"
+              inherit_id=\"portal.portal_table_row\"
+              name=\"Portal Sale Order Row: T&amp;T\">
 
         <!-- Modify the FIRST column (order name) -->
-        <xpath expr="//td[1]" position="inside">
-            <t t-if="doc._name == 'sale.order' and doc.monta_track_trace">
-                <div class="mt-1">
-                    <a t-att-href="doc.monta_track_trace"
-                       target="_blank"
-                       rel="noopener noreferrer"
-                       class="small text-muted">
+        <xpath expr=\"//td[1]\" position=\"inside\">
+            <t t-if=\"doc._name == 'sale.order' and doc.monta_track_trace\">
+                <div class=\"mt-1\">
+                    <a t-att-href=\"doc.monta_track_trace\"
+                       target=\"_blank\"
+                       rel=\"noopener noreferrer\"
+                       class=\"small text-muted\">
                         Track shipment
                     </a>
                 </div>
