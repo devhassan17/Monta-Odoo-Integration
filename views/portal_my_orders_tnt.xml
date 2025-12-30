@@ -4,22 +4,21 @@
     <!-- Extend portal table headers -->
     <template id="portal_table_headers_tnt"
               inherit_id="portal.portal_table"
-              name="Portal Table Headers: T&T">
+              name="Portal Table Headers: T&amp;T">
 
         <xpath expr="//t[@t-set='headers']" position="inside">
             <t t-if="docs and docs[0]._name == 'sale.order'">
-                <t t-set="headers"
-                   t-value="headers + ['T&amp;T']"/>
+                <!-- IMPORTANT: keep the label as plain text, not XML entities -->
+                <t t-set="headers" t-value="headers + ['T&amp;T']"/>
             </t>
         </xpath>
 
     </template>
 
-
     <!-- Extend portal table rows -->
     <template id="portal_table_row_tnt"
               inherit_id="portal.portal_table_row"
-              name="Portal Table Row: T&T">
+              name="Portal Table Row: T&amp;T">
 
         <xpath expr="//td[last()]" position="after">
             <td t-if="doc and doc._name == 'sale.order'"
