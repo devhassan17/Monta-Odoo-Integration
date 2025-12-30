@@ -1,37 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Extend portal table headers -->
-    <template id="portal_table_headers_tnt"
-              inherit_id="portal.portal_table"
-              name="Portal Table Headers: T&amp;T">
-
-        <xpath expr="//t[@t-set='headers']" position="inside">
-            <t t-if="docs and docs[0]._name == 'sale.order'">
-                <!-- IMPORTANT: keep the label as plain text, not XML entities -->
-                <t t-set="headers" t-value="headers + ['T&amp;T']"/>
-            </t>
-        </xpath>
-
-    </template>
-
-    <!-- Extend portal table rows -->
-    <template id="portal_table_row_tnt"
+    <!-- Extend sale order row rendering in portal -->
+    <template id="portal_sale_order_row_tnt"
               inherit_id="portal.portal_table_row"
-              name="Portal Table Row: T&amp;T">
+              name="Portal Sale Order Row: T&amp;T">
 
-        <xpath expr="//td[last()]" position="after">
-            <td t-if="doc and doc._name == 'sale.order'"
-                class="text-end">
-                <t t-if="doc.monta_track_trace">
+        <!-- Modify the FIRST column (order name) -->
+        <xpath expr="//td[1]" position="inside">
+            <t t-if="doc._name == 'sale.order' and doc.monta_track_trace">
+                <div class="mt-1">
                     <a t-att-href="doc.monta_track_trace"
                        target="_blank"
-                       rel="noopener noreferrer">
-                        Track
+                       rel="noopener noreferrer"
+                       class="small text-muted">
+                        Track shipment
                     </a>
-                </t>
-                <t t-else="">-</t>
-            </td>
+                </div>
+            </t>
         </xpath>
 
     </template>
