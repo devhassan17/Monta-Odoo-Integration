@@ -1,22 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <template id="portal_table_tnt_sale_order"
+    <!-- Extend portal table headers -->
+    <template id="portal_table_headers_tnt"
               inherit_id="portal.portal_table"
-              name="Portal Table: T&amp;T for Sale Orders">
+              name="Portal Table Headers: T&T">
 
-        <!-- HEADER: extend table headers -->
-        <xpath expr="//t[@t-set='table_headers']/tr/th[last()]" position="after">
-            <th class="text-end"
-                t-if="docs and docs[0]._name == 'sale.order'">
-                T&amp;T
-            </th>
+        <xpath expr="//t[@t-set='headers']" position="inside">
+            <t t-if="docs and docs[0]._name == 'sale.order'">
+                <t t-set="headers"
+                   t-value="headers + ['T&amp;T']"/>
+            </t>
         </xpath>
 
-        <!-- ROW: extend table rows -->
-        <xpath expr="//t[@t-set='table_rows']/tr/td[last()]" position="after">
-            <td class="text-end"
-                t-if="doc and doc._name == 'sale.order'">
+    </template>
+
+
+    <!-- Extend portal table rows -->
+    <template id="portal_table_row_tnt"
+              inherit_id="portal.portal_table_row"
+              name="Portal Table Row: T&T">
+
+        <xpath expr="//td[last()]" position="after">
+            <td t-if="doc and doc._name == 'sale.order'"
+                class="text-end">
                 <t t-if="doc.monta_track_trace">
                     <a t-att-href="doc.monta_track_trace"
                        target="_blank"
