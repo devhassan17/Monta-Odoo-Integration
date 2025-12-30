@@ -5,16 +5,16 @@
               inherit_id="portal.portal_table"
               name="Portal Table: T&amp;T for Sale Orders">
 
-        <!-- Add T&T column header -->
-        <xpath expr="//thead/tr/th[last()]" position="after">
+        <!-- HEADER: extend table headers -->
+        <xpath expr="//t[@t-set='table_headers']/tr/th[last()]" position="after">
             <th class="text-end"
                 t-if="docs and docs[0]._name == 'sale.order'">
                 T&amp;T
             </th>
         </xpath>
 
-        <!-- Add T&T column value -->
-        <xpath expr="//tbody/tr/td[last()]" position="after">
+        <!-- ROW: extend table rows -->
+        <xpath expr="//t[@t-set='table_rows']/tr/td[last()]" position="after">
             <td class="text-end"
                 t-if="doc and doc._name == 'sale.order'">
                 <t t-if="doc.monta_track_trace">
