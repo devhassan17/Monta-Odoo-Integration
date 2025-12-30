@@ -1,21 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Inject T&T column into the generic portal documents table -->
-    <template id="portal_my_documents_tnt_sale_order"
-              inherit_id="portal.portal_my_documents"
-              name="Portal Documents: T&amp;T for Sale Orders">
+    <template id="portal_table_tnt_sale_order"
+              inherit_id="portal.portal_table"
+              name="Portal Table: T&amp;T for Sale Orders">
 
-        <!-- Add header column after last header -->
-        <xpath expr="//table//thead/tr/th[last()]" position="after">
+        <!-- Add T&T column header -->
+        <xpath expr="//thead/tr/th[last()]" position="after">
             <th class="text-end"
-                t-if="documents and documents[0]._name == 'sale.order'">
+                t-if="docs and docs[0]._name == 'sale.order'">
                 T&amp;T
             </th>
         </xpath>
 
-        <!-- Add cell after last cell in each row -->
-        <xpath expr="//table//tbody/tr/td[last()]" position="after">
+        <!-- Add T&T column value -->
+        <xpath expr="//tbody/tr/td[last()]" position="after">
             <td class="text-end"
                 t-if="doc and doc._name == 'sale.order'">
                 <t t-if="doc.monta_track_trace">
