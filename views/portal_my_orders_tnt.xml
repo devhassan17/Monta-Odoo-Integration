@@ -1,29 +1,21 @@
-<?xml version="1.0" encoding="utf-8"?>
 <odoo>
+  <template id="portal_sale_order_row_track_trace"
+            inherit_id="portal.portal_my_orders"
+            name="Extend Sale Order Row with Track & Trace Link">
 
-    <template id="portal_sale_order_track_column"
-              inherit_id="sale.portal_my_orders"
-              name="Portal My Orders: Add T&T Column">
+    <!-- Add Track & Trace in the Sales Order column -->
+    <xpath expr="//td[1]" position="inside">
+      <t t-if="doc._name == 'sale.order' and doc.monta_track_trace">
+        <div class="mt-1">
+          <a t-att-href="doc.monta_track_trace"
+             target="_blank"
+             rel="noopener noreferrer"
+             class="small text-muted">
+            Track shipment
+          </a>
+        </div>
+      </t>
+    </xpath>
 
-        <!-- Add header column -->
-        <xpath expr="//thead/tr" position="inside">
-            <th class="text-end">T&amp;T</th>
-        </xpath>
-
-        <!-- Add column content -->
-        <xpath expr="//tbody/tr" position="inside">
-            <td class="text-end">
-                <t t-if="order.monta_track_trace">
-                    <a t-att-href="order.monta_track_trace"
-                       target="_blank"
-                       rel="noopener noreferrer">
-                        Track
-                    </a>
-                </t>
-                <t t-else="">-</t>
-            </td>
-        </xpath>
-
-    </template>
-
+  </template>
 </odoo>
