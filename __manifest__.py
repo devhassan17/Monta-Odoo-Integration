@@ -9,26 +9,28 @@ Monta-Odoo Integration
 This module synchronizes Sales Orders, Inbound Forecasts, Expected Delivery Dates (EDD),
 and stock quantities between Odoo and Monta WMS via Monta's API.
 """,
-    "author": "Atomixweb7",
+    "author": "Atomixweb8",
     "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
     "images": ["static/description/banner.png"],
     "depends": [
         "sale_management",
+        "account",
         "portal",
         "mrp",
         "purchase",
+        "sale_subscription",
     ],
-"data": [
-    "security/ir.model.access.csv",
-    "security/monta_order_status_rules.xml",
-    "views/monta_menu.xml",                 # <-- add this first
-    "views/monta_order_status_views.xml",
-    "views/sale_order_monta_sync_button.xml",
-    "views/monta_config_views.xml",
-    "views/portal_my_orders_tnt.xml",
-],
+    "data": [
+        "security/ir.model.access.csv",
+        "security/monta_order_status_rules.xml",
+        "views/monta_menu.xml",                 # <-- add this first
+        "views/monta_order_status_views.xml",
+        "views/sale_order_monta_sync_button.xml",
+        "views/monta_config_views.xml",
+        "views/portal_my_orders_tnt.xml",
+    ],
     "installable": True,
     "application": True,
     "auto_install": False,

@@ -20,3 +20,4 @@ from . import sale_order_monta_fields
 
 # NEW
 from . import monta_config
+from . import account_move
