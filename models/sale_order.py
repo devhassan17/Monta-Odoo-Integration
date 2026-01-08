@@ -199,6 +199,31 @@ class SaleOrder(models.Model):
     def _monta_create(self):
         self.ensure_one()
         status, body = self._monta_request("POST", "/order", self._prepare_monta_order_payload())
+
+        Status = self.env["monta.order.status"].sudo()
+        account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
+
+        def upsert_snapshot(order_name, state, http_code, raw):
+            vals = {
+                "monta_account_key": account_key,
+                "sale_order_id": self.id,
+                "order_name": order_name,
+                "monta_order_ref": raw.get("OrderRef") or raw.get("orderRef") or raw.get("id") or "",
+                "status": state,
+                "status_code": http_code if http_code is not None else 0,
+                "source": "orders",
+                "last_sync": fields.Datetime.now(),
+                "status_raw": json.dumps(raw or {}, ensure_ascii=False),
+            }
+            domain = [("order_name", "=", order_name)]
+            if account_key:
+                domain.append(("monta_account_key", "=", account_key))
+            rec = Status.search(domain, limit=1)
+            if rec:
+                rec.write(vals)
+            else:
+                Status.create(vals)
+
         if 200 <= status < 300:
             self.write({
                 "monta_order_id": self.name,
@@ -207,7 +232,12 @@ class SaleOrder(models.Model):
                 "monta_needs_sync": False,
                 "monta_retry_count": 0,
             })
+
+            # ✅ Make it appear automatically in Monta → Order Status
+            upsert_snapshot(self.name, "sent", status, body)
+
         else:
+            # Store error state and also show in Order Status (so you can debug easily)
             if self.monta_retry_count < 1:
                 self.write({
                     "monta_sync_state": "error",
@@ -218,9 +248,10 @@ class SaleOrder(models.Model):
                 self.write({
                     "monta_sync_state": "error",
                     "monta_needs_sync": False,
-                    "monta_retry_count": self.monta_retry_count,
                 })
-        return status, body
+
+            upsert_snapshot(self.name, "error", status, body)
+
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
