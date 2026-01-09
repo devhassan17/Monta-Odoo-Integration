@@ -21,7 +21,6 @@ class MontaInboundForecastService(models.AbstractModel):
         cfg = self.env["monta.config"].sudo().get_for_company(company)
         if not cfg:
             return None
-
         base = (cfg.base_url or "https://api-v6.monta.nl").rstrip("/")
         user = (cfg.username or "").strip()
         pwd = (cfg.password or "").strip()
@@ -153,9 +152,6 @@ class MontaInboundForecastService(models.AbstractModel):
             return False
 
         cfg, base, user, pwd, tz, _wh = conf
-        if not cfg.inbound_enable:
-            _logger.info("[Monta IF] Disabled in Monta Configuration — skipping PO %s", po.name)
-            return False
 
         if po.state not in ("purchase", "done"):
             return False
@@ -186,9 +182,7 @@ class MontaInboundForecastService(models.AbstractModel):
         if not conf:
             return False
 
-        cfg, base, user, pwd, _tz, _wh = conf
-        if not cfg.inbound_enable:
-            return False
+        _cfg, base, user, pwd, _tz, _wh = conf
 
         auth = HTTPBasicAuth(user, pwd)
         url = f"{base}/inboundforecast/group/{po.name}"
