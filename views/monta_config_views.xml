@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Server Action (singleton opener) - NEW XML ID -->
+    <!-- Server Action to open singleton config -->
     <record id="action_monta_config_open" model="ir.actions.server">
         <field name="name">Monta Configuration</field>
         <field name="model_id" ref="base.model_res_company"/>
@@ -9,7 +9,7 @@
         <field name="code">action = env['monta.config'].action_open_config()</field>
     </record>
 
-    <!-- Menu now points to the NEW server action -->
+    <!-- Menu points to the server action -->
     <menuitem id="menu_monta_config"
               name="Configuration"
               parent="monta_menu_root"
@@ -30,13 +30,27 @@
                             <field name="username"/>
                             <field name="password" password="True"/>
                             <field name="timeout"/>
+                            <field name="channel"/>
                         </group>
 
                         <group string="General Settings">
                             <field name="origin"/>
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
+                            <field name="match_loose"/>
                         </group>
+                    </group>
+
+                    <group string="Inbound Forecast">
+                        <!-- ✅ This is the missing field -->
+                        <field name="inbound_enable"/>
+                        <field name="warehouse_tz" attrs="{'invisible': [('inbound_enable','=', False)]}"/>
+                        <field name="inbound_warehouse_display_name" attrs="{'invisible': [('inbound_enable','=', False)]}"/>
+
+                        <separator string="Supplier code mapping" colspan="4"/>
+                        <field name="supplier_code_override" attrs="{'invisible': [('inbound_enable','=', False)]}"/>
+                        <field name="default_supplier_code" attrs="{'invisible': [('inbound_enable','=', False)]}"/>
+                        <field name="supplier_code_map" attrs="{'invisible': [('inbound_enable','=', False)]}"/>
                     </group>
                 </sheet>
             </form>
