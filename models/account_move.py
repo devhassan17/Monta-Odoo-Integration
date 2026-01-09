@@ -3,8 +3,7 @@ import json
 import logging
 import re
 
-from odoo import api, fields, models
-from odoo.exceptions import ValidationError
+from odoo import fields, models
 
 _logger = logging.getLogger(__name__)
 
@@ -42,59 +41,48 @@ class AccountMove(models.Model):
 
     def _monta_is_subscription_sale_order(self, so):
         """Best-effort detection of subscription order across setups."""
-        # Some databases have subscription_id, some have is_subscription
         return bool(getattr(so, "subscription_id", False)) or bool(getattr(so, "is_subscription", False))
 
     def _monta_make_webshop_order_id(self, so):
         """Unique order id per renewal cycle."""
-        # Example: SO0234-INV-2026-001 (slashes replaced)
         inv_name = (self.name or "").replace("/", "-")
         so_name = (so.name or "").replace("/", "-")
         return f"{so_name}-{inv_name}"
 
     def _monta_prepare_renewal_payload(self, so, webshop_order_id):
-        """Reuse the sale.order payload generator and override fields for renewal."""
+        """
+        Reuse existing sale.order payload generator and override key fields for renewal.
+        This relies on your existing sale.order integration methods.
+        """
         payload = so._prepare_monta_order_payload()
 
-        # Override OrderId for Monta to make it unique per renewal
+        # unique order id for each renewal
         payload["WebshopOrderId"] = webshop_order_id
 
-        # Reference can be invoice ref or payment reference
+        # set reference
         payload["Reference"] = self.ref or self.payment_reference or so.client_order_ref or ""
 
-        # WebshopFactuurID should be numeric -> take digits from invoice name
+        # numeric invoice id for Monta (digits from invoice name)
         inv_digits = re.sub(r"\D", "", self.name or "")
         payload["WebshopFactuurID"] = int(inv_digits) if inv_digits else 9999
 
         return payload
 
-    def _monta_create_status_snapshot(self, so, order_name, monta_order_ref=None, status=None, status_code=None, source="orders", raw=None):
-        """Create a monta.order.status record so it appears in Monta → Order Status automatically."""
-        Status = self.env["monta.order.status"].sudo()
-        account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
-
-        vals = {
-            "monta_account_key": account_key,
-            "sale_order_id": so.id,
-            "order_name": order_name,
-            "monta_order_ref": monta_order_ref or "",
-            "status": status or "",
-            "status_code": status_code if status_code is not None else 0,
-            "source": source,
-            "last_sync": fields.Datetime.now(),
-            "status_raw": json.dumps(raw or {}, ensure_ascii=False),
-        }
-
-        # Upsert by (order_name, account_key)
-        domain = [("order_name", "=", order_name)]
-        if account_key:
-            domain.append(("monta_account_key", "=", account_key))
-
-        rec = Status.search(domain, limit=1)
-        if rec:
-            rec.write(vals)
-            return rec
-        return Status.create(vals)
+    def _monta_chatter_on_subscription(self, so, title, message_html, success=True):
+        """Post a note in the subscription (sale.order) chatter."""
+        icon = "✅" if success else "❌"
+        body = f"""
+            <p><b>{icon} {title}</b></p>
+            {message_html}
+        """
+        try:
+            so.message_post(
+                body=body,
+                message_type="comment",
+                subtype_xmlid="mail.mt_note",
+            )
+        except Exception:
+            _logger.exception("[Monta Renewal] Failed to post chatter message on %s", so.name)
 
     # -------------------------
     # Main Hook (covers UI + cron)
@@ -111,7 +99,7 @@ class AccountMove(models.Model):
             if not sale_orders:
                 continue
 
-            # Only subscription-related SO
+            # only subscription-related orders
             sub_orders = sale_orders.filtered(lambda so: move._monta_is_subscription_sale_order(so))
             if not sub_orders:
                 continue
@@ -119,6 +107,7 @@ class AccountMove(models.Model):
             pushed_any = False
 
             for so in sub_orders:
+                # keep your existing company/instance guards if present
                 if hasattr(so, "_is_company_allowed") and not so._is_company_allowed():
                     continue
                 if hasattr(so, "_is_allowed_instance") and not so._is_allowed_instance():
@@ -129,44 +118,28 @@ class AccountMove(models.Model):
                 try:
                     payload = move._monta_prepare_renewal_payload(so, webshop_order_id)
 
-                    # Send to Monta using the same internal request method (keeps logs consistent)
+                    # Use your existing request function so it logs in Monta request logs
                     status, body = so._monta_request("POST", "/order", payload)
 
                     if 200 <= status < 300:
                         pushed_any = True
-                        move._monta_create_status_snapshot(
-                            so=so,
-                            order_name=webshop_order_id,
-                            monta_order_ref=body.get("OrderRef") or body.get("orderRef") or body.get("id") or "",
-                            status="sent",
-                            status_code=status,
-                            source="orders",
-                            raw={"invoice": move.name, "response": body},
+                        move._logger_info_success(so, webshop_order_id, status, body)
+                        _logger.info(
+                            "[Monta Renewal] Sent renewal %s for invoice %s",
+                            webshop_order_id,
+                            move.name,
                         )
-                        _logger.info("[Monta Renewal] Sent renewal %s for invoice %s", webshop_order_id, move.name)
                     else:
-                        # Create snapshot anyway so you can see failure in Order Status
-                        move._monta_create_status_snapshot(
-                            so=so,
-                            order_name=webshop_order_id,
-                            monta_order_ref="",
-                            status="error",
-                            status_code=status,
-                            source="orders",
-                            raw={"invoice": move.name, "response": body},
+                        move._logger_info_failure(so, webshop_order_id, status, body)
+                        _logger.warning(
+                            "[Monta Renewal] Failed renewal %s invoice %s status=%s",
+                            webshop_order_id,
+                            move.name,
+                            status,
                         )
-                        _logger.warning("[Monta Renewal] Failed renewal %s invoice %s status=%s", webshop_order_id, move.name, status)
 
                 except Exception as e:
-                    move._monta_create_status_snapshot(
-                        so=so,
-                        order_name=webshop_order_id,
-                        monta_order_ref="",
-                        status="error",
-                        status_code=0,
-                        source="orders",
-                        raw={"invoice": move.name, "exception": str(e)},
-                    )
+                    move._logger_info_exception(so, webshop_order_id, e)
                     _logger.exception("[Monta Renewal] Exception for invoice %s: %s", move.name, e)
 
             if pushed_any:
@@ -177,3 +150,48 @@ class AccountMove(models.Model):
                 })
 
         return res
+
+    # -------------------------
+    # Chatter + debug helpers
+    # -------------------------
+    def _logger_info_success(self, so, webshop_order_id, status, body):
+        self.ensure_one()
+        # chatter
+        self._monta_chatter_on_subscription(
+            so,
+            "Monta Renewal Sent",
+            f"""
+            <p><b>Invoice:</b> {self.name}</p>
+            <p><b>Monta Order ID:</b> {webshop_order_id}</p>
+            <p><b>API Status:</b> {status}</p>
+            """,
+            success=True,
+        )
+
+    def _logger_info_failure(self, so, webshop_order_id, status, body):
+        self.ensure_one()
+        # chatter
+        self._monta_chatter_on_subscription(
+            so,
+            "Monta Renewal Failed",
+            f"""
+            <p><b>Invoice:</b> {self.name}</p>
+            <p><b>Monta Order ID:</b> {webshop_order_id}</p>
+            <p><b>API Status:</b> {status}</p>
+            <p><b>Response:</b> <pre>{json.dumps(body or {}, ensure_ascii=False, indent=2)}</pre></p>
+            """,
+            success=False,
+        )
+
+    def _logger_info_exception(self, so, webshop_order_id, exc):
+        self.ensure_one()
+        self._monta_chatter_on_subscription(
+            so,
+            "Monta Renewal Error",
+            f"""
+            <p><b>Invoice:</b> {self.name}</p>
+            <p><b>Monta Order ID:</b> {webshop_order_id}</p>
+            <p><b>Error:</b> {str(exc)}</p>
+            """,
+            success=False,
+        )
