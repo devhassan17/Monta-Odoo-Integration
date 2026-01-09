@@ -164,10 +164,10 @@ class MontaInboundForecastService(models.AbstractModel):
             _logger.info("[Monta IF] Config missing or company not allowed — skipping PO %s", po.name)
             return False
 
-        cfg, base, user, pwd, tz, _wh = conf
-        if not self._is_inbound_enabled(cfg):
-            _logger.info("[Monta IF] Disabled in Monta Configuration — skipping PO %s", po.name)
-            return False
+        # cfg, base, user, pwd, tz, _wh = conf
+        # if not self._is_inbound_enabled(cfg):
+        #     _logger.info("[Monta IF] Disabled in Monta Configuration — skipping PO %s", po.name)
+        #     return False
 
         if po.state not in ("purchase", "done"):
             return False
