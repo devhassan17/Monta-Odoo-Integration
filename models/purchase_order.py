@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
 import logging
+
 from odoo import models
 
 _logger = logging.getLogger(__name__)
 
+
 class PurchaseOrder(models.Model):
-    _inherit = 'purchase.order'
+    _inherit = "purchase.order"
 
     # Manual trigger (from button or shell)
     def action_monta_push_inbound_forecast(self):
-        svc = self.env['monta.inbound.forecast.service']
+        svc = self.env["monta.inbound.forecast.service"]
         for po in self:
             try:
                 _logger.info("[Monta IF] Start push for PO %s", po.name)
-                ok = svc.send_for_po(po)  # now no instance guard; still respects monta.inbound_enable
+                ok = svc.send_for_po(po)  # respects monta.inbound_enable inside service
                 if ok:
                     _logger.info("[Monta IF] Done push for PO %s", po.name)
                 else:
@@ -35,9 +37,9 @@ class PurchaseOrder(models.Model):
     def write(self, vals):
         res = super().write(vals)
         try:
-            to_push = self.filtered(lambda p: p.state in ('purchase', 'done'))
+            to_push = self.filtered(lambda p: p.state in ("purchase", "done"))
             if to_push:
-                svc = self.env['monta.inbound.forecast.service']
+                svc = self.env["monta.inbound.forecast.service"]
                 for po in to_push:
                     try:
                         svc.send_for_po(po)
@@ -51,7 +53,7 @@ class PurchaseOrder(models.Model):
     def button_cancel(self):
         res = super().button_cancel()
         try:
-            svc = self.env['monta.inbound.forecast.service']
+            svc = self.env["monta.inbound.forecast.service"]
             for po in self:
                 svc.delete_for_po(po, note="Cancelled from Odoo")
         except Exception as e:
@@ -60,7 +62,7 @@ class PurchaseOrder(models.Model):
 
     def unlink(self):
         try:
-            svc = self.env['monta.inbound.forecast.service']
+            svc = self.env["monta.inbound.forecast.service"]
             for po in self:
                 svc.delete_for_po(po, note="Deleted from Odoo (unlink)")
         except Exception as e:

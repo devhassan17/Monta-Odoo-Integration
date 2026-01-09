@@ -20,7 +20,7 @@ class MontaConfig(models.Model):
     # Guards / behavior
     allowed_base_urls = fields.Text(
         string="Allowed Odoo Base URLs",
-        help="Comma-separated list of Odoo web.base.url values allowed to push to Monta. Leave empty to allow all."
+        help="Comma-separated list of Odoo web.base.url values allowed to push to Monta. Leave empty to allow all.",
     )
     origin = fields.Char(string="Origin", help="Optional Monta 'Origin' field (send only if set).")
     match_loose = fields.Boolean(string="Loose Matching", default=True)
@@ -32,7 +32,7 @@ class MontaConfig(models.Model):
         "config_id",
         "company_id",
         string="Allowed Companies",
-        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all companies."
+        help="Only these companies are allowed to push/sync with Monta. Leave empty to allow all companies.",
     )
 
     # Inbound Forecast settings
@@ -49,9 +49,7 @@ class MontaConfig(models.Model):
     # -------------------------
     @api.model
     def get_singleton(self):
-        """
-        Always keep exactly one config record in the DB.
-        """
+        """Always keep exactly one config record in the DB."""
         rec = self.sudo().search([], limit=1)
         if not rec:
             rec = self.sudo().create({"name": "Monta Configuration"})
@@ -59,15 +57,13 @@ class MontaConfig(models.Model):
 
     @api.model
     def get_config(self):
-        """
-        Preferred getter used by services.
-        """
+        """Preferred getter used by services."""
         return self.get_singleton()
 
     @api.model
     def get_for_company(self, company):
         """
-        Backward-compatible helper used by sale_order.py.
+        Backward-compatible helper used by other models.
         Returns config if company is allowed, otherwise None.
         """
         cfg = self.get_singleton()
@@ -76,9 +72,7 @@ class MontaConfig(models.Model):
         return cfg
 
     def ensure_company_allowed(self, company):
-        """
-        Raise if company is not allowed.
-        """
+        """Raise if company is not allowed."""
         cfg = self.get_singleton()
         if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
             raise ValidationError(_("Company '%s' is not allowed in Monta Configuration.") % company.display_name)

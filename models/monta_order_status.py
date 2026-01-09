@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 import hashlib
-import logging
+
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
-
-_logger = logging.getLogger(__name__)
 
 
 def _hash_account(base: str, user: str) -> str:
@@ -19,9 +17,20 @@ class MontaOrderStatus(models.Model):
     _order = "last_sync desc, id desc"
 
     monta_account_key = fields.Char(string="Monta Account Key", index=True)
-    is_current_account = fields.Boolean(string="Current Monta Account", compute="_compute_is_current_account", store=True, index=True)
+    is_current_account = fields.Boolean(
+        string="Current Monta Account",
+        compute="_compute_is_current_account",
+        store=True,
+        index=True,
+    )
 
-    sale_order_id = fields.Many2one("sale.order", string="Sales Order", index=True, ondelete="cascade", required=True)
+    sale_order_id = fields.Many2one(
+        "sale.order",
+        string="Sales Order",
+        index=True,
+        ondelete="cascade",
+        required=True,
+    )
     order_name = fields.Char(string="Order Name", index=True, required=True)
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
@@ -29,7 +38,12 @@ class MontaOrderStatus(models.Model):
     status_code = fields.Integer(string="Status Code")
 
     source = fields.Selection(
-        selection=[("orders", "orders"), ("shipments", "shipments"), ("orderevents", "orderevents"), ("events", "events")],
+        selection=[
+            ("orders", "orders"),
+            ("shipments", "shipments"),
+            ("orderevents", "orderevents"),
+            ("events", "events"),
+        ],
         string="Source",
         default="orders",
         index=True,
@@ -44,9 +58,28 @@ class MontaOrderStatus(models.Model):
     on_monta = fields.Boolean(string="Available on Monta", compute="_compute_on_monta", store=True, index=True)
 
     _sql_constraints = [
-        ("monta_order_unique_per_account", "unique(order_name, monta_account_key)",
-         "Monta order snapshot must be unique per account and order."),
+        (
+            "monta_order_unique_per_account",
+            "unique(order_name, monta_account_key)",
+            "Monta order snapshot must be unique per account and order.",
+        ),
     ]
+
+    # cached per-registry process; avoids hitting information_schema per upsert
+    @api.model
+    def _has_monta_account_key_column(self) -> bool:
+        cache_name = "_monta_has_account_key_col"
+        cached = getattr(self.env.registry, cache_name, None)
+        if cached is not None:
+            return cached
+
+        self.env.cr.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
+            (self._table, "monta_account_key"),
+        )
+        has_col = bool(self.env.cr.fetchone())
+        setattr(self.env.registry, cache_name, has_col)
+        return has_col
 
     @api.model
     def _current_account_key(self) -> str:
@@ -54,14 +87,6 @@ class MontaOrderStatus(models.Model):
         base = (cfg.base_url or "").strip()
         user = (cfg.username or "").strip()
         return _hash_account(base, user) if (base and user) else ""
-
-    @api.model
-    def _db_has_column(self, column_name: str) -> bool:
-        self.env.cr.execute(
-            "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
-            (self._table, column_name),
-        )
-        return bool(self.env.cr.fetchone())
 
     @api.depends("monta_account_key")
     def _compute_is_current_account(self):
@@ -88,13 +113,22 @@ class MontaOrderStatus(models.Model):
             "order_name": so.name,
             "last_sync": vals.get("last_sync") or fields.Datetime.now(),
         }
-        for k in ("status", "status_code", "source", "delivery_message", "track_trace", "delivery_date", "status_raw", "monta_order_ref"):
-            if k in vals and vals.get(k) is not None:
-                base_vals[k] = vals.get(k)
 
-        has_col = self._db_has_column("monta_account_key")
+        for k in (
+            "status",
+            "status_code",
+            "source",
+            "delivery_message",
+            "track_trace",
+            "delivery_date",
+            "status_raw",
+            "monta_order_ref",
+        ):
+            if k in vals and vals[k] is not None:
+                base_vals[k] = vals[k]
+
         domain = [("order_name", "=", so.name)]
-        if has_col:
+        if self._has_monta_account_key_column():
             base_vals["monta_account_key"] = account_key
             domain.append(("monta_account_key", "=", account_key))
 
@@ -102,4 +136,5 @@ class MontaOrderStatus(models.Model):
         if rec:
             rec.write(base_vals)
             return rec
+
         return self.sudo().create(base_vals)

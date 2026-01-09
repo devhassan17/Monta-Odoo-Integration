@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
@@ -50,12 +51,10 @@ class SaleOrder(models.Model):
                 _logger.warning("[Monta] %s has no reference; skipping", so.display_name)
                 continue
 
-            # ---- NEW: company-aware resolver ----
             company = so.company_id or self.env.company
             resolver = resolver_by_company.get(company.id)
             if not resolver:
                 try:
-                    # MontaStatusResolver now reads from Monta Configuration UI per company
                     resolver = MontaStatusResolver(self.env, company=company)
                     resolver_by_company[company.id] = resolver
                 except Exception as e:
@@ -65,7 +64,6 @@ class SaleOrder(models.Model):
                         company.id,
                         e,
                     )
-                    # Optional: mark order as not on Monta
                     try:
                         if "monta_on_monta" in so._fields:
                             so.write({"monta_on_monta": False})
@@ -73,12 +71,14 @@ class SaleOrder(models.Model):
                         pass
                     continue
 
-            # Resolve using company-specific Monta configuration
             try:
                 status, meta = resolver.resolve(ref)
             except Exception as e:
                 _logger.exception("[Monta] %s (%s) -> resolve() failed: %s", so.name, ref, e)
                 continue
+
+            meta = meta or {}
+            now = fields.Datetime.now()
 
             # Not found -> mark as not available on Monta, upsert snapshot with reason
             if not status:
@@ -88,39 +88,38 @@ class SaleOrder(models.Model):
                     Snapshot.upsert_for_order(
                         so,
                         order_status=False,
-                        delivery_message=(meta or {}).get("reason"),
-                        status_raw=(meta or {}).get("status_raw"),
-                        last_sync=fields.Datetime.now(),
+                        delivery_message=meta.get("reason"),
+                        status_raw=meta.get("status_raw"),
+                        last_sync=now,
                     )
                 except Exception:
                     _logger.exception("[Monta] Snapshot upsert failed for %s on not-found", so.name)
+
                 _logger.warning("[Monta] %s (%s) -> no status returned (%s)", so.name, ref, meta)
                 continue
 
-            # Found -> write mirrors on sale.order (including Available on Monta)
             vals_so = {
                 "monta_status": status,
-                "monta_status_code": (meta or {}).get("status_code"),
-                "monta_status_source": (meta or {}).get("source") or "orders",
-                "monta_track_trace": (meta or {}).get("track_trace"),
-                "monta_last_sync": fields.Datetime.now(),
+                "monta_status_code": meta.get("status_code"),
+                "monta_status_source": meta.get("source") or "orders",
+                "monta_track_trace": meta.get("track_trace"),
+                "monta_last_sync": now,
             }
 
             # Optional mirrors if present
             if "monta_order_ref" in so._fields:
-                vals_so["monta_order_ref"] = (meta or {}).get("monta_order_ref")
+                vals_so["monta_order_ref"] = meta.get("monta_order_ref")
             if "monta_delivery_message" in so._fields:
-                vals_so["monta_delivery_message"] = (meta or {}).get("delivery_message")
+                vals_so["monta_delivery_message"] = meta.get("delivery_message")
             if "monta_delivery_date" in so._fields:
-                vals_so["monta_delivery_date"] = (meta or {}).get("delivery_date")
+                vals_so["monta_delivery_date"] = meta.get("delivery_date")
             if "monta_status_raw" in so._fields:
-                vals_so["monta_status_raw"] = (meta or {}).get("status_raw")
+                vals_so["monta_status_raw"] = meta.get("status_raw")
 
             # Mirror Available on Monta (true if we have a stable Monta ref)
             if "monta_on_monta" in so._fields:
-                vals_so["monta_on_monta"] = bool((meta or {}).get("monta_order_ref"))
+                vals_so["monta_on_monta"] = bool(meta.get("monta_order_ref"))
 
-            # Write to SO
             try:
                 so.write(vals_so)
             except Exception as e:
@@ -130,13 +129,13 @@ class SaleOrder(models.Model):
             try:
                 Snapshot.upsert_for_order(
                     so,
-                    monta_order_ref=(meta or {}).get("monta_order_ref") or so.name,
+                    monta_order_ref=meta.get("monta_order_ref") or so.name,
                     order_status=status,
-                    delivery_message=(meta or {}).get("delivery_message"),
-                    track_trace_url=(meta or {}).get("track_trace"),
-                    delivery_date=(meta or {}).get("delivery_date"),
-                    status_raw=(meta or {}).get("status_raw"),
-                    last_sync=fields.Datetime.now(),
+                    delivery_message=meta.get("delivery_message"),
+                    track_trace_url=meta.get("track_trace"),
+                    delivery_date=meta.get("delivery_date"),
+                    status_raw=meta.get("status_raw"),
+                    last_sync=now,
                 )
             except Exception as e:
                 _logger.exception("[Monta] Snapshot upsert failed for %s: %s", so.name, e)

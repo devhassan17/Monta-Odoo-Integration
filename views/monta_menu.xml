@@ -4,6 +4,8 @@
     <!-- Root Monta App Menu -->
     <menuitem id="monta_menu_root"
               name="Monta"
-              sequence="10"/>
+              sequence="10"
+              web_icon="Monta-Odoo-Integration,static/description/icon.png"
+              />
 
 </odoo>

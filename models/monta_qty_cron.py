@@ -1,10 +1,15 @@
+# -*- coding: utf-8 -*-
 # Monta-Odoo-Integration/models/monta_qty_cron.py
 
-from odoo import api, models, SUPERUSER_ID
-from ..services.monta_qty_sync import MontaQtySync
 import logging
 
+from odoo import SUPERUSER_ID, api, models
+
+from ..services.monta_qty_sync import MontaQtySync
+
 _logger = logging.getLogger(__name__)
+
+CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
 
 
 class ProductProduct(models.Model):
@@ -18,7 +23,7 @@ class ProductProduct(models.Model):
         NOTE: Do NOT call self.env.sudo() here (safe_eval context can complain).
         The service already sudo()s only on the models that need it (ICP, etc.).
         """
-        _logger.info("Running Monta Qty Sync (limit=%s)", limit)
+        _logger.info("[Monta Qty Sync] Starting (limit=%s)", limit)
         MontaQtySync(self.env).run(limit=limit)
 
 
@@ -28,10 +33,13 @@ def post_init_hook(cr, registry):
     You may already have the cron from earlier – that's fine.
     """
     env = api.Environment(cr, SUPERUSER_ID, {})
-    cron_xmlid = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
-    cron = env.ref(cron_xmlid, raise_if_not_found=False)
-    if not cron:
-        cron = env["ir.cron"].create({
+    cron = env.ref(CRON_XMLID, raise_if_not_found=False)
+    if cron:
+        _logger.info("[Monta Qty Sync] Cron already exists (id=%s)", cron.id)
+        return
+
+    cron = env["ir.cron"].create(
+        {
             "name": "Monta: Sync StockAvailable + MinStock (6h)",
             "model_id": env.ref("product.model_product_product").id,
             "state": "code",
@@ -39,7 +47,6 @@ def post_init_hook(cr, registry):
             "interval_number": 6,
             "interval_type": "hours",
             "active": True,
-        })
-        _logger.info("✅ Created Monta stock sync cron (id=%s)", cron.id)
-    else:
-        _logger.info("ℹ️ Monta stock sync cron already exists (id=%s)", cron.id)
+        }
+    )
+    _logger.info("[Monta Qty Sync] Created cron (id=%s)", cron.id)

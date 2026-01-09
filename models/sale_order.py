@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 import json
-import re
 import logging
+import re
 from collections import defaultdict
 
-from odoo import models, fields
+from odoo import fields, models
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
 from ..utils.address import split_street
+from ..utils.pack import expand_to_leaf_components
 from ..utils.sku import resolve_sku
-from ..utils.pack import expand_to_leaf_components, is_pack_like, get_pack_components
 
 _logger = logging.getLogger(__name__)
 
@@ -19,13 +19,17 @@ class SaleOrder(models.Model):
     _inherit = "sale.order"
 
     monta_order_id = fields.Char(copy=False, index=True)
-    monta_sync_state = fields.Selection([
-        ("draft", "Draft"),
-        ("sent", "Sent"),
-        ("updated", "Updated"),
-        ("cancelled", "Cancelled"),
-        ("error", "Error"),
-    ], default="draft", copy=False)
+    monta_sync_state = fields.Selection(
+        [
+            ("draft", "Draft"),
+            ("sent", "Sent"),
+            ("updated", "Updated"),
+            ("cancelled", "Cancelled"),
+            ("error", "Error"),
+        ],
+        default="draft",
+        copy=False,
+    )
     monta_last_push = fields.Datetime(copy=False)
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
@@ -69,28 +73,36 @@ class SaleOrder(models.Model):
             return True
 
         allowed_list = [u.strip().rstrip("/") + "/" for u in allowed_conf.split(",") if u.strip()]
-        ok = (web_url.lower() in [a.lower() for a in allowed_list])
+        allowed_lower = {a.lower() for a in allowed_list}
+        ok = web_url.lower() in allowed_lower
+
         if not ok:
             _logger.warning("[Monta Guard] Blocked. web.base.url=%s allowed_list=%s", web_url, allowed_list)
             self._create_monta_log(
                 {"guard": {"web_base_url": web_url, "allowed_list": allowed_list, "blocked": True}},
-                level="info", tag="Monta Guard", console_summary="[Monta Guard] blocked by instance URL"
+                level="info",
+                tag="Monta Guard",
+                console_summary="[Monta Guard] blocked by instance URL",
             )
         return ok
 
     def _create_monta_log(self, payload, level="info", tag="Monta API", console_summary=None):
         self.ensure_one()
         valid_level = "info" if level == "warning" else level
-        self.env["monta.sale.log"].sudo().create({
-            "sale_order_id": self.id,
-            "log_data": json.dumps(payload, indent=2, default=str),
-            "level": valid_level,
-            "name": f"{tag} {self.name} - {valid_level}",
-        })
+
+        self.env["monta.sale.log"].sudo().create(
+            {
+                "sale_order_id": self.id,
+                "log_data": json.dumps(payload, indent=2, default=str, ensure_ascii=False),
+                "level": valid_level,
+                "name": f"{tag} {self.name} - {valid_level}",
+            }
+        )
         (_logger.info if valid_level == "info" else _logger.error)(f"[{tag}] {console_summary or self.name}")
 
     def _prepare_monta_lines(self):
         from math import isfinite
+
         sku_qty = defaultdict(float)
         missing = []
 
@@ -98,6 +110,7 @@ class SaleOrder(models.Model):
             p = l.product_id
             if not p:
                 continue
+
             qty = float(l.product_uom_qty or 0.0)
             if qty <= 0:
                 continue
@@ -108,21 +121,27 @@ class SaleOrder(models.Model):
                 continue
 
             for comp, q in leaves:
-                sku, _ = resolve_sku(comp, env=self.env, allow_synthetic=False)
+                sku, _src = resolve_sku(comp, env=self.env, allow_synthetic=False)
                 if not sku:
                     missing.append(f"Component '{comp.display_name}' is missing a real SKU.")
                     continue
+
                 try:
                     qv = float(q or 0.0)
                     if not isfinite(qv):
                         qv = 0.0
                 except Exception:
                     qv = 0.0
+
                 sku_qty[sku] += qv
 
         if missing:
-            self._create_monta_log({"missing_skus": missing}, level="error", tag="Monta SKU check",
-                                   console_summary=f"[Monta SKU check] {len(missing)} missing")
+            self._create_monta_log(
+                {"missing_skus": missing},
+                level="error",
+                tag="Monta SKU check",
+                console_summary=f"[Monta SKU check] {len(missing)} missing",
+            )
             raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
 
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
@@ -139,39 +158,34 @@ class SaleOrder(models.Model):
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or "", partner.street2 or "")
         lines = self._prepare_monta_lines()
+
         invoice_id_digits = re.sub(r"\D", "", self.name or "")
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
+
+        full_name = partner.name or ""
+        first_name = full_name.split(" ")[0] if full_name else ""
+        last_name = " ".join(full_name.split(" ")[1:]) if len(full_name.split(" ")) > 1 else ""
+
+        addr_common = {
+            "Company": partner.company_name or partner.name or "",
+            "FirstName": first_name,
+            "LastName": last_name,
+            "Street": street,
+            "HouseNumber": house_number or "1",
+            "HouseNumberAddition": house_suffix or "",
+            "PostalCode": partner.zip or "0000AA",
+            "City": partner.city or "TestCity",
+            "CountryCode": partner.country_id.code if partner.country_id else "NL",
+            "PhoneNumber": partner.phone or "0000000000",
+            "EmailAddress": partner.email or "test@example.com",
+        }
 
         payload = {
             "WebshopOrderId": self.name,
             "Reference": self.client_order_ref or "",
             "ConsumerDetails": {
-                "DeliveryAddress": {
-                    "Company": partner.company_name or partner.name or "",
-                    "FirstName": partner.name.split(" ")[0] if partner.name else "",
-                    "LastName": " ".join((partner.name or "").split(" ")[1:]) if len((partner.name or "").split(" ")) > 1 else "",
-                    "Street": street,
-                    "HouseNumber": house_number or "1",
-                    "HouseNumberAddition": house_suffix or "",
-                    "PostalCode": partner.zip or "0000AA",
-                    "City": partner.city or "TestCity",
-                    "CountryCode": partner.country_id.code if partner.country_id else "NL",
-                    "PhoneNumber": partner.phone or "0000000000",
-                    "EmailAddress": partner.email or "test@example.com",
-                },
-                "InvoiceAddress": {
-                    "Company": partner.company_name or partner.name or "",
-                    "FirstName": partner.name.split(" ")[0] if partner.name else "",
-                    "LastName": " ".join((partner.name or "").split(" ")[1:]) if len((partner.name or "").split(" ")) > 1 else "",
-                    "Street": street,
-                    "HouseNumber": house_number or "1",
-                    "HouseNumberAddition": house_suffix or "",
-                    "PostalCode": partner.zip or "0000AA",
-                    "City": partner.city or "TestCity",
-                    "CountryCode": partner.country_id.code if partner.country_id else "NL",
-                    "PhoneNumber": partner.phone or "0000000000",
-                    "EmailAddress": partner.email or "test@example.com",
-                },
+                "DeliveryAddress": dict(addr_common),
+                "InvoiceAddress": dict(addr_common),
             },
             "Lines": lines,
             "Invoice": {
@@ -204,54 +218,64 @@ class SaleOrder(models.Model):
         account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
 
         def upsert_snapshot(order_name, state, http_code, raw):
+            now = fields.Datetime.now()
             vals = {
                 "monta_account_key": account_key,
                 "sale_order_id": self.id,
                 "order_name": order_name,
-                "monta_order_ref": raw.get("OrderRef") or raw.get("orderRef") or raw.get("id") or "",
+                "monta_order_ref": (raw or {}).get("OrderRef")
+                or (raw or {}).get("orderRef")
+                or (raw or {}).get("id")
+                or "",
                 "status": state,
                 "status_code": http_code if http_code is not None else 0,
                 "source": "orders",
-                "last_sync": fields.Datetime.now(),
+                "last_sync": now,
                 "status_raw": json.dumps(raw or {}, ensure_ascii=False),
             }
             domain = [("order_name", "=", order_name)]
             if account_key:
                 domain.append(("monta_account_key", "=", account_key))
+
             rec = Status.search(domain, limit=1)
             if rec:
                 rec.write(vals)
             else:
                 Status.create(vals)
 
-        if 200 <= status < 300:
-            self.write({
-                "monta_order_id": self.name,
-                "monta_sync_state": "sent",
-                "monta_last_push": fields.Datetime.now(),
-                "monta_needs_sync": False,
-                "monta_retry_count": 0,
-            })
+        now = fields.Datetime.now()
 
-            # ✅ Make it appear automatically in Monta → Order Status
+        if 200 <= status < 300:
+            self.write(
+                {
+                    "monta_order_id": self.name,
+                    "monta_sync_state": "sent",
+                    "monta_last_push": now,
+                    "monta_needs_sync": False,
+                    "monta_retry_count": 0,
+                }
+            )
+            # Make it appear automatically in Monta → Order Status
             upsert_snapshot(self.name, "sent", status, body)
 
         else:
             # Store error state and also show in Order Status (so you can debug easily)
             if self.monta_retry_count < 1:
-                self.write({
-                    "monta_sync_state": "error",
-                    "monta_needs_sync": True,
-                    "monta_retry_count": self.monta_retry_count + 1,
-                })
+                self.write(
+                    {
+                        "monta_sync_state": "error",
+                        "monta_needs_sync": True,
+                        "monta_retry_count": self.monta_retry_count + 1,
+                    }
+                )
             else:
-                self.write({
-                    "monta_sync_state": "error",
-                    "monta_needs_sync": False,
-                })
-
+                self.write(
+                    {
+                        "monta_sync_state": "error",
+                        "monta_needs_sync": False,
+                    }
+                )
             upsert_snapshot(self.name, "error", status, body)
-
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
@@ -273,7 +297,7 @@ class SaleOrder(models.Model):
 
         res = super().write(vals)
 
-        for order in self.filtered(lambda o: o.state in ("sale", "done") and o.monta_needs_sync and o.state != "cancel"):
+        for order in self.filtered(lambda o: o.state in ("sale", "done") and o.monta_needs_sync):
             if not order._is_company_allowed():
                 continue
             if order._should_push_now():
