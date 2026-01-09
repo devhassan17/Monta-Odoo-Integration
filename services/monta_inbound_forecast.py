@@ -29,18 +29,6 @@ class MontaInboundForecastService(models.AbstractModel):
         wh_display = (cfg.inbound_warehouse_display_name or "").strip()
         return cfg, base, user, pwd, tz, wh_display
 
-    def _is_inbound_enabled(self, cfg):
-        """
-        Keep behavior: prefer config checkbox.
-        Add backward-compatible fallback to old System Parameter monta.inbound_enable.
-        """
-        if bool(cfg.inbound_enable):
-            return True
-
-        ICP = self.env["ir.config_parameter"].sudo()
-        old = (ICP.get_param("monta.inbound_enable") or "").strip()
-        return old in ("1", "true", "True", "yes", "YES")
-
     def _supplier_code_for(self, cfg, partner):
         override = (cfg.supplier_code_override or "").strip()
         if override:
@@ -164,10 +152,10 @@ class MontaInboundForecastService(models.AbstractModel):
             _logger.info("[Monta IF] Config missing or company not allowed — skipping PO %s", po.name)
             return False
 
-        # cfg, base, user, pwd, tz, _wh = conf
-        # if not self._is_inbound_enabled(cfg):
-        #     _logger.info("[Monta IF] Disabled in Monta Configuration — skipping PO %s", po.name)
-        #     return False
+        cfg, base, user, pwd, tz, _wh = conf
+        if not cfg.inbound_enable:
+            _logger.info("[Monta IF] Disabled in Monta Configuration — skipping PO %s", po.name)
+            return False
 
         if po.state not in ("purchase", "done"):
             return False
@@ -199,7 +187,7 @@ class MontaInboundForecastService(models.AbstractModel):
             return False
 
         cfg, base, user, pwd, _tz, _wh = conf
-        if not self._is_inbound_enabled(cfg):
+        if not cfg.inbound_enable:
             return False
 
         auth = HTTPBasicAuth(user, pwd)
