@@ -1,114 +1,92 @@
 <section class="oe_container">
   <div class="oe_row oe_spaced">
-    <h2>Monta NL - Odoo Integration</h2>
-    <h3>Seamless order synchronization and logistics automation between Monta and Odoo</h3>
+    <h2>Monta NL – Odoo Integration</h2>
+    <h3>Automated order synchronization and fulfilment connection between Monta and Odoo</h3>
     <p>
-      This module connects your Odoo system with Monta NL (Warehouse and Fulfilment platform)
-      and keeps orders, tracking, and shipment data synchronized in real time.
-      It supports pulling orders from Monta into Odoo and can be extended to send order updates back to Monta.
+      This module connects your Odoo system with Monta NL (Warehouse and Fulfilment platform) to automate
+      the synchronization of orders, shipping details, and fulfilment statuses.
+      It ensures your logistics process stays connected, accurate, and up to date.
+    </p>
+    <p>
+      Orders from Monta can be pulled into Odoo, and Odoo orders (including subscription renewals)
+      are automatically pushed to Monta, removing the need for manual data entry.
     </p>
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>Features</h3>
+    <h3>Key Features</h3>
     <ul>
-      <li>Automatic synchronization of orders from Monta to Odoo.</li>
-      <li>Prevention of duplicate orders via order reference matching.</li>
-      <li>Real-time Monta status, tracking code, and sync timestamp fields in Odoo Sales Orders.</li>
-      <li>Manual or scheduled synchronization options.</li>
-      <li>Configurable connection parameters using Odoo’s System Parameters.</li>
-      <li>Detailed error logging for debugging and security.</li>
+      <li>Automatic synchronization of orders between Monta and Odoo.</li>
+      <li>Automatic creation of Monta orders when Odoo subscription orders renew.</li>
+      <li>Prevention of duplicate orders using Monta order references.</li>
+      <li>Sync of Monta order status, tracking numbers, and fulfilment details into Odoo.</li>
+      <li>Manual and scheduled synchronization options.</li>
+      <li>Dedicated configuration panel inside Odoo.</li>
+      <li>Detailed and secure error logging.</li>
     </ul>
-  </div>
-
-  <div class="oe_row oe_spaced">
-    <div class="oe_picture">
-      <!-- Show cover or overview image -->
-      <img src="./cover.png" alt="Monta Odoo Integration Overview" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
-    </div>
   </div>
 
   <div class="oe_row oe_spaced">
     <h3>Configuration</h3>
     <p>
-      Go to <strong>Settings → General Settings → Monta Integration</strong> and fill in the fields below.
-      These values are stored as System Parameters.
+      The module includes its own configuration menu where all Monta connection and access settings
+      can be managed easily from the Odoo interface.
     </p>
-    <table class="table table-sm table-bordered">
-      <thead>
-        <tr>
-          <th>Parameter Key</th>
-          <th>Description</th>
-          <th>Example / Default</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>monta.username</code></td>
-          <td>Monta API username</td>
-          <td><code>moyeeMONTAUSER</code></td>
-        </tr>
-        <tr>
-          <td><code>monta.password</code></td>
-          <td>Monta API password (sensitive)</td>
-          <td>••••••••</td>
-        </tr>
-        <tr>
-          <td><code>monta.base_url</code></td>
-          <td>Base Monta API URL</td>
-          <td><code>https://api-v6.monta.nl/</code></td>
-        </tr>
-        <tr>
-          <td><code>monta.timeout</code></td>
-          <td>HTTP timeout in seconds</td>
-          <td><code>30</code></td>
-        </tr>
-          <tr>
-          <td><code>monta.inbound_enable</code></td>
-          <td>To Enable Inbound Orders</td>
-          <td><code>1</code></td>
-        </tr>
-      </tbody>
-    </table>
 
     <p>
-      <strong>Note:</strong> You can also configure these directly in
-      <em>Settings → Technical → System Parameters</em> if you prefer.
+      Navigate to:
+      <br/>
+      <strong>Monta → Configuration → Monta Configuration</strong>
+    </p>
+
+    <p>
+      From there, you can configure:
+    </p>
+
+    <ul>
+      <li>Monta API Base URL</li>
+      <li>API Username and Password</li>
+      <li>Request timeout</li>
+      <li>Allowed Odoo base URLs</li>
+      <li>Allowed companies for Monta operations</li>
+      <li>Security origin settings</li>
+    </ul>
+
+    <p>
+      All settings are managed from a structured form view, making setup simple, secure, and fully controlled
+      from within Odoo — no technical configuration or system parameters are required.
     </p>
   </div>
 
   <div class="oe_row oe_spaced">
-    <div class="oe_picture">
-      <img src="./Module Overview.png" alt="Monta Odoo Integration Settings" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
-    </div>
+    <h3>Subscription Order Automation</h3>
+    <p>
+      This module supports automated fulfilment for Odoo Subscriptions.
+      Whenever a subscription renews and generates a new sales order, the order is automatically
+      sent to Monta without any manual action.
+    </p>
+    <p>
+      This allows businesses running recurring shipments to fully automate their warehouse and fulfilment flow.
+    </p>
   </div>
 
   <div class="oe_row oe_spaced">
     <h3>Security Notes</h3>
     <ul>
-      <li>
-        The Monta password is stored in plain text within Odoo’s <code>ir.config_parameter</code>.
-        Restrict database and backend access to administrators only.
-      </li>
-      <li>
-        All communication with Monta should use HTTPS to keep credentials and order data secure.
-      </li>
-      <li>
-        Errors and failed API calls are logged in <code>ir.logging</code> without revealing sensitive details.
-      </li>
-      <li>
-        Never log full URLs containing your password or username.
-      </li>
+      <li>API credentials are securely stored and only accessible to authorized Odoo users.</li>
+      <li>All communication with Monta uses HTTPS.</li>
+      <li>Errors and API failures are logged for troubleshooting without exposing sensitive data.</li>
+      <li>It is recommended to restrict access to the Monta configuration menu to administrators only.</li>
     </ul>
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>Technical Details</h3>
+    <h3>Technical Overview</h3>
     <ul>
-      <li>API Client implemented in <code>services/monta_client.py</code>.</li>
-      <li>Configurable timeout parameter via System Parameters.</li>
-      <li>Supports GET and POST requests with secure Basic Authentication.</li>
-      <li>Error logging implemented via Odoo’s <code>ir.logging</code> model.</li>
+      <li>Centralized Monta API client for all requests.</li>
+      <li>Configurable timeouts and secure authentication.</li>
+      <li>Supports automated background jobs and manual triggers.</li>
+      <li>Integrated logging for monitoring and debugging.</li>
     </ul>
   </div>
 
@@ -116,29 +94,28 @@
     <h3>Installation Requirements</h3>
     <ul>
       <li>Odoo 18.0</li>
-      <li>Python package <code>requests</code> installed</li>
-      <li>Access to Monta API account credentials</li>
+      <li>Python package <code>requests</code></li>
+      <li>Active Monta API credentials</li>
     </ul>
   </div>
 
   <div class="oe_row oe_spaced">
-    <h3>Example Use Case</h3>
-    <p>
-      Once credentials are configured, the module fetches orders from Monta using the API endpoint
-      <code>/orders?orderNumber=...</code>. Orders are automatically created in Odoo Sales Orders,
-      including Monta reference, status, and tracking details.
-    </p>
+    <h3>Example Workflow</h3>
+    <ul>
+      <li>Configure Monta credentials from the Monta Configuration menu.</li>
+      <li>Create or sync sales orders in Odoo.</li>
+      <li>Orders are automatically sent to Monta for fulfilment.</li>
+      <li>Monta returns status updates and tracking details.</li>
+      <li>Odoo orders are updated in real time.</li>
+    </ul>
   </div>
-<div class="oe_row oe_spaced">
-    <div class="oe_picture">
-      <img src="./Monta Order Dashboard.png" alt="Monta Odoo Integration Dashboard" style="max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #fff;" />
-    </div>
-  </div>
+
   <div class="oe_row oe_spaced">
     <h3>Support</h3>
     <p>
-      For questions or assistance, contact your system administrator or the integration developer at
-      <a href="mailto:programmer.alihassan@gmail.com">programmer.alihassan@gmail.com</a>.
+      For support, customization, or questions, contact the module developer at:
+      <br/>
+      <a href="mailto:programmer.alihassan@gmail.com">programmer.alihassan@gmail.com</a>
     </p>
   </div>
 </section>
