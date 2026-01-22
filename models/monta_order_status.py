@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import hashlib
+
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
@@ -56,6 +57,12 @@ class MontaOrderStatus(models.Model):
     status_raw = fields.Text(string="Raw Status (JSON)")
     on_monta = fields.Boolean(string="Available on Monta", compute="_compute_on_monta", store=True, index=True)
 
+    manual_send_available = fields.Boolean(
+        string="Show Send to Monta Button",
+        compute="_compute_manual_send_available",
+        store=True,
+    )
+
     _sql_constraints = [
         (
             "monta_order_unique_per_account",
@@ -64,19 +71,21 @@ class MontaOrderStatus(models.Model):
         ),
     ]
 
-    def action_manual_send_to_monta(self):
-        for record in self:
-            if record.sale_order_id and not record.sale_order_id.monta_order_id:
-                record.sale_order_id._monta_create()
-
     @api.depends("sale_order_id.monta_order_id")
     def _compute_manual_send_available(self):
-        for record in self:
-            record.manual_send_available = bool(record.sale_order_id and not record.sale_order_id.monta_order_id)
+        for rec in self:
+            rec.manual_send_available = not bool(rec.sale_order_id.monta_order_id)
 
-    manual_send_available = fields.Boolean(
-        compute="_compute_manual_send_available", store=False
-    )
+    @api.depends("monta_order_ref")
+    def _compute_on_monta(self):
+        for r in self:
+            r.on_monta = bool((r.monta_order_ref or "").strip())
+
+    @api.depends("monta_account_key")
+    def _compute_is_current_account(self):
+        cur = self._current_account_key()
+        for r in self:
+            r.is_current_account = bool(cur) and (r.monta_account_key == cur)
 
     @api.model
     def _has_monta_account_key_column(self) -> bool:
@@ -84,7 +93,6 @@ class MontaOrderStatus(models.Model):
         cached = getattr(self.env.registry, cache_name, None)
         if cached is not None:
             return cached
-
         self.env.cr.execute(
             "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
             (self._table, "monta_account_key"),
@@ -100,22 +108,10 @@ class MontaOrderStatus(models.Model):
         user = (cfg.username or "").strip()
         return _hash_account(base, user) if (base and user) else ""
 
-    @api.depends("monta_account_key")
-    def _compute_is_current_account(self):
-        cur = self._current_account_key()
-        for r in self:
-            r.is_current_account = bool(cur) and (r.monta_account_key == cur)
-
-    @api.depends("monta_order_ref")
-    def _compute_on_monta(self):
-        for r in self:
-            r.on_monta = bool((r.monta_order_ref or "").strip())
-
     @api.model
     def upsert_for_order(self, so, **vals):
         if not so or not so.id:
             raise ValueError("upsert_for_order requires a valid sale.order")
-
         account_key = self._current_account_key()
         if not account_key:
             raise ValidationError(_("Monta credentials are not configured."))
@@ -125,7 +121,6 @@ class MontaOrderStatus(models.Model):
             "order_name": so.name,
             "last_sync": vals.get("last_sync") or fields.Datetime.now(),
         }
-
         for k in (
             "status",
             "status_code",
@@ -148,5 +143,15 @@ class MontaOrderStatus(models.Model):
         if rec:
             rec.write(base_vals)
             return rec
-
         return self.sudo().create(base_vals)
+
+    def action_manual_send_to_monta(self):
+        for rec in self:
+            if not rec.sale_order_id:
+                continue
+            try:
+                rec.sale_order_id.with_context(force_send_to_monta=True)._action_send_to_monta()
+                message = _("Order manually sent to Monta.")
+            except Exception as e:
+                message = _("Failed to send order to Monta: %s") % str(e)
+            rec.sale_order_id.message_post(body=message, subtype_xmlid="mail.mt_note")
