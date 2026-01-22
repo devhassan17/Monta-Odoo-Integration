@@ -25,7 +25,20 @@
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
         <form string="Monta Order">
+
+          <!-- ✅ Button area -->
+          <header>
+            <button name="action_manual_send_to_monta"
+                    type="object"
+                    string="Send to Monta"
+                    class="btn-primary"
+                    invisible="on_monta == True"/>
+          </header>
+
           <sheet>
+            <!-- ✅ Ensure field used in invisible attrs is loaded -->
+            <field name="on_monta" invisible="1"/>
+
             <group>
               <group>
                 <field name="order_name" readonly="1"/>

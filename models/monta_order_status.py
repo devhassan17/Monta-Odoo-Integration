@@ -140,9 +140,14 @@ class MontaOrderStatus(models.Model):
     def action_manual_send_to_monta(self):
         for record in self:
             sale_order = record.sale_order_id
+            if not sale_order:
+                continue
+
             try:
-                # This assumes your sale.order model implements _action_send_to_monta()
+                # Assumes sale.order implements _action_send_to_monta()
                 sale_order.with_context(force_send_to_monta=True)._action_send_to_monta()
                 sale_order.message_post(body="✅ Order sent to Monta manually from Monta Order Status.")
             except Exception as e:
                 sale_order.message_post(body=f"❌ Order failed to send to Monta manually: {e}")
+
+        return True
