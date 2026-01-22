@@ -16,11 +16,6 @@
           <field name="track_trace" widget="url"/>
           <field name="delivery_date"/>
           <field name="last_sync"/>
-          <button name="action_manual_send_to_monta"
-                  string="Send to Monta"
-                  type="object"
-                  if="not sale_order_id.monta_order_id"
-                  class="btn btn-primary"/>
         </list>
       </field>
     </record>
