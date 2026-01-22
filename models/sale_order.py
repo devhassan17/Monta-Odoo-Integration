@@ -4,7 +4,7 @@ import logging
 import re
 from collections import defaultdict
 
-from odoo import api, fields, models, _
+from odoo import fields, models, _
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
@@ -212,10 +212,12 @@ class SaleOrder(models.Model):
         Status = self.env["monta.order.status"].sudo()
         account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
 
+        # ✅ FIX: Upsert snapshot without creating duplicates (even if old row has monta_account_key = False)
         def upsert_snapshot(order_name, state, http_code, raw):
             now = fields.Datetime.now()
+
             vals = {
-                "monta_account_key": account_key,
+                "monta_account_key": account_key or False,
                 "sale_order_id": self.id,
                 "order_name": order_name,
                 "monta_order_ref": (raw or {}).get("OrderRef")
@@ -228,9 +230,27 @@ class SaleOrder(models.Model):
                 "last_sync": now,
                 "status_raw": json.dumps(raw or {}, ensure_ascii=False),
             }
+
+            # If account_key column exists, match:
+            #   (order_name == X) AND (monta_account_key == current_key OR monta_account_key is False)
+            # This updates old snapshots that were created without a key, preventing duplicates.
             domain = [("order_name", "=", order_name)]
-            if account_key:
-                domain.append(("monta_account_key", "=", account_key))
+            try:
+                if (
+                    account_key
+                    and hasattr(Status, "_has_monta_account_key_column")
+                    and Status._has_monta_account_key_column()
+                ):
+                    domain = [
+                        "&",
+                        ("order_name", "=", order_name),
+                        "|",
+                        ("monta_account_key", "=", account_key),
+                        ("monta_account_key", "=", False),
+                    ]
+            except Exception:
+                # fallback to simple match
+                domain = [("order_name", "=", order_name)]
 
             rec = Status.search(domain, limit=1)
             if rec:
@@ -307,11 +327,11 @@ class SaleOrder(models.Model):
         return res
 
     # ---------------------------------------------------------------------
-    # ✅ Added wrapper for Monta Order Status button (so no AttributeError)
+    # ✅ Wrapper method expected by monta.order.status button
     # ---------------------------------------------------------------------
     def _action_send_to_monta(self):
         """
-        Called from monta.order.status button (and can be reused elsewhere).
+        Called from monta.order.status button.
         Supports force send using context key: force_send_to_monta=True
         """
         for order in self:
@@ -319,30 +339,21 @@ class SaleOrder(models.Model):
                 continue
 
             force = bool(order.env.context.get("force_send_to_monta"))
-            # If not forcing and already sent, do nothing
             if not force and order.monta_order_id:
+                # already sent and not forcing -> do nothing
                 continue
 
-            # If forcing, allow retry even if previously error/blocked by retry_count
             if force:
-                order.write(
-                    {
-                        "monta_needs_sync": False,
-                        "monta_retry_count": 0,
-                    }
-                )
+                # reset retry so manual action always tries
+                order.write({"monta_needs_sync": False, "monta_retry_count": 0})
 
             order._monta_create()
 
         return True
 
     # ---------------------------------------------------------------------
-    # ✅ Manual action (used from sale order UI if needed)
+    # ✅ Manual send from Sale Order (if you call from SO UI)
     # ---------------------------------------------------------------------
     def action_manual_send_to_monta(self):
-        """
-        Manual send from Sale Order itself.
-        By default, only sends if order has no monta_order_id.
-        You can force send by context: force_send_to_monta=True
-        """
+        # always force when user clicks manual send
         return self.with_context(force_send_to_monta=True)._action_send_to_monta()
