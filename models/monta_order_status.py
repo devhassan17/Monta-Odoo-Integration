@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
 import hashlib
-import logging
 
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
-
-_logger = logging.getLogger(__name__)
 
 
 def _hash_account(base: str, user: str) -> str:
@@ -60,6 +57,12 @@ class MontaOrderStatus(models.Model):
     status_raw = fields.Text(string="Raw Status (JSON)")
     on_monta = fields.Boolean(string="Available on Monta", compute="_compute_on_monta", store=True, index=True)
 
+    manual_send_available = fields.Boolean(
+        string="Can Send to Monta",
+        compute="_compute_manual_send_available",
+        store=False
+    )
+
     _sql_constraints = [
         (
             "monta_order_unique_per_account",
@@ -67,6 +70,20 @@ class MontaOrderStatus(models.Model):
             "Monta order snapshot must be unique per account and order.",
         ),
     ]
+
+    @api.depends("monta_order_ref")
+    def _compute_manual_send_available(self):
+        for rec in self:
+            rec.manual_send_available = not bool((rec.monta_order_ref or "").strip())
+
+    def action_manual_send_to_monta(self):
+        for rec in self:
+            if rec.sale_order_id and not rec.monta_order_ref:
+                rec.sale_order_id._monta_create()
+                rec.sale_order_id.message_post(
+                    body="Sent manually to Monta.",
+                    message_type="comment"
+                )
 
     @api.model
     def _has_monta_account_key_column(self) -> bool:
@@ -140,15 +157,3 @@ class MontaOrderStatus(models.Model):
             return rec
 
         return self.sudo().create(base_vals)
-
-    # ✅ Manual Send to Monta (Triggered from UI button)
-    def action_manual_send_to_monta(self):
-        for rec in self:
-            order = rec.sale_order_id
-            if order and not order.monta_order_id:
-                try:
-                    order._monta_create()
-                    order.message_post(body="✅ Order manually sent to Monta.")
-                except Exception as e:
-                    _logger.error(f"Manual Monta sync failed: {e}")
-                    order.message_post(body=f"❌ Failed to send to Monta: {str(e)}")
