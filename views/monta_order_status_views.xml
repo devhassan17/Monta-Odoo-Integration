@@ -16,12 +16,11 @@
           <field name="track_trace" widget="url"/>
           <field name="delivery_date"/>
           <field name="last_sync"/>
-          <field name="manual_send_available" invisible="1"/>
           <button name="action_manual_send_to_monta"
                   string="Send to Monta"
                   type="object"
-                  class="btn btn-primary"
-                  attrs="{'invisible': [('manual_send_available', '=', False)]}"/>
+                  if="not sale_order_id.monta_order_id"
+                  class="btn btn-primary"/>
         </list>
       </field>
     </record>
