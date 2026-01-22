@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import hashlib
-
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
@@ -57,12 +56,6 @@ class MontaOrderStatus(models.Model):
     status_raw = fields.Text(string="Raw Status (JSON)")
     on_monta = fields.Boolean(string="Available on Monta", compute="_compute_on_monta", store=True, index=True)
 
-    manual_send_available = fields.Boolean(
-        string="Can Send to Monta",
-        compute="_compute_manual_send_available",
-        store=False
-    )
-
     _sql_constraints = [
         (
             "monta_order_unique_per_account",
@@ -71,19 +64,19 @@ class MontaOrderStatus(models.Model):
         ),
     ]
 
-    @api.depends("monta_order_ref")
-    def _compute_manual_send_available(self):
-        for rec in self:
-            rec.manual_send_available = not bool((rec.monta_order_ref or "").strip())
-
     def action_manual_send_to_monta(self):
-        for rec in self:
-            if rec.sale_order_id and not rec.monta_order_ref:
-                rec.sale_order_id._monta_create()
-                rec.sale_order_id.message_post(
-                    body="Sent manually to Monta.",
-                    message_type="comment"
-                )
+        for record in self:
+            if record.sale_order_id and not record.sale_order_id.monta_order_id:
+                record.sale_order_id._monta_create()
+
+    @api.depends("sale_order_id.monta_order_id")
+    def _compute_manual_send_available(self):
+        for record in self:
+            record.manual_send_available = bool(record.sale_order_id and not record.sale_order_id.monta_order_id)
+
+    manual_send_available = fields.Boolean(
+        compute="_compute_manual_send_available", store=False
+    )
 
     @api.model
     def _has_monta_account_key_column(self) -> bool:

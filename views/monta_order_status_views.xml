@@ -6,7 +6,7 @@
       <field name="name">monta.order.status.list</field>
       <field name="model">monta.order.status</field>
       <field name="arch" type="xml">
-        <tree string="Monta Orders" create="0" delete="1" default_order="last_sync desc">
+        <list string="Monta Orders" create="0" delete="1" default_order="last_sync desc">
           <field name="order_name"/>
           <field name="sale_order_id"/>
           <field name="status"/>
@@ -16,13 +16,12 @@
           <field name="track_trace" widget="url"/>
           <field name="delivery_date"/>
           <field name="last_sync"/>
-          <field name="manual_send_available"
-                 widget="boolean_button"
-                 string="Send to Monta"
-                 clickable="True"
-                 readonly="0"
-                 options="{'terminology': 'action'}"/>
-        </tree>
+          <button name="action_manual_send_to_monta"
+                  string="Send to Monta"
+                  type="object"
+                  if="manual_send_available"
+                  class="btn btn-primary"/>
+        </list>
       </field>
     </record>
 
@@ -82,9 +81,9 @@
     <record id="action_monta_order_status" model="ir.actions.act_window">
       <field name="name">Monta Orders</field>
       <field name="res_model">monta.order.status</field>
-      <field name="view_mode">tree,form</field>
+      <field name="view_mode">list,form</field>
       <field name="views" eval="[
-        (ref('view_monta_order_status_list'), 'tree'),
+        (ref('view_monta_order_status_list'), 'list'),
         (ref('view_monta_order_status_form'), 'form')
       ]"/>
       <field name="search_view_id" ref="view_monta_order_status_search"/>
