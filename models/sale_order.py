@@ -4,7 +4,7 @@ import logging
 import re
 from collections import defaultdict
 
-from odoo import fields, models
+from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
@@ -306,7 +306,43 @@ class SaleOrder(models.Model):
                 order._monta_delete(note="Cancelled")
         return res
 
-    def action_manual_send_to_monta(self):
+    # ---------------------------------------------------------------------
+    # ✅ Added wrapper for Monta Order Status button (so no AttributeError)
+    # ---------------------------------------------------------------------
+    def _action_send_to_monta(self):
+        """
+        Called from monta.order.status button (and can be reused elsewhere).
+        Supports force send using context key: force_send_to_monta=True
+        """
         for order in self:
-            if not order.monta_order_id:
-                order._monta_create()
+            if not order._is_company_allowed():
+                continue
+
+            force = bool(order.env.context.get("force_send_to_monta"))
+            # If not forcing and already sent, do nothing
+            if not force and order.monta_order_id:
+                continue
+
+            # If forcing, allow retry even if previously error/blocked by retry_count
+            if force:
+                order.write(
+                    {
+                        "monta_needs_sync": False,
+                        "monta_retry_count": 0,
+                    }
+                )
+
+            order._monta_create()
+
+        return True
+
+    # ---------------------------------------------------------------------
+    # ✅ Manual action (used from sale order UI if needed)
+    # ---------------------------------------------------------------------
+    def action_manual_send_to_monta(self):
+        """
+        Manual send from Sale Order itself.
+        By default, only sends if order has no monta_order_id.
+        You can force send by context: force_send_to_monta=True
+        """
+        return self.with_context(force_send_to_monta=True)._action_send_to_monta()
