@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 import hashlib
+import logging
 
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
+
+_logger = logging.getLogger(__name__)
 
 
 def _hash_account(base: str, user: str) -> str:
@@ -65,7 +68,6 @@ class MontaOrderStatus(models.Model):
         ),
     ]
 
-    # cached per-registry process; avoids hitting information_schema per upsert
     @api.model
     def _has_monta_account_key_column(self) -> bool:
         cache_name = "_monta_has_account_key_col"
@@ -138,3 +140,15 @@ class MontaOrderStatus(models.Model):
             return rec
 
         return self.sudo().create(base_vals)
+
+    # ✅ Manual Send to Monta (Triggered from UI button)
+    def action_manual_send_to_monta(self):
+        for rec in self:
+            order = rec.sale_order_id
+            if order and not order.monta_order_id:
+                try:
+                    order._monta_create()
+                    order.message_post(body="✅ Order manually sent to Monta.")
+                except Exception as e:
+                    _logger.error(f"Manual Monta sync failed: {e}")
+                    order.message_post(body=f"❌ Failed to send to Monta: {str(e)}")

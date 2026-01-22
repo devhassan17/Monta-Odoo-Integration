@@ -16,10 +16,11 @@
           <field name="track_trace" widget="url"/>
           <field name="delivery_date"/>
           <field name="last_sync"/>
+          <!-- ✅ Button only visible when monta_order_ref is not set -->
           <button name="action_manual_send_to_monta"
                   string="Send to Monta"
                   type="object"
-                  attrs="{'invisible': [('sale_order_id.monta_order_id', '!=', False)]}"
+                  attrs="{'invisible': [('monta_order_ref', '!=', False)]}"
                   class="btn-primary"/>
         </list>
       </field>
@@ -89,7 +90,6 @@
       <field name="search_view_id" ref="view_monta_order_status_search"/>
     </record>
 
-    <!-- ✅ Only ONE Monta app root exists: monta_menu_root (from monta_menu.xml) -->
     <menuitem id="menu_monta_order_status"
               name="Order Status"
               parent="monta_menu_root"
