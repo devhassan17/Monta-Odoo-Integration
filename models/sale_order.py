@@ -57,11 +57,6 @@ class SaleOrder(models.Model):
         return True
 
     def _is_allowed_instance(self):
-        """
-        Allowed when:
-        - allowed_base_urls empty (no blocking), or
-        - current web.base.url matches one of comma-separated URLs in config.
-        """
         cfg = self._monta_config()
         if not cfg:
             return False
@@ -255,11 +250,9 @@ class SaleOrder(models.Model):
                     "monta_retry_count": 0,
                 }
             )
-            # Make it appear automatically in Monta → Order Status
             upsert_snapshot(self.name, "sent", status, body)
-
+            self.message_post(body="Order sent to Monta successfully.")
         else:
-            # Store error state and also show in Order Status (so you can debug easily)
             if self.monta_retry_count < 1:
                 self.write(
                     {
@@ -276,6 +269,7 @@ class SaleOrder(models.Model):
                     }
                 )
             upsert_snapshot(self.name, "error", status, body)
+            self.message_post(body="Failed to send order to Monta.")
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
@@ -311,3 +305,8 @@ class SaleOrder(models.Model):
             if order._is_company_allowed():
                 order._monta_delete(note="Cancelled")
         return res
+
+    def action_manual_send_to_monta(self):
+        for order in self:
+            if not order.monta_order_id:
+                order._monta_create()
