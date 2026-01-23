@@ -25,7 +25,6 @@ class AccountMove(models.Model):
         orders = SaleOrder.browse()  # empty recordset
 
         # 1) invoice_line_ids -> sale_line_ids -> order_id
-        # mapped() is safe; still keep defensive try in case of customization edge cases
         try:
             sol = self.invoice_line_ids.mapped("sale_line_ids")
             orders |= sol.mapped("order_id")
@@ -61,7 +60,7 @@ class AccountMove(models.Model):
         payload["WebshopOrderId"] = webshop_order_id
 
         # set reference
-        payload["Reference"] = self.ref or self.payment_reference or so.client_order_ref or ""
+        payload["Reference"] = self.ref or self.payment_reference or getattr(so, "client_order_ref", "") or ""
 
         # numeric invoice id for Monta (digits from invoice name)
         inv_digits = re.sub(r"\D", "", self.name or "")
@@ -82,6 +81,94 @@ class AccountMove(models.Model):
         except Exception:
             _logger.exception("[Monta Renewal] Failed to post chatter message on %s", so.display_name)
 
+    def _monta_extract_monta_ref(self, body, fallback):
+        """Try to read Monta order ref/id from API response body."""
+        if isinstance(body, dict):
+            for k in ("OrderId", "orderId", "Id", "id", "MontaOrderId", "montaOrderId", "OrderNumber", "orderNumber"):
+                v = body.get(k)
+                if v:
+                    return str(v)
+        return fallback
+
+    # -------------------------
+    # Manual send hook (from Monta Order Status button)
+    # -------------------------
+    def _action_send_renewal_to_monta(self, sale_order=None):
+        """
+        ✅ Called from Monta Order Status 'Send to Monta' button.
+        Sends renewal payload for this invoice + given sale_order.
+        """
+        self.ensure_one()
+        if self.move_type != "out_invoice" or self.state != "posted":
+            return False
+
+        if not sale_order:
+            # fallback discovery
+            sale_orders = self._monta_find_related_sale_orders()
+            sale_orders = sale_orders.filtered(lambda so: self._monta_is_subscription_sale_order(so))
+            sale_order = sale_orders[:1] if sale_orders else False
+
+        if not sale_order:
+            return False
+
+        webshop_order_id = self._monta_make_webshop_order_id(sale_order)
+
+        # ensure status row exists (so user can see it)
+        self.env["monta.order.status"].upsert_for_renewal(
+            sale_order,
+            self,
+            webshop_order_id,
+            status="Not sent",
+            status_code=0,
+            source="orders",
+            monta_order_ref=False,
+            status_raw=json.dumps({"note": "Manual send initiated"}, ensure_ascii=False),
+        )
+
+        payload = self._monta_prepare_renewal_payload(sale_order, webshop_order_id)
+        status, body = sale_order._monta_request("POST", "/order", payload)
+
+        if 200 <= status < 300:
+            monta_ref = self._monta_extract_monta_ref(body, webshop_order_id)
+
+            # update snapshot => hides button
+            self.env["monta.order.status"].upsert_for_renewal(
+                sale_order,
+                self,
+                webshop_order_id,
+                status="Sent",
+                status_code=status,
+                source="orders",
+                monta_order_ref=monta_ref,
+                status_raw=json.dumps(body or {}, ensure_ascii=False),
+                last_sync=fields.Datetime.now(),
+            )
+
+            self._logger_info_success(sale_order, webshop_order_id, status, body)
+            self.write(
+                {
+                    "monta_renewal_pushed": True,
+                    "monta_renewal_webshop_order_id": webshop_order_id,
+                    "monta_renewal_last_push": fields.Datetime.now(),
+                }
+            )
+            return True
+
+        # failure => keep monta_order_ref empty so button stays visible
+        self.env["monta.order.status"].upsert_for_renewal(
+            sale_order,
+            self,
+            webshop_order_id,
+            status="Error",
+            status_code=status,
+            source="orders",
+            monta_order_ref=False,
+            status_raw=json.dumps(body or {}, ensure_ascii=False),
+            last_sync=fields.Datetime.now(),
+        )
+        self._logger_info_failure(sale_order, webshop_order_id, status, body)
+        return False
+
     # -------------------------
     # Main Hook (covers UI + cron)
     # -------------------------
@@ -90,14 +177,11 @@ class AccountMove(models.Model):
 
         moves = self.filtered(lambda m: m.move_type == "out_invoice" and m.state == "posted")
         for move in moves:
-            if move.monta_renewal_pushed:
-                continue
-
+            # Even if previously pushed, we still want snapshot rows for visibility
             sale_orders = move._monta_find_related_sale_orders()
             if not sale_orders:
                 continue
 
-            # only subscription-related orders
             sub_orders = sale_orders.filtered(lambda so: move._monta_is_subscription_sale_order(so))
             if not sub_orders:
                 continue
@@ -106,7 +190,6 @@ class AccountMove(models.Model):
             first_webshop_order_id = False
 
             for so in sub_orders:
-                # keep your existing company/instance guards if present
                 if hasattr(so, "_is_company_allowed") and not so._is_company_allowed():
                     continue
                 if hasattr(so, "_is_allowed_instance") and not so._is_allowed_instance():
@@ -116,30 +199,75 @@ class AccountMove(models.Model):
                 if not first_webshop_order_id:
                     first_webshop_order_id = webshop_order_id
 
+                # ✅ Always create/update snapshot row first (so it appears in Monta Order Status page)
+                self.env["monta.order.status"].upsert_for_renewal(
+                    so,
+                    move,
+                    webshop_order_id,
+                    status="Not sent" if not move.monta_renewal_pushed else "Sent",
+                    status_code=0,
+                    source="orders",
+                    monta_order_ref=False if not move.monta_renewal_pushed else (move.monta_renewal_webshop_order_id or webshop_order_id),
+                    status_raw=json.dumps({"note": "Auto-created from invoice post"}, ensure_ascii=False),
+                    last_sync=fields.Datetime.now(),
+                )
+
+                # If already pushed (and not forced), do not re-send here
+                if move.monta_renewal_pushed and not move.env.context.get("force_send_to_monta"):
+                    continue
+
                 try:
                     payload = move._monta_prepare_renewal_payload(so, webshop_order_id)
-
-                    # Use your existing request function so it logs in Monta request logs
                     status, body = so._monta_request("POST", "/order", payload)
 
                     if 200 <= status < 300:
                         pushed_any = True
-                        move._logger_info_success(so, webshop_order_id, status, body)
-                        _logger.info(
-                            "[Monta Renewal] Sent renewal %s for invoice %s",
+                        monta_ref = move._monta_extract_monta_ref(body, webshop_order_id)
+
+                        # ✅ Update snapshot -> hides button
+                        self.env["monta.order.status"].upsert_for_renewal(
+                            so,
+                            move,
                             webshop_order_id,
-                            move.name,
-                        )
-                    else:
-                        move._logger_info_failure(so, webshop_order_id, status, body)
-                        _logger.warning(
-                            "[Monta Renewal] Failed renewal %s invoice %s status=%s",
-                            webshop_order_id,
-                            move.name,
-                            status,
+                            status="Sent",
+                            status_code=status,
+                            source="orders",
+                            monta_order_ref=monta_ref,
+                            status_raw=json.dumps(body or {}, ensure_ascii=False),
+                            last_sync=fields.Datetime.now(),
                         )
 
+                        move._logger_info_success(so, webshop_order_id, status, body)
+                        _logger.info("[Monta Renewal] Sent renewal %s for invoice %s", webshop_order_id, move.name)
+
+                    else:
+                        # ✅ Keep monta_order_ref empty -> button stays visible
+                        self.env["monta.order.status"].upsert_for_renewal(
+                            so,
+                            move,
+                            webshop_order_id,
+                            status="Error",
+                            status_code=status,
+                            source="orders",
+                            monta_order_ref=False,
+                            status_raw=json.dumps(body or {}, ensure_ascii=False),
+                            last_sync=fields.Datetime.now(),
+                        )
+                        move._logger_info_failure(so, webshop_order_id, status, body)
+                        _logger.warning("[Monta Renewal] Failed renewal %s invoice %s status=%s", webshop_order_id, move.name, status)
+
                 except Exception as e:
+                    self.env["monta.order.status"].upsert_for_renewal(
+                        so,
+                        move,
+                        webshop_order_id,
+                        status="Error",
+                        status_code=0,
+                        source="orders",
+                        monta_order_ref=False,
+                        status_raw=json.dumps({"exception": str(e)}, ensure_ascii=False),
+                        last_sync=fields.Datetime.now(),
+                    )
                     move._logger_info_exception(so, webshop_order_id, e)
                     _logger.exception("[Monta Renewal] Exception for invoice %s: %s", move.name, e)
 

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import hashlib
+import json
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
@@ -23,13 +24,34 @@ class MontaOrderStatus(models.Model):
         index=True,
     )
 
+    # ✅ NEW: distinguish normal SO vs subscription renewal invoice
+    order_kind = fields.Selection(
+        selection=[
+            ("sale", "Sale Order"),
+            ("renewal", "Subscription Renewal"),
+        ],
+        string="Kind",
+        default="sale",
+        required=True,
+        index=True,
+    )
+
     sale_order_id = fields.Many2one(
         "sale.order",
         string="Sales Order",
         index=True,
         ondelete="cascade",
-        required=True,
+        required=True,  # keep required, renewal row will still point to related SO
     )
+
+    # ✅ NEW: link renewal invoice
+    invoice_id = fields.Many2one(
+        "account.move",
+        string="Invoice",
+        index=True,
+        ondelete="set null",
+    )
+
     order_name = fields.Char(string="Order Name", index=True, required=True)
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
@@ -98,19 +120,36 @@ class MontaOrderStatus(models.Model):
         return _hash_account(base, user) if (base and user) else ""
 
     @api.model
-    def upsert_for_order(self, so, **vals):
-        if not so or not so.id:
-            raise ValueError("upsert_for_order requires a valid sale.order")
-
+    def _base_upsert_domain_vals(self, order_name: str):
         account_key = self._current_account_key()
         if not account_key:
             raise ValidationError(_("Monta credentials are not configured."))
 
-        base_vals = {
-            "sale_order_id": so.id,
-            "order_name": so.name,
-            "last_sync": vals.get("last_sync") or fields.Datetime.now(),
-        }
+        domain = [("order_name", "=", order_name)]
+        base_vals = {"order_name": order_name, "last_sync": fields.Datetime.now()}
+
+        if self._has_monta_account_key_column():
+            base_vals["monta_account_key"] = account_key
+            domain.append(("monta_account_key", "=", account_key))
+
+        return domain, base_vals
+
+    @api.model
+    def upsert_for_order(self, so, **vals):
+        """Existing behavior: snapshot row for normal sale order."""
+        if not so or not so.id:
+            raise ValueError("upsert_for_order requires a valid sale.order")
+
+        domain, base_vals = self._base_upsert_domain_vals(so.name)
+
+        base_vals.update(
+            {
+                "sale_order_id": so.id,
+                "order_kind": "sale",
+                "invoice_id": False,
+                "last_sync": vals.get("last_sync") or fields.Datetime.now(),
+            }
+        )
 
         for k in (
             "status",
@@ -125,10 +164,46 @@ class MontaOrderStatus(models.Model):
             if k in vals and vals[k] is not None:
                 base_vals[k] = vals[k]
 
-        domain = [("order_name", "=", so.name)]
-        if self._has_monta_account_key_column():
-            base_vals["monta_account_key"] = account_key
-            domain.append(("monta_account_key", "=", account_key))
+        rec = self.sudo().search(domain, limit=1)
+        if rec:
+            rec.write(base_vals)
+            return rec
+
+        return self.sudo().create(base_vals)
+
+    @api.model
+    def upsert_for_renewal(self, so, invoice, webshop_order_id: str, **vals):
+        """✅ NEW: snapshot row for subscription renewal invoice."""
+        if not so or not so.id:
+            raise ValueError("upsert_for_renewal requires a valid sale.order")
+        if not invoice or not invoice.id:
+            raise ValueError("upsert_for_renewal requires a valid account.move")
+        if not webshop_order_id:
+            raise ValueError("upsert_for_renewal requires webshop_order_id")
+
+        domain, base_vals = self._base_upsert_domain_vals(webshop_order_id)
+
+        base_vals.update(
+            {
+                "sale_order_id": so.id,
+                "invoice_id": invoice.id,
+                "order_kind": "renewal",
+                "last_sync": vals.get("last_sync") or fields.Datetime.now(),
+            }
+        )
+
+        for k in (
+            "status",
+            "status_code",
+            "source",
+            "delivery_message",
+            "track_trace",
+            "delivery_date",
+            "status_raw",
+            "monta_order_ref",
+        ):
+            if k in vals and vals[k] is not None:
+                base_vals[k] = vals[k]
 
         rec = self.sudo().search(domain, limit=1)
         if rec:
@@ -138,16 +213,29 @@ class MontaOrderStatus(models.Model):
         return self.sudo().create(base_vals)
 
     def action_manual_send_to_monta(self):
+        """
+        ✅ Updated:
+        - If row is renewal (invoice_id exists): send renewal invoice to Monta.
+        - Else: send sale order as before.
+        """
         for record in self:
             sale_order = record.sale_order_id
             if not sale_order:
                 continue
 
             try:
-                # Assumes sale.order implements _action_send_to_monta()
-                sale_order.with_context(force_send_to_monta=True)._action_send_to_monta()
-                sale_order.message_post(body="✅ Order sent to Monta manually from Monta Order Status.")
+                if record.order_kind == "renewal" and record.invoice_id:
+                    # send renewal invoice payload
+                    record.invoice_id.with_context(force_send_to_monta=True)._action_send_renewal_to_monta(
+                        sale_order=sale_order
+                    )
+                    sale_order.message_post(body="✅ Renewal invoice sent to Monta manually from Monta Order Status.")
+                else:
+                    # normal sale order send
+                    sale_order.with_context(force_send_to_monta=True)._action_send_to_monta()
+                    sale_order.message_post(body="✅ Order sent to Monta manually from Monta Order Status.")
+
             except Exception as e:
-                sale_order.message_post(body=f"❌ Order failed to send to Monta manually: {e}")
+                sale_order.message_post(body=f"❌ Failed to send to Monta manually: {e}")
 
         return True
