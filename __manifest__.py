@@ -9,7 +9,7 @@ Monta-Odoo Integration
 This module synchronizes Sales Orders, Inbound Forecasts, Expected Delivery Dates (EDD),
 and stock quantities between Odoo and Monta WMS via Monta's API.
 """,
-    "author": "Managemyweb.co4",
+    "author": "Managemyweb.co",
     "website": "https://fairchain.org/monta-plugin-documentation/",
     "category": "Warehouse",
     "license": "LGPL-3",
