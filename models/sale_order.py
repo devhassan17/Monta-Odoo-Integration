@@ -34,6 +34,9 @@ class SaleOrder(models.Model):
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
 
+    # ---------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------
     def _split_street(self, street, street2=""):
         return split_street(street, street2)
 
@@ -95,6 +98,9 @@ class SaleOrder(models.Model):
         )
         (_logger.info if valid_level == "info" else _logger.error)(f"[{tag}] {console_summary or self.name}")
 
+    # ---------------------------------------------------------
+    # Payload prep
+    # ---------------------------------------------------------
     def _prepare_monta_lines(self):
         from math import isfinite
 
@@ -197,6 +203,9 @@ class SaleOrder(models.Model):
 
         return payload
 
+    # ---------------------------------------------------------
+    # API
+    # ---------------------------------------------------------
     def _monta_request(self, method, path, payload=None, headers=None):
         if not self._is_company_allowed():
             return 0, {"note": "Blocked: company not allowed in Monta Configuration"}
@@ -205,17 +214,32 @@ class SaleOrder(models.Model):
         client = MontaClient(self.env, company=self.company_id)
         return client.request(self, method, path, payload=payload, headers=headers)
 
+    def _is_duplicate_exists_error(self, status, body):
+        """
+        Monta duplicate example:
+        {
+          "OrderInvalidReasons": [{"Code": 1, "Message": "An order with that Webshop Order ID already exists"}]
+        }
+        """
+        if status != 400 or not isinstance(body, dict):
+            return False
+        reasons = body.get("OrderInvalidReasons") or []
+        for r in reasons:
+            msg = (r or {}).get("Message") or ""
+            if "already exists" in msg.lower():
+                return True
+        return False
+
     def _monta_create(self):
         self.ensure_one()
+
         status, body = self._monta_request("POST", "/order", self._prepare_monta_order_payload())
 
         Status = self.env["monta.order.status"].sudo()
         account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
 
-        # ✅ FIX: Upsert snapshot without creating duplicates (even if old row has monta_account_key = False)
         def upsert_snapshot(order_name, state, http_code, raw):
             now = fields.Datetime.now()
-
             vals = {
                 "monta_account_key": account_key or False,
                 "sale_order_id": self.id,
@@ -231,9 +255,6 @@ class SaleOrder(models.Model):
                 "status_raw": json.dumps(raw or {}, ensure_ascii=False),
             }
 
-            # If account_key column exists, match:
-            #   (order_name == X) AND (monta_account_key == current_key OR monta_account_key is False)
-            # This updates old snapshots that were created without a key, preventing duplicates.
             domain = [("order_name", "=", order_name)]
             try:
                 if (
@@ -249,7 +270,6 @@ class SaleOrder(models.Model):
                         ("monta_account_key", "=", False),
                     ]
             except Exception:
-                # fallback to simple match
                 domain = [("order_name", "=", order_name)]
 
             rec = Status.search(domain, limit=1)
@@ -260,8 +280,24 @@ class SaleOrder(models.Model):
 
         now = fields.Datetime.now()
 
+        # ✅ Treat “already exists” as success (idempotent)
+        if self._is_duplicate_exists_error(status, body):
+            # This means Monta already has it; mark as sent so system stops retrying.
+            self.with_context(skip_monta_write_hook=True).write(
+                {
+                    "monta_order_id": self.name,
+                    "monta_sync_state": "sent",
+                    "monta_last_push": now,
+                    "monta_needs_sync": False,
+                    "monta_retry_count": 0,
+                }
+            )
+            upsert_snapshot(self.name, "sent", status, body)
+            self.message_post(body="Monta: Order already existed. Marked as sent in Odoo to prevent duplicate retries.")
+            return
+
         if 200 <= status < 300:
-            self.write(
+            self.with_context(skip_monta_write_hook=True).write(
                 {
                     "monta_order_id": self.name,
                     "monta_sync_state": "sent",
@@ -273,8 +309,9 @@ class SaleOrder(models.Model):
             upsert_snapshot(self.name, "sent", status, body)
             self.message_post(body="Order sent to Monta successfully.")
         else:
+            # normal error
             if self.monta_retry_count < 1:
-                self.write(
+                self.with_context(skip_monta_write_hook=True).write(
                     {
                         "monta_sync_state": "error",
                         "monta_needs_sync": True,
@@ -282,7 +319,7 @@ class SaleOrder(models.Model):
                     }
                 )
             else:
-                self.write(
+                self.with_context(skip_monta_write_hook=True).write(
                     {
                         "monta_sync_state": "error",
                         "monta_needs_sync": False,
@@ -297,20 +334,30 @@ class SaleOrder(models.Model):
         headers = {"Content-Type": "application/json-patch+json", "Accept": "application/json"}
         return self._monta_request("DELETE", f"/order/{webshop_id}", {"Note": note}, headers=headers)
 
+    # ---------------------------------------------------------
+    # Hooks
+    # ---------------------------------------------------------
     def action_confirm(self):
         res = super().action_confirm()
         for order in self:
             if order._is_company_allowed():
+                # mark for sync; and try once (but protected by skip flag in internal writes)
+                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
                 order._monta_create()
         return res
 
     def write(self, vals):
+        # ✅ prevent recursion: internal monta writes should not re-trigger
+        if self.env.context.get("skip_monta_write_hook"):
+            return super().write(vals)
+
         tracked_fields = {"partner_id", "order_line", "client_order_ref", "validity_date", "commitment_date"}
         if any(f in vals for f in tracked_fields):
             vals.setdefault("monta_needs_sync", True)
 
         res = super().write(vals)
 
+        # Only push when confirmed + needs_sync
         for order in self.filtered(lambda o: o.state in ("sale", "done") and o.monta_needs_sync):
             if not order._is_company_allowed():
                 continue
@@ -327,7 +374,7 @@ class SaleOrder(models.Model):
         return res
 
     # ---------------------------------------------------------------------
-    # ✅ Wrapper method expected by monta.order.status button
+    # Wrapper method expected by monta.order.status button
     # ---------------------------------------------------------------------
     def _action_send_to_monta(self):
         """
@@ -340,20 +387,14 @@ class SaleOrder(models.Model):
 
             force = bool(order.env.context.get("force_send_to_monta"))
             if not force and order.monta_order_id:
-                # already sent and not forcing -> do nothing
                 continue
 
             if force:
-                # reset retry so manual action always tries
-                order.write({"monta_needs_sync": False, "monta_retry_count": 0})
+                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": False, "monta_retry_count": 0})
 
             order._monta_create()
 
         return True
 
-    # ---------------------------------------------------------------------
-    # ✅ Manual send from Sale Order (if you call from SO UI)
-    # ---------------------------------------------------------------------
     def action_manual_send_to_monta(self):
-        # always force when user clicks manual send
         return self.with_context(force_send_to_monta=True)._action_send_to_monta()
