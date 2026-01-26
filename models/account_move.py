@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-import re
 
 from odoo import fields, models
 
@@ -44,10 +43,24 @@ class AccountMove(models.Model):
         return bool(getattr(so, "subscription_id", False)) or bool(getattr(so, "is_subscription", False))
 
     def _monta_make_webshop_order_id(self, so):
-        """Unique order id per renewal cycle."""
-        inv_name = (self.name or "").replace("/", "-")
+        """
+        ✅ Stable unique id per invoice RECORD (prevents duplicates when invoice number changes).
+        - self.name (INV/2026/xxx) can change on cancel/repost/resequence.
+        - self.id NEVER changes for the same invoice record.
+        - Next month renewal creates a NEW invoice record => NEW id => will send normally.
+        """
+        self.ensure_one()
+
+        # If already generated once, always reuse it
+        if self.monta_renewal_webshop_order_id:
+            return self.monta_renewal_webshop_order_id
+
         so_name = (so.name or "").replace("/", "-")
-        return f"{so_name}-{inv_name}"
+        webshop_order_id = f"{so_name}-INV{self.id}"
+
+        # store it so it stays stable forever for this invoice record
+        self.write({"monta_renewal_webshop_order_id": webshop_order_id})
+        return webshop_order_id
 
     def _monta_prepare_renewal_payload(self, so, webshop_order_id):
         """
@@ -56,17 +69,29 @@ class AccountMove(models.Model):
         """
         payload = so._prepare_monta_order_payload()
 
-        # unique order id for each renewal
+        # ✅ stable unique order id for this invoice record
         payload["WebshopOrderId"] = webshop_order_id
 
-        # set reference
-        payload["Reference"] = self.ref or self.payment_reference or getattr(so, "client_order_ref", "") or ""
+        # ✅ Human-readable reference in Monta (OK if it changes; WebshopOrderId is the real unique key)
+        payload["Reference"] = (self.name or "").strip() or (
+            self.ref or self.payment_reference or getattr(so, "client_order_ref", "") or ""
+        )
 
-        # numeric invoice id for Monta (digits from invoice name)
-        inv_digits = re.sub(r"\D", "", self.name or "")
-        payload["WebshopFactuurID"] = int(inv_digits) if inv_digits else 9999
+        # ✅ Keep FactuurID stable too (do NOT derive from invoice name digits)
+        payload["WebshopFactuurID"] = int(self.id) if self.id else 9999
 
         return payload
+
+    def _monta_is_duplicate_exists_error(self, status, body):
+        """Detect Monta duplicate errors (same WebshopOrderId already exists)."""
+        if status != 400 or not isinstance(body, dict):
+            return False
+        reasons = body.get("OrderInvalidReasons") or []
+        for r in reasons:
+            msg = (r or {}).get("Message") or ""
+            if "already exists" in msg.lower():
+                return True
+        return False
 
     def _monta_chatter_on_subscription(self, so, title, message_html, success=True):
         """Post a note in the subscription (sale.order) chatter."""
@@ -84,7 +109,16 @@ class AccountMove(models.Model):
     def _monta_extract_monta_ref(self, body, fallback):
         """Try to read Monta order ref/id from API response body."""
         if isinstance(body, dict):
-            for k in ("OrderId", "orderId", "Id", "id", "MontaOrderId", "montaOrderId", "OrderNumber", "orderNumber"):
+            for k in (
+                "OrderId",
+                "orderId",
+                "Id",
+                "id",
+                "MontaOrderId",
+                "montaOrderId",
+                "OrderNumber",
+                "orderNumber",
+            ):
                 v = body.get(k)
                 if v:
                     return str(v)
@@ -103,7 +137,6 @@ class AccountMove(models.Model):
             return False
 
         if not sale_order:
-            # fallback discovery
             sale_orders = self._monta_find_related_sale_orders()
             sale_orders = sale_orders.filtered(lambda so: self._monta_is_subscription_sale_order(so))
             sale_order = sale_orders[:1] if sale_orders else False
@@ -112,6 +145,20 @@ class AccountMove(models.Model):
             return False
 
         webshop_order_id = self._monta_make_webshop_order_id(sale_order)
+
+        # ✅ Hard idempotency guard (prevents repeated manual clicks / retries)
+        existing = self.env["monta.order.status"].sudo().search(
+            [
+                ("order_name", "=", webshop_order_id),
+                ("order_kind", "=", "renewal"),
+                ("invoice_id", "=", self.id),
+                ("status", "in", ["Sent", "sent"]),
+            ],
+            limit=1,
+        )
+        if existing and not self.env.context.get("force_send_to_monta"):
+            _logger.info("[Monta Renewal] Skip manual resend; already sent: %s", webshop_order_id)
+            return True
 
         # ensure status row exists (so user can see it)
         self.env["monta.order.status"].upsert_for_renewal(
@@ -128,10 +175,38 @@ class AccountMove(models.Model):
         payload = self._monta_prepare_renewal_payload(sale_order, webshop_order_id)
         status, body = sale_order._monta_request("POST", "/order", payload)
 
+        # ✅ If Monta says it already exists, treat as success (idempotent)
+        if self._monta_is_duplicate_exists_error(status, body):
+            monta_ref = self._monta_extract_monta_ref(body, webshop_order_id)
+            self.env["monta.order.status"].upsert_for_renewal(
+                sale_order,
+                self,
+                webshop_order_id,
+                status="Sent",
+                status_code=status,
+                source="orders",
+                monta_order_ref=monta_ref,
+                status_raw=json.dumps(body or {}, ensure_ascii=False),
+                last_sync=fields.Datetime.now(),
+            )
+            self.write(
+                {
+                    "monta_renewal_pushed": True,
+                    "monta_renewal_webshop_order_id": webshop_order_id,
+                    "monta_renewal_last_push": fields.Datetime.now(),
+                }
+            )
+            self._monta_chatter_on_subscription(
+                sale_order,
+                "Monta Renewal Already Exists",
+                f"<p><b>Invoice:</b> {self.name}</p><p><b>Monta Order ID:</b> {webshop_order_id}</p>",
+                success=True,
+            )
+            return True
+
         if 200 <= status < 300:
             monta_ref = self._monta_extract_monta_ref(body, webshop_order_id)
 
-            # update snapshot => hides button
             self.env["monta.order.status"].upsert_for_renewal(
                 sale_order,
                 self,
@@ -177,7 +252,10 @@ class AccountMove(models.Model):
 
         moves = self.filtered(lambda m: m.move_type == "out_invoice" and m.state == "posted")
         for move in moves:
-            # Even if previously pushed, we still want snapshot rows for visibility
+            # ✅ If already pushed for THIS invoice record, never send again (unless forced)
+            if move.monta_renewal_pushed and not move.env.context.get("force_send_to_monta"):
+                continue
+
             sale_orders = move._monta_find_related_sale_orders()
             if not sale_orders:
                 continue
@@ -212,19 +290,52 @@ class AccountMove(models.Model):
                     last_sync=fields.Datetime.now(),
                 )
 
-                # If already pushed (and not forced), do not re-send here
-                if move.monta_renewal_pushed and not move.env.context.get("force_send_to_monta"):
-                    continue
+                # ✅ Extra safety: if snapshot already says Sent for this renewal, don't resend.
+                if not move.env.context.get("force_send_to_monta"):
+                    already_sent = self.env["monta.order.status"].sudo().search(
+                        [
+                            ("order_name", "=", webshop_order_id),
+                            ("order_kind", "=", "renewal"),
+                            ("invoice_id", "=", move.id),
+                            ("status", "in", ["Sent", "sent"]),
+                        ],
+                        limit=1,
+                    )
+                    if already_sent:
+                        continue
 
                 try:
                     payload = move._monta_prepare_renewal_payload(so, webshop_order_id)
                     status, body = so._monta_request("POST", "/order", payload)
 
+                    # ✅ Idempotency: Monta says order id already exists
+                    if move._monta_is_duplicate_exists_error(status, body):
+                        pushed_any = True
+                        monta_ref = move._monta_extract_monta_ref(body, webshop_order_id)
+                        self.env["monta.order.status"].upsert_for_renewal(
+                            so,
+                            move,
+                            webshop_order_id,
+                            status="Sent",
+                            status_code=status,
+                            source="orders",
+                            monta_order_ref=monta_ref,
+                            status_raw=json.dumps(body or {}, ensure_ascii=False),
+                            last_sync=fields.Datetime.now(),
+                        )
+                        move.write(
+                            {
+                                "monta_renewal_pushed": True,
+                                "monta_renewal_webshop_order_id": webshop_order_id,
+                                "monta_renewal_last_push": fields.Datetime.now(),
+                            }
+                        )
+                        continue
+
                     if 200 <= status < 300:
                         pushed_any = True
                         monta_ref = move._monta_extract_monta_ref(body, webshop_order_id)
 
-                        # ✅ Update snapshot -> hides button
                         self.env["monta.order.status"].upsert_for_renewal(
                             so,
                             move,
@@ -241,7 +352,6 @@ class AccountMove(models.Model):
                         _logger.info("[Monta Renewal] Sent renewal %s for invoice %s", webshop_order_id, move.name)
 
                     else:
-                        # ✅ Keep monta_order_ref empty -> button stays visible
                         self.env["monta.order.status"].upsert_for_renewal(
                             so,
                             move,
@@ -254,7 +364,12 @@ class AccountMove(models.Model):
                             last_sync=fields.Datetime.now(),
                         )
                         move._logger_info_failure(so, webshop_order_id, status, body)
-                        _logger.warning("[Monta Renewal] Failed renewal %s invoice %s status=%s", webshop_order_id, move.name, status)
+                        _logger.warning(
+                            "[Monta Renewal] Failed renewal %s invoice %s status=%s",
+                            webshop_order_id,
+                            move.name,
+                            status,
+                        )
 
                 except Exception as e:
                     self.env["monta.order.status"].upsert_for_renewal(
@@ -275,8 +390,7 @@ class AccountMove(models.Model):
                 move.write(
                     {
                         "monta_renewal_pushed": True,
-                        "monta_renewal_webshop_order_id": first_webshop_order_id
-                        or move._monta_make_webshop_order_id(sub_orders[0]),
+                        "monta_renewal_webshop_order_id": first_webshop_order_id or move.monta_renewal_webshop_order_id,
                         "monta_renewal_last_push": fields.Datetime.now(),
                     }
                 )
