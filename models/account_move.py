@@ -42,6 +42,28 @@ class AccountMove(models.Model):
         """Best-effort detection of subscription order across setups."""
         return bool(getattr(so, "subscription_id", False)) or bool(getattr(so, "is_subscription", False))
 
+    def _monta_is_initial_subscription_invoice(self, so):
+        """
+        ✅ Detect initial/first invoice of a subscription sale order.
+        If there is NO other posted customer invoice linked to the same sale.order
+        (via invoice lines -> sale_line_ids -> order_id), then this invoice is initial.
+        """
+        self.ensure_one()
+
+        # If this isn't subscription order, it's not "initial subscription invoice"
+        if not self._monta_is_subscription_sale_order(so):
+            return False
+
+        # Any other posted invoice linked to this SO?
+        domain = [
+            ("move_type", "=", "out_invoice"),
+            ("state", "=", "posted"),
+            ("id", "!=", self.id),
+            ("invoice_line_ids.sale_line_ids.order_id", "=", so.id),
+        ]
+        prev = self.search(domain, limit=1)
+        return not bool(prev)
+
     def _monta_make_webshop_order_id(self, so):
         """
         ✅ Stable unique id per invoice RECORD (prevents duplicates when invoice number changes).
@@ -272,6 +294,18 @@ class AccountMove(models.Model):
                     continue
                 if hasattr(so, "_is_allowed_instance") and not so._is_allowed_instance():
                     continue
+
+                # ✅ IMPORTANT FIX:
+                # If this is the INITIAL invoice of a newly created subscription,
+                # DO NOT push renewal/invoice to Monta (delivery is already handled elsewhere).
+                if not move.env.context.get("force_send_to_monta"):
+                    if move._monta_is_initial_subscription_invoice(so):
+                        _logger.info(
+                            "[Monta Renewal] Skip initial subscription invoice %s for SO %s",
+                            move.name,
+                            so.name,
+                        )
+                        continue
 
                 webshop_order_id = move._monta_make_webshop_order_id(so)
                 if not first_webshop_order_id:
