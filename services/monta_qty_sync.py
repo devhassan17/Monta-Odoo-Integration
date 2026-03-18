@@ -175,7 +175,7 @@ class MontaQtySync:
         if self._is_kit(product):
             return "is kit (phantom) – skip direct qty change"
         if target_qty < 0:
-            return "negative target – skip direct qty change"
+            target_qty = 0.0
 
         try:
             now_qty = product.with_context(location=wh_location.id).qty_available

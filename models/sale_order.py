@@ -360,6 +360,19 @@ class SaleOrder(models.Model):
     # Hooks
     # ---------------------------------------------------------
     def action_confirm(self):
+        # ✅ Mitigation for Odoo 18 Subscription Validation Error
+        # If order has subscription products but no plan_id, try to find a default plan to avoid crash.
+        Plan = self.env["sale.subscription.plan"].sudo()
+        for order in self:
+            if not getattr(order, "is_subscription", False):
+                # check if any line has a subscription product
+                if any(getattr(line.product_id, "is_subscription", False) or getattr(line.product_id, "recurring_invoice", False) for line in order.order_line):
+                    if not getattr(order, "plan_id", False):
+                        default_plan = Plan.search([], limit=1)
+                        if default_plan:
+                            order.write({"plan_id": default_plan.id})
+                            _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
+
         res = super().action_confirm()
         for order in self:
             if order._is_company_allowed():
