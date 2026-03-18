@@ -40,11 +40,11 @@ def post_init_hook(cr, registry):
 
     cron = env["ir.cron"].create(
         {
-            "name": "Monta: Sync StockAvailable + MinStock (6h)",
+            "name": "Monta: Sync StockAvailable + MinStock (1h)",
             "model_id": env.ref("product.model_product_product").id,
             "state": "code",
             "code": "model.cron_monta_qty_sync()",
-            "interval_number": 6,
+            "interval_number": 1,
             "interval_type": "hours",
             "active": True,
         }

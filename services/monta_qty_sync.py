@@ -218,13 +218,20 @@ class MontaQtySync:
         domain = [
             ("active", "=", True),
             ("type", "in", ["product", "consu"]),
-            "|",
-            ("monta_sku", "!=", False),
-            ("default_code", "!=", False),
         ]
         products = Product.search(domain, limit=limit)
 
         for prod in products:
+            # Skip subscription products
+            name = (prod.name or "").upper()
+            display_name = (prod.display_name or "").upper()
+            if "(SUBSCRIPTION)" in name or "(SUBSCRIPTION)" in display_name:
+                continue
+            
+            # Also skip if it's explicitly a recurring product (standard Odoo)
+            if hasattr(prod, "recurring_invoice") and prod.recurring_invoice:
+                continue
+
             sku = (prod.monta_sku or prod.default_code or "").strip()
             if not sku:
                 continue
@@ -233,7 +240,18 @@ class MontaQtySync:
             if not ms:
                 continue
 
+            # Update thresholds
             self._set_template_threshold(prod.product_tmpl_id, ms.minimum)
+            
+            # Odoo 18 native low stock threshold
+            try:
+                if hasattr(prod.product_tmpl_id, "low_stock_threshold"):
+                    prod.product_tmpl_id.with_context(tracking_disable=True).write({
+                        "low_stock_threshold": ms.minimum,
+                        "allow_out_of_stock_order": False, # Optional: follow user's "Odoo will Allow impliment that" intent
+                    })
+            except Exception as e:
+                _logger.debug("Failed to set low_stock_threshold on %s: %s", prod.display_name, e)
 
             reason = self._set_absolute_onhand(prod, ms.available, wh_loc)
             if reason:
