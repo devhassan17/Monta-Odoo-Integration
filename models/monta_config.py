@@ -52,11 +52,11 @@ class MontaConfig(models.Model):
         string="Monta Warehouses",
         help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
     )
-    # x_monta_route_ids = fields.Many2many(
-    #     "stock.location.route",
-    #     string="Monta Routes",
-    #     help="Only orders containing at least one line with these routes are synced with Monta. Leave empty to allow all.",
-    # )
+    x_monta_route_ids = fields.Many2many(
+        "delivery.carrier",
+        string="Monta Shipping Methods",
+        help="Only orders using these shipping methods are synced with Monta. Leave empty to allow all.",
+    )
 
     supplier_code_override = fields.Char(string="Supplier Code Override")
     supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")
