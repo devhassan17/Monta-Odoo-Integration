@@ -106,15 +106,15 @@ class SaleOrder(models.Model):
             return False
 
         # Filter by warehouse
-        if cfg.monta_warehouse_ids and self.warehouse_id not in cfg.monta_warehouse_ids:
+        if cfg.x_monta_warehouse_ids and self.warehouse_id not in cfg.x_monta_warehouse_ids:
             _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
             return False
 
         # Filter by route (on any line)
-        if cfg.monta_route_ids:
+        if cfg.x_monta_route_ids:
             found = False
             for line in self.order_line:
-                if line.route_id in cfg.monta_route_ids:
+                if line.route_id in cfg.x_monta_route_ids:
                     found = True
                     break
             if not found:
