@@ -152,6 +152,7 @@ class MontaQtySync:
         if not bom or bom.type != "phantom":
             return 0.0, "no phantom BoM"
 
+        bottleneck_comp = None
         possible = math.inf
         for line in bom.bom_line_ids:
             comp = line.product_id
@@ -161,14 +162,22 @@ class MontaQtySync:
 
             quants = Quant.search([("product_id", "=", comp.id), ("location_id", "child_of", wh_location.id)])
             onhand = sum(q.quantity for q in quants)
-            possible = min(possible, onhand / need)
+            
+            can_make = onhand / need
+            if can_make < possible:
+                possible = can_make
+                bottleneck_comp = comp
 
         if math.isinf(possible):
             possible = 0.0
 
         capped = min(possible, max(0.0, monta_avail))
         packs = max(0.0, float(capped))
+        
         msg = f"components allow ~{int(max(0, math.floor(packs)))} pack(s)"
+        if packs < monta_avail and bottleneck_comp:
+            msg += f" (bottleneck: {bottleneck_comp.display_name})"
+            
         return packs, msg
 
     def _set_absolute_onhand(self, product, target_qty: float, wh_location) -> Optional[str]:
@@ -230,6 +239,12 @@ class MontaQtySync:
         ]
         products = Product.search(domain, limit=limit)
 
+        count_total = len(products)
+        count_processed = 0
+        count_updated = 0
+        count_skipped = 0
+        count_kits = 0
+
         for prod in products:
             # Skip subscription products
             name = (prod.name or "").upper()
@@ -249,6 +264,8 @@ class MontaQtySync:
             if not ms:
                 continue
 
+            count_processed += 1
+
             # Update thresholds
             self._set_template_threshold(prod.product_tmpl_id, ms.minimum)
             
@@ -257,16 +274,30 @@ class MontaQtySync:
                 if hasattr(prod.product_tmpl_id, "low_stock_threshold"):
                     prod.product_tmpl_id.with_context(tracking_disable=True).write({
                         "low_stock_threshold": ms.minimum,
-                        "allow_out_of_stock_order": False, # Optional: follow user's "Odoo will Allow impliment that" intent
+                        "allow_out_of_stock_order": False,
                     })
-            except Exception as e:
-                _logger.debug("Failed to set low_stock_threshold on %s: %s", prod.display_name, e)
+            except Exception:
+                pass
 
             reason = self._set_absolute_onhand(prod, ms.available, wh_loc)
             if reason:
-                # keep behavior: do not modify stock if kit; just provide useful debug
                 if "kit" in reason or "phantom" in reason:
+                    count_kits += 1
                     packs, msg = self._kit_max_packs_from_components(prod, wh_loc, ms.available)
                     _logger.info("[MontaQtySync] %s | %s | monta_avail=%s | packs=%s", prod.display_name, msg, ms.available, packs)
                 else:
+                    count_skipped += 1
                     _logger.warning("[MontaQtySync] %s | stock update skipped: %s", prod.display_name, reason)
+            else:
+                # Successfully updated or already correct
+                count_updated += 1
+                # Optional: log if it was an actual change? (delta check is inside _set_absolute_onhand)
+
+        _logger.info(
+            "[Monta Qty Sync] Finished. Total found: %d | Processed: %d | Updated: %d | Kits: %d | Skipped/Error: %d",
+            count_total,
+            count_processed,
+            count_updated,
+            count_kits,
+            count_skipped,
+        )
