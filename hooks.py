@@ -12,18 +12,18 @@ CRON_INTERVAL_MIN = 30  # minutes
 
 # Stock/qty sync (product model)
 CRON_QTY_XMLID = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
-CRON_QTY_NAME = "Monta: Sync StockAvailable + MinStock (6h)"
+CRON_QTY_NAME = "Monta: Sync StockAvailable + MinStock (24h)"
 CRON_QTY_MODEL = "product.product"
 CRON_QTY_METHOD = "cron_monta_qty_sync"
 CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
-CRON_QTY_HOURS = 6
+CRON_QTY_HOURS = 24
 
 CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
-CRON_PULL_NAME = "Monta: Pull stock list (/stock) (6h)"
+CRON_PULL_NAME = "Monta: Pull stock list (/stock) (24h)"
 CRON_PULL_MODEL = "product.product"
 CRON_PULL_METHOD = "cron_monta_stock_pull"
 CRON_PULL_CODE = f"model.{CRON_PULL_METHOD}()"
-CRON_PULL_HOURS = 6
+CRON_PULL_HOURS = 24
 
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):

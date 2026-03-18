@@ -187,17 +187,25 @@ class MontaQtySync:
             return None
 
         try:
-            wiz = self.env["stock.change.product.qty"].create(
-                {
+            # Odoo 17/18 recommended way to force a quantity at a specific location
+            Quant = self.env["stock.quant"].with_context(inventory_mode=True).sudo()
+            quant = Quant.search([
+                ("product_id", "=", product.id),
+                ("location_id", "=", wh_location.id)
+            ], limit=1)
+            
+            if quant:
+                quant.inventory_quantity = target_qty
+                quant.action_apply_inventory()
+            else:
+                Quant.create({
                     "product_id": product.id,
-                    "new_quantity": target_qty,
                     "location_id": wh_location.id,
-                }
-            )
-            wiz.change_product_qty()
+                    "inventory_quantity": target_qty,
+                }).action_apply_inventory()
             return None
         except Exception as e:
-            return str(e)
+            return f"Stock change failed: {str(e)}"
 
     # -----------------------------
     # Runner

@@ -27,26 +27,13 @@ class ProductProduct(models.Model):
         MontaQtySync(self.env).run(limit=limit)
 
 
-def post_init_hook(cr, registry):
-    """
-    Create the cron if it doesn't exist (idempotent).
-    You may already have the cron from earlier – that's fine.
-    """
-    env = api.Environment(cr, SUPERUSER_ID, {})
-    cron = env.ref(CRON_XMLID, raise_if_not_found=False)
-    if cron:
-        _logger.info("[Monta Qty Sync] Cron already exists (id=%s)", cron.id)
-        return
+    @api.model
+    def cron_monta_stock_pull(self, limit=None):
+        """
+        Entry point for the 24-hour bulk stock pull cron.
+        """
+        from ..services.monta_stock_pull import MontaStockPull
+        _logger.info("[Monta Stock Pull] Starting (limit=%s)", limit)
+        total = MontaStockPull(self.env).pull_and_apply(limit=limit)
+        _logger.info("[Monta Stock Pull] Finished. Updated %s templates.", total)
 
-    cron = env["ir.cron"].create(
-        {
-            "name": "Monta: Sync StockAvailable + MinStock (1h)",
-            "model_id": env.ref("product.model_product_product").id,
-            "state": "code",
-            "code": "model.cron_monta_qty_sync()",
-            "interval_number": 1,
-            "interval_type": "hours",
-            "active": True,
-        }
-    )
-    _logger.info("[Monta Qty Sync] Created cron (id=%s)", cron.id)
