@@ -154,8 +154,15 @@ class MontaQtySync:
 
         bottleneck_comp = None
         possible = math.inf
-        for line in bom.bom_line_ids:
+        
+        lines = bom.bom_line_ids
+        if not lines:
+            return 0.0, "phantom BoM exists but has NO lines"
+
+        for line in lines:
             comp = line.product_id
+            if not comp:
+                continue
             need = line.product_qty or 0.0
             if float_is_zero(need, precision_rounding=comp.uom_id.rounding):
                 continue
@@ -169,7 +176,7 @@ class MontaQtySync:
                 bottleneck_comp = comp
 
         if math.isinf(possible):
-            possible = 0.0
+            return 0.0, "no valid component quantities found"
 
         capped = min(possible, max(0.0, monta_avail))
         packs = max(0.0, float(capped))
@@ -258,10 +265,12 @@ class MontaQtySync:
 
             sku = (prod.monta_sku or prod.default_code or "").strip()
             if not sku:
+                _logger.debug("[MontaQtySync] Skipping %s: no monta_sku or default_code", prod.display_name)
                 continue
 
             ms = self._get_product_stock(sku)
             if not ms:
+                _logger.debug("[MontaQtySync] Skipping %s: SKU %s not found on Monta", prod.display_name, sku)
                 continue
 
             count_processed += 1
