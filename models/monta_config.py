@@ -47,16 +47,16 @@ class MontaConfig(models.Model):
     inbound_warehouse_display_name = fields.Char(string="Inbound Warehouse Display Name")
 
     # Delivery/Fulfilment Filtering
-    monta_warehouse_ids = fields.Many2many(
-        "stock.warehouse",
-        string="Monta Warehouses",
-        help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
-    )
-    monta_route_ids = fields.Many2many(
-        "stock.location.route",
-        string="Monta Routes",
-        help="Only orders containing at least one line with these routes are synced with Monta. Leave empty to allow all.",
-    )
+    # monta_warehouse_ids = fields.Many2many(
+    #     "stock.warehouse",
+    #     string="Monta Warehouses",
+    #     help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
+    # )
+    # monta_route_ids = fields.Many2many(
+    #     "stock.location.route",
+    #     string="Monta Routes",
+    #     help="Only orders containing at least one line with these routes are synced with Monta. Leave empty to allow all.",
+    # )
 
     supplier_code_override = fields.Char(string="Supplier Code Override")
     supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")

@@ -71,10 +71,45 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
 
 
 def _ensure_cron(env):
+    # Perform cleanup of old crons on every load to ensure names are correct
+    _remove_old_crons(env)
+    
     _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_HOURS, "hours")
     _create_cron_record(env, CRON_QTY_XMLID, CRON_QTY_NAME, CRON_QTY_MODEL, CRON_QTY_CODE, CRON_QTY_HOURS, "hours")
     _create_cron_record(env, CRON_IF_XMLID, CRON_IF_NAME, CRON_IF_MODEL, CRON_IF_CODE, CRON_IF_HOURS, "hours")
 
+
+def _remove_old_crons(env):
+    """Delete crons that match old names or deprecated XMLIDs."""
+    IrCron = env["ir.cron"].sudo()
+    
+    # List of legacy names that should be removed if found
+    legacy_names = [
+        "Monta: Pull Stock (Deprecated)",
+        "Monta: Pull stock list (/stock) (6h)",
+        "Monta: Sync Sales Order Status (half-hourly)",
+        "Monta: Sync StockAvailable + MinStock (6h)",
+        "Monta: Sync StockAvailable + MinStock (24h)",
+    ]
+    
+    # Delete by XMLID (deprecated ones)
+    for xmlid in (CRON_PULL_XMLID, CRON_OLD_STATUS_XMLID):
+        try:
+            rec = env.ref(xmlid, raise_if_not_found=False)
+            if rec:
+                rec.unlink()
+        except Exception:
+            pass
+
+    # Delete by Name (deep clean)
+    for name in legacy_names:
+        crons = IrCron.search([
+            ("name", "=", name),
+            ("state", "=", "code"),
+            ("code", "ilike", "cron_monta_"),
+        ])
+        if crons:
+            crons.unlink()
 
 def _remove_cron(env):
     IrCron = env["ir.cron"].sudo()
