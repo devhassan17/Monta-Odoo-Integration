@@ -110,16 +110,10 @@ class SaleOrder(models.Model):
             _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
             return False
 
-        # Filter by route (on any line)
-        if cfg.x_monta_route_ids:
-            found = False
-            for line in self.order_line:
-                if line.route_id in cfg.x_monta_route_ids:
-                    found = True
-                    break
-            if not found:
-                _logger.info("[Monta Filter] Skipping %s: no lines match allowed routes", self.name)
-                return False
+        # Filter by shipping method (carrier)
+        if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
+            _logger.info("[Monta Filter] Skipping %s: shipping method %s not in allowed list", self.name, self.carrier_id.name)
+            return False
 
         return True
 
