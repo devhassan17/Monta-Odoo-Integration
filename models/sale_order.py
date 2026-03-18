@@ -4,7 +4,7 @@ import logging
 import re
 from collections import defaultdict
 
-from odoo import fields, models, _
+from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
