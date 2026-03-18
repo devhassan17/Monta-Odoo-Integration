@@ -34,6 +34,21 @@ class SaleOrder(models.Model):
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
 
+    # Tracking & Status related
+    monta_status_ids = fields.One2many(
+        "monta.order.status", "sale_order_id", string="Monta Status History"
+    )
+    monta_tracking_url = fields.Char(
+        string="Monta Tracking URL", compute="_compute_monta_tracking_url", store=False
+    )
+
+    @api.depends("monta_status_ids.track_trace")
+    def _compute_monta_tracking_url(self):
+        for order in self:
+            # Get latest tracking URL from all related status snapshots
+            latest = order.monta_status_ids.filtered(lambda s: s.track_trace).sorted("last_sync", reverse=True)[:1]
+            order.monta_tracking_url = latest.track_trace if latest else False
+
     # ---------------------------------------------------------
     # Helpers
     # ---------------------------------------------------------
@@ -83,6 +98,30 @@ class SaleOrder(models.Model):
                 console_summary="[Monta Guard] blocked by instance URL",
             )
         return ok
+
+    def _is_monta_enabled_for_order(self):
+        self.ensure_one()
+        cfg = self._monta_config()
+        if not cfg:
+            return False
+
+        # Filter by warehouse
+        if cfg.monta_warehouse_ids and self.warehouse_id not in cfg.monta_warehouse_ids:
+            _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
+            return False
+
+        # Filter by route (on any line)
+        if cfg.monta_route_ids:
+            found = False
+            for line in self.order_line:
+                if line.route_id in cfg.monta_route_ids:
+                    found = True
+                    break
+            if not found:
+                _logger.info("[Monta Filter] Skipping %s: no lines match allowed routes", self.name)
+                return False
+
+        return True
 
     def _create_monta_log(self, payload, level="info", tag="Monta API", console_summary=None):
         self.ensure_one()
@@ -375,7 +414,7 @@ class SaleOrder(models.Model):
 
         res = super().action_confirm()
         for order in self:
-            if order._is_company_allowed():
+            if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
                 # check if it has any non-subscription lines
                 lines = order._prepare_monta_lines()
                 if lines:
@@ -390,9 +429,14 @@ class SaleOrder(models.Model):
 
         tracked_fields = {"partner_id", "order_line", "client_order_ref", "validity_date", "commitment_date"}
         if any(f in vals for f in tracked_fields):
-            # Only mark for sync if confirmed
+            # Only mark for sync if confirmed AND not already sent
             for order in self:
-                if order.state in ("sale", "done") and order._is_company_allowed():
+                if (
+                    order.state in ("sale", "done")
+                    and order.monta_sync_state != "sent"
+                    and order._is_company_allowed()
+                    and order._is_monta_enabled_for_order()
+                ):
                     lines = order._prepare_monta_lines()
                     if lines:
                         vals["monta_needs_sync"] = True
@@ -400,12 +444,13 @@ class SaleOrder(models.Model):
 
         res = super().write(vals)
 
-        # Only push when confirmed + needs_sync
-        for order in self.filtered(lambda o: o.state in ("sale", "done") and o.monta_needs_sync):
-            if not order._is_company_allowed():
-                continue
-            if order._should_push_now():
-                order._monta_create()
+        # Only push when confirmed + needs_sync + not already sent
+        for order in self.filtered(
+            lambda o: o.state in ("sale", "done") and o.monta_needs_sync and o.monta_sync_state != "sent"
+        ):
+            if order._is_company_allowed() and order._is_monta_enabled_for_order():
+                if order._should_push_now():
+                    order._monta_create()
 
         return res
 

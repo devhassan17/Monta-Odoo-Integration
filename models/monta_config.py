@@ -40,6 +40,18 @@ class MontaConfig(models.Model):
     warehouse_tz = fields.Char(string="Warehouse Timezone", default="Europe/Amsterdam")
     inbound_warehouse_display_name = fields.Char(string="Inbound Warehouse Display Name")
 
+    # Delivery/Fulfilment Filtering
+    monta_warehouse_ids = fields.Many2many(
+        "stock.warehouse",
+        string="Monta Warehouses",
+        help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
+    )
+    monta_route_ids = fields.Many2many(
+        "stock.location.route",
+        string="Monta Routes",
+        help="Only orders containing at least one line with these routes are synced with Monta. Leave empty to allow all.",
+    )
+
     supplier_code_override = fields.Char(string="Supplier Code Override")
     supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")
     default_supplier_code = fields.Char(string="Default Supplier Code")

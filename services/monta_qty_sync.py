@@ -243,6 +243,9 @@ class MontaQtySync:
             ("active", "=", True),
             ("type", "in", ["product", "consu"]),
             ("company_id", "in", [company.id, False]),
+            "|",
+            ("monta_sku", "!=", False),
+            ("default_code", "!=", False),
         ]
         products = Product.search(domain, limit=limit)
 

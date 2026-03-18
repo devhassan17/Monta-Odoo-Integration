@@ -2,23 +2,32 @@
 from odoo import SUPERUSER_ID
 
 
-# Existing (sales status) cron
-CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
-CRON_NAME = "Monta: Sync Sales Order Status (half-hourly)"
+# 1. Sales Status Cron (24h)
+CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_24h"
+CRON_NAME = "Monta: Sync Sales Order Status (24h)"
 CRON_MODEL = "sale.order"
 CRON_METHOD = "cron_monta_sync_status"
 CRON_CODE = f"model.{CRON_METHOD}(batch_limit=200)"
-CRON_INTERVAL_MIN = 30  # minutes
+CRON_HOURS = 24
 
-# Stock/qty sync (product model)
+# 2. Stock Qty Cron (24h)
 CRON_QTY_XMLID = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
-CRON_QTY_NAME = "Monta: Sync StockAvailable + MinStock (24h)"
+CRON_QTY_NAME = "Monta: Sync Stock Quantities (24h)"
 CRON_QTY_MODEL = "product.product"
 CRON_QTY_METHOD = "cron_monta_qty_sync"
 CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
 CRON_QTY_HOURS = 24
 
-# Deprecated/Removed CRON (left for cleanup/deactivation logic)
+# 3. Inbound Forecast Cron (24h)
+CRON_IF_XMLID = "Monta-Odoo-Integration.ir_cron_monta_inbound_push"
+CRON_IF_NAME = "Monta: Sync Inbound Forecasts (24h)"
+CRON_IF_MODEL = "purchase.order"
+CRON_IF_METHOD = "cron_monta_push_inbound_forecast"
+CRON_IF_CODE = f"model.{CRON_IF_METHOD}()"
+CRON_IF_HOURS = 24
+
+# Deprecated/Removed CRONs (left for cleanup/deactivation logic)
+CRON_OLD_STATUS_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
 CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
 CRON_PULL_NAME = "Monta: Pull Stock (Deprecated)"
 
@@ -61,14 +70,16 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
 
 
 def _ensure_cron(env):
-    _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_INTERVAL_MIN, "minutes")
+    _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_HOURS, "hours")
     _create_cron_record(env, CRON_QTY_XMLID, CRON_QTY_NAME, CRON_QTY_MODEL, CRON_QTY_CODE, CRON_QTY_HOURS, "hours")
+    _create_cron_record(env, CRON_IF_XMLID, CRON_IF_NAME, CRON_IF_MODEL, CRON_IF_CODE, CRON_IF_HOURS, "hours")
 
 
 def _remove_cron(env):
     IrCron = env["ir.cron"].sudo()
 
-    for xmlid in (CRON_XMLID, CRON_QTY_XMLID):
+    xmlids_to_remove = (CRON_XMLID, CRON_QTY_XMLID, CRON_IF_XMLID, CRON_OLD_STATUS_XMLID, CRON_PULL_XMLID)
+    for xmlid in xmlids_to_remove:
         try:
             rec = env.ref(xmlid)
             if rec:
@@ -76,11 +87,14 @@ def _remove_cron(env):
         except ValueError:
             pass
 
-    names_to_clean = [CRON_NAME, CRON_QTY_NAME]
-    if CRON_PULL_NAME:
-        names_to_clean.append(CRON_PULL_NAME)
+    names_to_clean = [CRON_NAME, CRON_QTY_NAME, CRON_IF_NAME, CRON_PULL_NAME]
+    # Add legacy names for deep clean
+    names_to_clean.append("Monta: Sync Sales Order Status (half-hourly)")
+    names_to_clean.append("Monta: Sync StockAvailable + MinStock (24h)")
 
     for name in names_to_clean:
+        if not name:
+            continue
         crons = IrCron.search([
             ("name", "=", name),
             ("state", "=", "code"),
