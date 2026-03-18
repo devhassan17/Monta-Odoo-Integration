@@ -18,6 +18,10 @@ CRON_QTY_METHOD = "cron_monta_qty_sync"
 CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
 CRON_QTY_HOURS = 24
 
+# Deprecated/Removed CRON (left for cleanup/deactivation logic)
+CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
+CRON_PULL_NAME = "Monta: Pull Stock (Deprecated)"
+
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):
     """Idempotent cron creation: if env.ref(xmlid) exists -> skip."""
@@ -42,7 +46,7 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
         "code": code,
         "interval_number": int(interval_number),
         "interval_type": interval_type,
-        "active": False if xmlid == CRON_PULL_XMLID else True,
+        "active": False if (CRON_PULL_XMLID and xmlid == CRON_PULL_XMLID) else True,
         "user_id": user_id,
     })
 
@@ -72,7 +76,11 @@ def _remove_cron(env):
         except ValueError:
             pass
 
-    for name in (CRON_NAME, CRON_QTY_NAME, CRON_PULL_NAME):
+    names_to_clean = [CRON_NAME, CRON_QTY_NAME]
+    if CRON_PULL_NAME:
+        names_to_clean.append(CRON_PULL_NAME)
+
+    for name in names_to_clean:
         crons = IrCron.search([
             ("name", "=", name),
             ("state", "=", "code"),

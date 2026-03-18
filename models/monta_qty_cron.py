@@ -26,5 +26,10 @@ class ProductProduct(models.Model):
         _logger.info("[Monta Qty Sync] Starting (limit=%s)", limit)
         MontaQtySync(self.env).run(limit=limit)
 
+    @api.model
+    def cron_monta_stock_pull(self, limit=None):
+        """ Alias for cron_monta_qty_sync because some legacy crons/actions might call it. """
+        return self.cron_monta_qty_sync(limit=limit)
+
 
 
