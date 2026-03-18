@@ -8,6 +8,12 @@ class MontaConfig(models.Model):
     _description = "Monta Configuration"
     _rec_name = "name"
 
+    def _register_hook(self):
+        """Ensure crons are updated on every registry load/upgrade."""
+        from ..hooks import _ensure_cron
+        _ensure_cron(self.env)
+        return super()._register_hook()
+
     name = fields.Char(default="Monta Configuration", required=True)
 
     # API

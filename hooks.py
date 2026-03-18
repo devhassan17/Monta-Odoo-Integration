@@ -33,22 +33,16 @@ CRON_PULL_NAME = "Monta: Pull Stock (Deprecated)"
 
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):
-    """Idempotent cron creation: if env.ref(xmlid) exists -> skip."""
+    """Idempotent cron sync: create if missing, update if exists."""
     IrCron = env["ir.cron"].sudo()
     IrModel = env["ir.model"].sudo()
     IrModelData = env["ir.model.data"].sudo()
-
-    try:
-        env.ref(xmlid)
-        return
-    except ValueError:
-        pass
 
     model_rec = IrModel._get(model)
     if not model_rec:
         return
 
-    cron = IrCron.create({
+    vals = {
         "name": name,
         "model_id": model_rec.id,
         "state": "code",
@@ -57,16 +51,23 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
         "interval_type": interval_type,
         "active": False if (CRON_PULL_XMLID and xmlid == CRON_PULL_XMLID) else True,
         "user_id": user_id,
-    })
+    }
 
-    module, name_part = xmlid.split(".")
-    IrModelData.create({
-        "name": name_part,
-        "module": module,
-        "model": "ir.cron",
-        "res_id": cron.id,
-        "noupdate": True,
-    })
+    try:
+        cron = env.ref(xmlid)
+        # Update existing record to match new standards (e.g. 24h interval)
+        cron.write(vals)
+    except ValueError:
+        # Create new one
+        cron = IrCron.create(vals)
+        module, name_part = xmlid.split(".")
+        IrModelData.create({
+            "name": name_part,
+            "module": module,
+            "model": "ir.cron",
+            "res_id": cron.id,
+            "noupdate": True,
+        })
 
 
 def _ensure_cron(env):
