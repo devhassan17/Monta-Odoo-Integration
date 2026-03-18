@@ -49,7 +49,7 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
         "code": code,
         "interval_number": int(interval_number),
         "interval_type": interval_type,
-        "active": True,
+        "active": False if xmlid == CRON_PULL_XMLID else True,
         "user_id": user_id,
     })
 
