@@ -18,13 +18,6 @@ CRON_QTY_METHOD = "cron_monta_qty_sync"
 CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
 CRON_QTY_HOURS = 24
 
-CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
-CRON_PULL_NAME = "Monta: Pull stock list (/stock) (24h)"
-CRON_PULL_MODEL = "product.product"
-CRON_PULL_METHOD = "cron_monta_stock_pull"
-CRON_PULL_CODE = f"model.{CRON_PULL_METHOD}()"
-CRON_PULL_HOURS = 24
-
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):
     """Idempotent cron creation: if env.ref(xmlid) exists -> skip."""
@@ -66,13 +59,12 @@ def _create_cron_record(env, xmlid, name, model, code, interval_number, interval
 def _ensure_cron(env):
     _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_INTERVAL_MIN, "minutes")
     _create_cron_record(env, CRON_QTY_XMLID, CRON_QTY_NAME, CRON_QTY_MODEL, CRON_QTY_CODE, CRON_QTY_HOURS, "hours")
-    _create_cron_record(env, CRON_PULL_XMLID, CRON_PULL_NAME, CRON_PULL_MODEL, CRON_PULL_CODE, CRON_PULL_HOURS, "hours")
 
 
 def _remove_cron(env):
     IrCron = env["ir.cron"].sudo()
 
-    for xmlid in (CRON_XMLID, CRON_QTY_XMLID, CRON_PULL_XMLID):
+    for xmlid in (CRON_XMLID, CRON_QTY_XMLID):
         try:
             rec = env.ref(xmlid)
             if rec:

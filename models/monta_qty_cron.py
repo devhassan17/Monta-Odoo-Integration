@@ -27,13 +27,4 @@ class ProductProduct(models.Model):
         MontaQtySync(self.env).run(limit=limit)
 
 
-    @api.model
-    def cron_monta_stock_pull(self, limit=None):
-        """
-        Entry point for the 24-hour bulk stock pull cron.
-        """
-        from ..services.monta_stock_pull import MontaStockPull
-        _logger.info("[Monta Stock Pull] Starting (limit=%s)", limit)
-        total = MontaStockPull(self.env).pull_and_apply(limit=limit)
-        _logger.info("[Monta Stock Pull] Finished. Updated %s templates.", total)
 
