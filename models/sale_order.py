@@ -112,12 +112,22 @@ class SaleOrder(models.Model):
             if not p:
                 continue
 
+            # Skip subscription products per user request
+            name = (p.name or "").upper()
+            display_name = (p.display_name or "").upper()
+            if "(SUBSCRIPTION)" in name or "(SUBSCRIPTION)" in display_name:
+                continue
+            if hasattr(p, "recurring_invoice") and p.recurring_invoice:
+                continue
+
             qty = float(l.product_uom_qty or 0.0)
             if qty <= 0:
                 continue
 
             leaves = expand_to_leaf_components(self.env, self.company_id.id, p, qty)
             if not leaves:
+                # If it's not a subscription, but we can't expand it, it might be a missing BoM
+                # But we only log error if it's not a subscription
                 missing.append(f"'{p.display_name}' has no resolvable components.")
                 continue
 
@@ -143,11 +153,10 @@ class SaleOrder(models.Model):
                 tag="Monta SKU check",
                 console_summary=f"[Monta SKU check] {len(missing)} missing",
             )
-            raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
-
+            # raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+            # Just return empty if everything is missing (e.g. only subscriptions)
+        
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
-        if not lines:
-            raise ValidationError("Order lines expanded to empty/zero quantities.")
         return lines
 
     def _prepare_monta_order_payload(self):
@@ -159,6 +168,10 @@ class SaleOrder(models.Model):
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or "", partner.street2 or "")
         lines = self._prepare_monta_lines()
+        
+        if not lines:
+            # If no lines (e.g. only subscriptions), we shouldn't even call this or we should skip the POST
+            return None
 
         invoice_id_digits = re.sub(r"\D", "", self.name or "")
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
@@ -211,6 +224,10 @@ class SaleOrder(models.Model):
             return 0, {"note": "Blocked: company not allowed in Monta Configuration"}
         if not self._is_allowed_instance():
             return 0, {"note": "Blocked: instance URL guard"}
+        
+        if method == "POST" and path == "/order" and not payload:
+            return 0, {"note": "Skipped: no lines to push (possibly all subscriptions)"}
+            
         client = MontaClient(self.env, company=self.company_id)
         return client.request(self, method, path, payload=payload, headers=headers)
 
@@ -232,8 +249,13 @@ class SaleOrder(models.Model):
 
     def _monta_create(self):
         self.ensure_one()
+        
+        payload = self._prepare_monta_order_payload()
+        if not payload:
+            _logger.info("[Monta] Skipping push for %s: no shippable lines found.", self.name)
+            return
 
-        status, body = self._monta_request("POST", "/order", self._prepare_monta_order_payload())
+        status, body = self._monta_request("POST", "/order", payload)
 
         Status = self.env["monta.order.status"].sudo()
         account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
@@ -341,9 +363,11 @@ class SaleOrder(models.Model):
         res = super().action_confirm()
         for order in self:
             if order._is_company_allowed():
-                # mark for sync; and try once (but protected by skip flag in internal writes)
-                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
-                order._monta_create()
+                # check if it has any non-subscription lines
+                lines = order._prepare_monta_lines()
+                if lines:
+                    order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
+                    order._monta_create()
         return res
 
     def write(self, vals):
@@ -353,7 +377,13 @@ class SaleOrder(models.Model):
 
         tracked_fields = {"partner_id", "order_line", "client_order_ref", "validity_date", "commitment_date"}
         if any(f in vals for f in tracked_fields):
-            vals.setdefault("monta_needs_sync", True)
+            # Only mark for sync if confirmed
+            for order in self:
+                if order.state in ("sale", "done") and order._is_company_allowed():
+                    lines = order._prepare_monta_lines()
+                    if lines:
+                        vals["monta_needs_sync"] = True
+                        break
 
         res = super().write(vals)
 

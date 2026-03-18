@@ -226,6 +226,7 @@ class MontaQtySync:
         domain = [
             ("active", "=", True),
             ("type", "in", ["product", "consu"]),
+            ("company_id", "in", [company.id, False]),
         ]
         products = Product.search(domain, limit=limit)
 

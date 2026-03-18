@@ -17,8 +17,8 @@ class MontaStockPull:
         self.env = env
 
     def _endpoint(self):
-        # Adjust for your tenant, e.g. /stock?channel=X or /inventory
-        return "/stock"
+        # /product/stock is the bulk endpoint in v6
+        return "/product/stock"
 
     def _get_log_order(self):
         """
