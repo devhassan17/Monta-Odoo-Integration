@@ -43,17 +43,11 @@ class MontaConfig(models.Model):
     # Delivery/Fulfilment Filtering
     monta_warehouse_ids = fields.Many2many(
         "stock.warehouse",
-        "monta_config_warehouse_rel",
-        "config_id",
-        "warehouse_id",
         string="Monta Warehouses",
         help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
     )
     monta_route_ids = fields.Many2many(
         "stock.location.route",
-        "monta_config_route_rel",
-        "config_id",
-        "route_id",
         string="Monta Routes",
         help="Only orders containing at least one line with these routes are synced with Monta. Leave empty to allow all.",
     )

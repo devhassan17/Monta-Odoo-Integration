@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "18.0.16.0",
+    "version": "18.0.17.0",
     "summary": "Integrate Odoo with Monta WMS — orders, EDD, inbound forecasts and stock sync.",
     "description": """
 Monta-Odoo Integration
@@ -22,6 +22,7 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
         "purchase",
         "sale_subscription",
         "stock",
+        "sale_stock",
     ],
     "data": [
         "security/ir.model.access.csv",
