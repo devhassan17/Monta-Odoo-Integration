@@ -111,19 +111,32 @@ class SaleOrder(models.Model):
             return False
 
         # Filter by shipping method (carrier / route)
+        # Resolve the effective carrier: prefer carrier_id, but also check delivery lines if empty
+        effective_carrier = self.carrier_id
+        if not effective_carrier:
+            for line in self.order_line:
+                if getattr(line, "is_delivery", False) and line.product_id:
+                    linked_carrier = self.env["delivery.carrier"].sudo().search(
+                        [("product_id", "=", line.product_id.id)], limit=1
+                    )
+                    if linked_carrier:
+                        effective_carrier = linked_carrier
+                        _logger.info("[Monta Filter] %s: auto-detected carrier '%s' from delivery line", self.name, linked_carrier.name)
+                        break
+
         # PRIMARY: Check if the carrier has a 'Monta' route in its standard route_ids field
         carrier_allowed = False
-        if self.carrier_id:
+        if effective_carrier:
             try:
-                if any(r.name == "Monta" for r in self.carrier_id.route_ids):
+                if any(r.name == "Monta" for r in effective_carrier.route_ids):
                     carrier_allowed = True
             except Exception:
                 pass
 
         # FALLBACK: If route check didn't match, check the manual whitelist in Monta Config
         if not carrier_allowed:
-            if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
-                carrier_name = self.carrier_id.name or "None/Empty"
+            if cfg.x_monta_route_ids and effective_carrier not in cfg.x_monta_route_ids:
+                carrier_name = (effective_carrier.name if effective_carrier else "None/Empty")
                 _logger.info("[Monta Filter] Skipping %s: shipping method '%s' has no 'Monta' route and is not in whitelist", self.name, carrier_name)
                 return False
 
@@ -393,7 +406,8 @@ class SaleOrder(models.Model):
                     }
                 )
             upsert_snapshot(self.name, "error", status, body)
-            self.message_post(body="Failed to send order to Monta.")
+            _logger.error("[Monta] Order %s rejected with 400. Response: %s", self.name, body)
+            self.message_post(body=f"Failed to send order to Monta. Response: {body}")
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
@@ -438,22 +452,26 @@ class SaleOrder(models.Model):
                 raise
 
         for order in self:
-            if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
-                # check if it has any non-subscription lines
-                lines, missing = order._prepare_monta_lines()
-                if missing:
-                    msg = "Cannot push to Monta sync during confirmation:\n- " + "\n- ".join(missing)
-                    # If this is called from a payment return/webhook (non-interactive), don't crash the order confirmation.
-                    # We check for common UI context keys.
-                    is_ui_action = self.env.context.get('params', {}).get('action') or self.env.context.get('active_model')
-                    if not is_ui_action or self.env.context.get('payment_tx_id'):
-                        order.message_post(body=msg)
-                        _logger.warning("[Monta SKU] %s", msg)
-                        continue
-                    raise ValidationError(msg)
-                if lines:
-                    order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
-                    order._monta_create()
+            try:
+                if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
+                    # check if it has any non-subscription lines
+                    lines, missing = order._prepare_monta_lines()
+                    if missing:
+                        msg = "Cannot push to Monta sync during confirmation:\n- " + "\n- ".join(missing)
+                        # If this is called from a payment return/webhook (non-interactive), don't crash.
+                        is_ui_action = self.env.context.get('params', {}).get('action') or self.env.context.get('active_model')
+                        if not is_ui_action or self.env.context.get('payment_tx_id'):
+                            # Use logger only - avoid message_post which triggers write() -> subscription constraint
+                            _logger.warning("[Monta SKU] %s for %s", msg, order.name)
+                            continue
+                        raise ValidationError(msg)
+                    if lines:
+                        order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
+                        order._monta_create()
+            except ValidationError:
+                raise
+            except Exception as sync_err:
+                _logger.error("[Monta] Sync failed for %s during confirmation: %s", order.name, sync_err)
         return res
 
     def write(self, vals):
