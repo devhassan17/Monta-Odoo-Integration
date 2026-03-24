@@ -114,14 +114,16 @@ class SaleOrder(models.Model):
         # Resolve the effective carrier: prefer carrier_id, but also check delivery lines if empty
         effective_carrier = self.carrier_id
         if not effective_carrier:
+            # Also check any product line whose product is a delivery carrier's product
+            # This handles backend orders where delivery product is manually added (is_delivery=False)
             for line in self.order_line:
-                if getattr(line, "is_delivery", False) and line.product_id:
+                if line.product_id:
                     linked_carrier = self.env["delivery.carrier"].sudo().search(
                         [("product_id", "=", line.product_id.id)], limit=1
                     )
                     if linked_carrier:
                         effective_carrier = linked_carrier
-                        _logger.info("[Monta Filter] %s: auto-detected carrier '%s' from delivery line", self.name, linked_carrier.name)
+                        _logger.info("[Monta Filter] %s: auto-detected carrier '%s' from product line", self.name, linked_carrier.name)
                         break
 
         # PRIMARY: Check if the carrier has a 'Monta' route in its standard route_ids field
@@ -420,33 +422,26 @@ class SaleOrder(models.Model):
     # ---------------------------------------------------------
     def action_confirm(self):
         # ✅ Mitigation for Odoo 18 Subscription Validation Error
-        # If any line has a recurring/subscription product but no plan_id is set,
-        # auto-assign a default plan BEFORE super() runs (which triggers the constraint).
+        # We only provide a last-resort safety net here.
+        # The proactive pre-check was causing regular orders from website to be flagged as subscriptions.
         Plan = self.env["sale.subscription.plan"].sudo()
-        for order in self:
-            has_recurring = any(
-                getattr(line.product_id, "is_subscription", False)
-                or getattr(line.product_id, "recurring_invoice", False)
-                for line in order.order_line
-            )
-            if has_recurring and not getattr(order, "plan_id", False):
-                default_plan = Plan.search([], limit=1)
-                if default_plan:
-                    order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
-                    _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
+
+        def _assign_plan_if_missing(orders):
+            for order in orders:
+                if not getattr(order, "plan_id", False):
+                    default_plan = Plan.search([], limit=1)
+                    if default_plan:
+                        order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
+                        _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
 
         try:
             res = super().action_confirm()
         except Exception as e:
             err_msg = str(e)
             if "recurring plan" in err_msg.lower() or "recurring product" in err_msg.lower():
-                # Last-resort fallback: assign a plan and retry once
-                _logger.warning("[Monta Mitigation] Caught subscription constraint error; retrying with default plan. %s", err_msg)
-                for order in self:
-                    if not getattr(order, "plan_id", False):
-                        default_plan = Plan.search([], limit=1)
-                        if default_plan:
-                            order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
+                # Last-resort: assign a plan and retry once
+                _logger.warning("[Monta Mitigation] Caught subscription constraint for %s; retrying. %s", self.mapped('name'), err_msg)
+                _assign_plan_if_missing(self)
                 res = super().action_confirm()
             else:
                 raise
