@@ -110,21 +110,11 @@ class SaleOrder(models.Model):
             _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
             return False
 
-        # Filter by shipping method (carrier / route)
-        # Check if the carrier has a 'Monta' route assigned (e.g. via Odoo Studio field x_route_ids)
-        is_allowed_route = False
-        if self.carrier_id:
-            # Safely check for 'Monta' in routes (common Studio field name: x_route_ids)
-            if hasattr(self.carrier_id, "x_route_ids"):
-                if any(r.name == "Monta" for r in self.carrier_id.x_route_ids):
-                    is_allowed_route = True
-
-        if not is_allowed_route:
-            # Fallback for manual global whitelist in Monta Config
-            if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
-                carrier_name = self.carrier_id.name or "None/Empty"
-                _logger.info("[Monta Filter] Skipping %s: shipping method '%s' not allowed by route or global config", self.name, carrier_name)
-                return False
+        # Filter by shipping method (carrier)
+        if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
+            carrier_name = self.carrier_id.name or "None/Empty"
+            _logger.info("[Monta Filter] Skipping %s: shipping method '%s' not explicitly whitelisted in Monta Config", self.name, carrier_name)
+            return False
 
         return True
 
@@ -408,14 +398,14 @@ class SaleOrder(models.Model):
         # If order has subscription products but no plan_id, try to find a default plan to avoid crash.
         Plan = self.env["sale.subscription.plan"].sudo()
         for order in self:
-            if not getattr(order, "is_subscription", False):
-                # check if any line has a subscription product
-                if any(getattr(line.product_id, "is_subscription", False) or getattr(line.product_id, "recurring_invoice", False) for line in order.order_line):
-                    if not getattr(order, "plan_id", False):
-                        default_plan = Plan.search([], limit=1)
-                        if default_plan:
-                            order.write({"plan_id": default_plan.id})
-                            _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
+            # Only auto-assign a plan if Odoo itself flags the order as a subscription (is_subscription is True)
+            # but the plan is missing. This avoids "forcing" plans on regular orders.
+            if getattr(order, "is_subscription", False):
+                if not getattr(order, "plan_id", False):
+                    default_plan = Plan.search([], limit=1)
+                    if default_plan:
+                        order.write({"plan_id": default_plan.id})
+                        _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
 
         res = super().action_confirm()
         for order in self:
