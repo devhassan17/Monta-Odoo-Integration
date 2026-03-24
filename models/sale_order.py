@@ -197,11 +197,11 @@ class SaleOrder(models.Model):
                 tag="Monta SKU check",
                 console_summary=f"[Monta SKU check] {len(missing)} missing",
             )
-            raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
-            # Just return empty if everything is missing (e.g. only subscriptions)
+            # We no longer raise ValidationError here to avoid crashing background writes.
+            # Callers like action_confirm will handle raising it if needed.
         
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
-        return lines
+        return lines, missing
 
     def _prepare_monta_order_payload(self):
         self.ensure_one()
@@ -211,7 +211,7 @@ class SaleOrder(models.Model):
 
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or "", partner.street2 or "")
-        lines = self._prepare_monta_lines()
+        lines, _missing = self._prepare_monta_lines()
         
         if not lines:
             # If no lines (e.g. only subscriptions), we shouldn't even call this or we should skip the POST
@@ -421,7 +421,9 @@ class SaleOrder(models.Model):
         for order in self:
             if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
                 # check if it has any non-subscription lines
-                lines = order._prepare_monta_lines()
+                lines, missing = order._prepare_monta_lines()
+                if missing:
+                    raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
                 if lines:
                     order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
                     order._monta_create()
@@ -442,7 +444,7 @@ class SaleOrder(models.Model):
                     and order._is_company_allowed()
                     and order._is_monta_enabled_for_order()
                 ):
-                    lines = order._prepare_monta_lines()
+                    lines, _missing = order._prepare_monta_lines()
                     if lines:
                         vals["monta_needs_sync"] = True
                         break
@@ -485,12 +487,13 @@ class SaleOrder(models.Model):
             if force:
                 order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": False, "monta_retry_count": 0})
 
+            # Explicit check for missing SKUs when sending
+            _lines, missing = order._prepare_monta_lines()
+            if missing:
+                raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+
             order._monta_create()
 
-        return True
-
-    def action_manual_send_to_monta(self):
-        return self.with_context(force_send_to_monta=True)._action_send_to_monta()
         return True
 
     def action_manual_send_to_monta(self):
