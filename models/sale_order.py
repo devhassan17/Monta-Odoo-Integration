@@ -452,10 +452,15 @@ class SaleOrder(models.Model):
         except Exception as e:
             err_msg = str(e)
             if "recurring plan" in err_msg.lower() or "recurring product" in err_msg.lower():
-                # Last-resort: assign a plan and retry once
+                # Last-resort: assign a plan and retry, but only for orders still needing confirmation
                 _logger.warning("[Monta Mitigation] Caught subscription constraint for %s; retrying. %s", self.mapped('name'), err_msg)
                 _assign_plan_if_missing(self)
-                res = super().action_confirm()
+                # Only retry orders still in draft (first attempt may have partially confirmed)
+                still_draft = self.filtered(lambda o: o.state == "draft")
+                if still_draft:
+                    res = super(SaleOrder, still_draft).action_confirm()
+                else:
+                    res = True  # already confirmed by the partial first attempt
             else:
                 raise
 
