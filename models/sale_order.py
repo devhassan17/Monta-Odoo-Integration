@@ -110,11 +110,22 @@ class SaleOrder(models.Model):
             _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
             return False
 
-        # Filter by shipping method (carrier)
-        if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
-            carrier_name = self.carrier_id.name or "None/Empty"
-            _logger.info("[Monta Filter] Skipping %s: shipping method '%s' not explicitly whitelisted in Monta Config", self.name, carrier_name)
-            return False
+        # Filter by shipping method (carrier / route)
+        # PRIMARY: Check if the carrier has a 'Monta' route in its standard route_ids field
+        carrier_allowed = False
+        if self.carrier_id:
+            try:
+                if any(r.name == "Monta" for r in self.carrier_id.route_ids):
+                    carrier_allowed = True
+            except Exception:
+                pass
+
+        # FALLBACK: If route check didn't match, check the manual whitelist in Monta Config
+        if not carrier_allowed:
+            if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
+                carrier_name = self.carrier_id.name or "None/Empty"
+                _logger.info("[Monta Filter] Skipping %s: shipping method '%s' has no 'Monta' route and is not in whitelist", self.name, carrier_name)
+                return False
 
         return True
 
@@ -395,19 +406,37 @@ class SaleOrder(models.Model):
     # ---------------------------------------------------------
     def action_confirm(self):
         # ✅ Mitigation for Odoo 18 Subscription Validation Error
-        # If order has subscription products but no plan_id, try to find a default plan to avoid crash.
+        # If any line has a recurring/subscription product but no plan_id is set,
+        # auto-assign a default plan BEFORE super() runs (which triggers the constraint).
         Plan = self.env["sale.subscription.plan"].sudo()
         for order in self:
-            # Only auto-assign a plan if Odoo itself flags the order as a subscription (is_subscription is True)
-            # but the plan is missing. This avoids "forcing" plans on regular orders.
-            if getattr(order, "is_subscription", False):
-                if not getattr(order, "plan_id", False):
-                    default_plan = Plan.search([], limit=1)
-                    if default_plan:
-                        order.write({"plan_id": default_plan.id})
-                        _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
+            has_recurring = any(
+                getattr(line.product_id, "is_subscription", False)
+                or getattr(line.product_id, "recurring_invoice", False)
+                for line in order.order_line
+            )
+            if has_recurring and not getattr(order, "plan_id", False):
+                default_plan = Plan.search([], limit=1)
+                if default_plan:
+                    order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
+                    _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
 
-        res = super().action_confirm()
+        try:
+            res = super().action_confirm()
+        except Exception as e:
+            err_msg = str(e)
+            if "recurring plan" in err_msg.lower() or "recurring product" in err_msg.lower():
+                # Last-resort fallback: assign a plan and retry once
+                _logger.warning("[Monta Mitigation] Caught subscription constraint error; retrying with default plan. %s", err_msg)
+                for order in self:
+                    if not getattr(order, "plan_id", False):
+                        default_plan = Plan.search([], limit=1)
+                        if default_plan:
+                            order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
+                res = super().action_confirm()
+            else:
+                raise
+
         for order in self:
             if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
                 # check if it has any non-subscription lines
