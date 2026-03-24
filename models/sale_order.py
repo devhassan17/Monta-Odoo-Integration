@@ -423,7 +423,15 @@ class SaleOrder(models.Model):
                 # check if it has any non-subscription lines
                 lines, missing = order._prepare_monta_lines()
                 if missing:
-                    raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+                    msg = "Cannot push to Monta sync during confirmation:\n- " + "\n- ".join(missing)
+                    # If this is called from a payment return/webhook (non-interactive), don't crash the order confirmation.
+                    # We check for common UI context keys.
+                    is_ui_action = self.env.context.get('params', {}).get('action') or self.env.context.get('active_model')
+                    if not is_ui_action or self.env.context.get('payment_tx_id'):
+                        order.message_post(body=msg)
+                        _logger.warning("[Monta SKU] %s", msg)
+                        continue
+                    raise ValidationError(msg)
                 if lines:
                     order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
                     order._monta_create()

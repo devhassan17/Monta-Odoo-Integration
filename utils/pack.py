@@ -110,4 +110,9 @@ def expand_to_leaf_components(env, company_id, product, qty, depth=0, seen=None)
         if c.id == product.id:
             continue
         leaves.extend(expand_to_leaf_components(env, company_id, c, q, depth + 1, seen))
+    
+    if not leaves:
+        # Fallback to self if it looks like a pack but has no components
+        return [(product, float(qty or 0.0))]
+        
     return leaves
