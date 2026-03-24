@@ -110,10 +110,20 @@ class SaleOrder(models.Model):
             _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
             return False
 
-        # Filter by shipping method (carrier)
-        if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
-            _logger.info("[Monta Filter] Skipping %s: shipping method %s not in allowed list", self.name, self.carrier_id.name)
-            return False
+        # Filter by shipping method (carrier / route)
+        # Check if the carrier has a 'Monta' route assigned (e.g. via Odoo Studio field x_route_ids)
+        is_allowed_route = False
+        if self.carrier_id:
+            routes = getattr(self.carrier_id, "x_route_ids", self.env["stock.location.route"])
+            if any(r.name == "Monta" for r in routes):
+                is_allowed_route = True
+
+        if not is_allowed_route:
+            # Fallback for manual global whitelist in Monta Config
+            if cfg.x_monta_route_ids and self.carrier_id not in cfg.x_monta_route_ids:
+                carrier_name = self.carrier_id.name or "None/Empty"
+                _logger.info("[Monta Filter] Skipping %s: shipping method '%s' not allowed by route or global config", self.name, carrier_name)
+                return False
 
         return True
 
@@ -186,7 +196,7 @@ class SaleOrder(models.Model):
                 tag="Monta SKU check",
                 console_summary=f"[Monta SKU check] {len(missing)} missing",
             )
-            # raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+            raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
             # Just return empty if everything is missing (e.g. only subscriptions)
         
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
@@ -476,6 +486,10 @@ class SaleOrder(models.Model):
 
             order._monta_create()
 
+        return True
+
+    def action_manual_send_to_monta(self):
+        return self.with_context(force_send_to_monta=True)._action_send_to_monta()
         return True
 
     def action_manual_send_to_monta(self):
