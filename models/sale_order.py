@@ -114,9 +114,10 @@ class SaleOrder(models.Model):
         # Check if the carrier has a 'Monta' route assigned (e.g. via Odoo Studio field x_route_ids)
         is_allowed_route = False
         if self.carrier_id:
-            routes = getattr(self.carrier_id, "x_route_ids", self.env["stock.location.route"])
-            if any(r.name == "Monta" for r in routes):
-                is_allowed_route = True
+            # Safely check for 'Monta' in routes (common Studio field name: x_route_ids)
+            if hasattr(self.carrier_id, "x_route_ids"):
+                if any(r.name == "Monta" for r in self.carrier_id.x_route_ids):
+                    is_allowed_route = True
 
         if not is_allowed_route:
             # Fallback for manual global whitelist in Monta Config
