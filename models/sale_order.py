@@ -118,12 +118,25 @@ class SaleOrder(models.Model):
             # This handles backend orders where delivery product is manually added (is_delivery=False)
             for line in self.order_line:
                 if line.product_id:
+                    p = line.product_id
+                    # Search by variant (product.product) first, then by template as fallback
                     linked_carrier = self.env["delivery.carrier"].sudo().search(
-                        [("product_id", "=", line.product_id.id)], limit=1
+                        [("product_id", "=", p.id)], limit=1
+                    )
+                    if not linked_carrier and p.product_tmpl_id:
+                        # Fallback: match by template (in case carrier uses template product)
+                        linked_carrier = self.env["delivery.carrier"].sudo().search(
+                            [("product_id.product_tmpl_id", "=", p.product_tmpl_id.id)], limit=1
+                        )
+                    _logger.info(
+                        "[Monta Filter] %s: line product '%s' (id=%s, tmpl=%s) -> carrier: %s",
+                        self.name, p.display_name, p.id,
+                        p.product_tmpl_id.id if p.product_tmpl_id else "N/A",
+                        linked_carrier.name if linked_carrier else "Not found"
                     )
                     if linked_carrier:
                         effective_carrier = linked_carrier
-                        _logger.info("[Monta Filter] %s: auto-detected carrier '%s' from product line", self.name, linked_carrier.name)
+                        _logger.info("[Monta Filter] %s: using carrier '%s' from product line", self.name, linked_carrier.name)
                         break
 
         # PRIMARY: Check if the carrier has a 'Monta' route in its standard route_ids field
