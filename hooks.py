@@ -2,120 +2,62 @@
 from odoo import SUPERUSER_ID
 
 
-# 1. Sales Status Cron (24h)
-CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_24h"
-CRON_NAME = "Monta: Sync Sales Order Status (24h)"
+# Existing (sales status) cron
+CRON_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
+CRON_NAME = "Monta: Sync Sales Order Status (half-hourly)"
 CRON_MODEL = "sale.order"
 CRON_METHOD = "cron_monta_sync_status"
 CRON_CODE = f"model.{CRON_METHOD}(batch_limit=200)"
-CRON_HOURS = 24
+CRON_INTERVAL_MIN = 30  # minutes
 
-# 2. Stock Qty Cron (24h)
-CRON_QTY_XMLID = "Monta-Odoo-Integration.ir_cron_monta_qty_sync"
-CRON_QTY_NAME = "Monta: Sync Stock Quantities (24h)"
-CRON_QTY_MODEL = "product.product"
-CRON_QTY_METHOD = "cron_monta_qty_sync"
-CRON_QTY_CODE = f"model.{CRON_QTY_METHOD}()"
-CRON_QTY_HOURS = 24
 
-# 3. Inbound Forecast Cron (24h)
-CRON_IF_XMLID = "Monta-Odoo-Integration.ir_cron_monta_inbound_push"
-CRON_IF_NAME = "Monta: Sync Inbound Forecasts (24h)"
-CRON_IF_MODEL = "purchase.order"
-CRON_IF_METHOD = "cron_monta_push_inbound_forecast"
-CRON_IF_CODE = f"model.{CRON_IF_METHOD}()"
-CRON_IF_HOURS = 24
-
-# Deprecated/Removed CRONs (left for cleanup/deactivation logic)
-CRON_OLD_STATUS_XMLID = "Monta-Odoo-Integration.ir_cron_monta_status_halfhourly"
-CRON_PULL_XMLID = "Monta-Odoo-Integration.ir_cron_monta_stock_pull"
-CRON_PULL_NAME = "Monta: Pull Stock (Deprecated)"
 
 
 def _create_cron_record(env, xmlid, name, model, code, interval_number, interval_type, user_id=SUPERUSER_ID):
-    """Idempotent cron sync: create if missing, update if exists."""
+    """Idempotent cron creation: if env.ref(xmlid) exists -> skip."""
     IrCron = env["ir.cron"].sudo()
     IrModel = env["ir.model"].sudo()
     IrModelData = env["ir.model.data"].sudo()
+
+    try:
+        env.ref(xmlid)
+        return
+    except ValueError:
+        pass
 
     model_rec = IrModel._get(model)
     if not model_rec:
         return
 
-    vals = {
+    cron = IrCron.create({
         "name": name,
         "model_id": model_rec.id,
         "state": "code",
         "code": code,
         "interval_number": int(interval_number),
         "interval_type": interval_type,
-        "active": False if (CRON_PULL_XMLID and xmlid == CRON_PULL_XMLID) else True,
+        "active": True,
         "user_id": user_id,
-    }
+    })
 
-    try:
-        cron = env.ref(xmlid)
-        # Update existing record to match new standards (e.g. 24h interval)
-        cron.write(vals)
-    except ValueError:
-        # Create new one
-        cron = IrCron.create(vals)
-        module, name_part = xmlid.split(".")
-        IrModelData.create({
-            "name": name_part,
-            "module": module,
-            "model": "ir.cron",
-            "res_id": cron.id,
-            "noupdate": True,
-        })
+    module, name_part = xmlid.split(".")
+    IrModelData.create({
+        "name": name_part,
+        "module": module,
+        "model": "ir.cron",
+        "res_id": cron.id,
+        "noupdate": True,
+    })
 
 
 def _ensure_cron(env):
-    # Perform cleanup of old crons on every load to ensure names are correct
-    _remove_old_crons(env)
-    
-    _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_HOURS, "hours")
-    _create_cron_record(env, CRON_QTY_XMLID, CRON_QTY_NAME, CRON_QTY_MODEL, CRON_QTY_CODE, CRON_QTY_HOURS, "hours")
-    _create_cron_record(env, CRON_IF_XMLID, CRON_IF_NAME, CRON_IF_MODEL, CRON_IF_CODE, CRON_IF_HOURS, "hours")
+    _create_cron_record(env, CRON_XMLID, CRON_NAME, CRON_MODEL, CRON_CODE, CRON_INTERVAL_MIN, "minutes")
 
-
-def _remove_old_crons(env):
-    """Delete crons that match old names or deprecated XMLIDs."""
-    IrCron = env["ir.cron"].sudo()
-    
-    # List of legacy names that should be removed if found
-    legacy_names = [
-        "Monta: Pull Stock (Deprecated)",
-        "Monta: Pull stock list (/stock) (6h)",
-        "Monta: Sync Sales Order Status (half-hourly)",
-        "Monta: Sync StockAvailable + MinStock (6h)",
-        "Monta: Sync StockAvailable + MinStock (24h)",
-    ]
-    
-    # Delete by XMLID (deprecated ones)
-    for xmlid in (CRON_PULL_XMLID, CRON_OLD_STATUS_XMLID):
-        try:
-            rec = env.ref(xmlid, raise_if_not_found=False)
-            if rec:
-                rec.unlink()
-        except Exception:
-            pass
-
-    # Delete by Name (deep clean)
-    for name in legacy_names:
-        crons = IrCron.search([
-            ("name", "=", name),
-            ("state", "=", "code"),
-            ("code", "ilike", "cron_monta_"),
-        ])
-        if crons:
-            crons.unlink()
 
 def _remove_cron(env):
     IrCron = env["ir.cron"].sudo()
 
-    xmlids_to_remove = (CRON_XMLID, CRON_QTY_XMLID, CRON_IF_XMLID, CRON_OLD_STATUS_XMLID, CRON_PULL_XMLID)
-    for xmlid in xmlids_to_remove:
+    for xmlid in (CRON_XMLID,):
         try:
             rec = env.ref(xmlid)
             if rec:
@@ -123,14 +65,7 @@ def _remove_cron(env):
         except ValueError:
             pass
 
-    names_to_clean = [CRON_NAME, CRON_QTY_NAME, CRON_IF_NAME, CRON_PULL_NAME]
-    # Add legacy names for deep clean
-    names_to_clean.append("Monta: Sync Sales Order Status (half-hourly)")
-    names_to_clean.append("Monta: Sync StockAvailable + MinStock (24h)")
-
-    for name in names_to_clean:
-        if not name:
-            continue
+    for name in (CRON_NAME,):
         crons = IrCron.search([
             ("name", "=", name),
             ("state", "=", "code"),

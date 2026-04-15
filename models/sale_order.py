@@ -4,7 +4,7 @@ import logging
 import re
 from collections import defaultdict
 
-from odoo import api, fields, models, _
+from odoo import fields, models, _
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
@@ -33,21 +33,6 @@ class SaleOrder(models.Model):
     monta_last_push = fields.Datetime(copy=False)
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
-
-    # Tracking & Status related
-    monta_status_ids = fields.One2many(
-        "monta.order.status", "sale_order_id", string="Monta Status History"
-    )
-    monta_tracking_url = fields.Char(
-        string="Monta Tracking URL", compute="_compute_monta_tracking_url", store=False
-    )
-
-    @api.depends("monta_status_ids.track_trace")
-    def _compute_monta_tracking_url(self):
-        for order in self:
-            # Get latest tracking URL from all related status snapshots
-            latest = order.monta_status_ids.filtered(lambda s: s.track_trace).sorted("last_sync", reverse=True)[:1]
-            order.monta_tracking_url = latest.track_trace if latest else False
 
     # ---------------------------------------------------------
     # Helpers
@@ -99,64 +84,6 @@ class SaleOrder(models.Model):
             )
         return ok
 
-    def _is_monta_enabled_for_order(self):
-        self.ensure_one()
-        cfg = self._monta_config()
-        if not cfg:
-            return False
-
-        # Filter by warehouse
-        if cfg.x_monta_warehouse_ids and self.warehouse_id not in cfg.x_monta_warehouse_ids:
-            _logger.info("[Monta Filter] Skipping %s: warehouse %s not in allowed list", self.name, self.warehouse_id.name)
-            return False
-
-        # Filter by shipping method (carrier / route)
-        # Resolve the effective carrier: prefer carrier_id, but also check delivery lines if empty
-        effective_carrier = self.carrier_id
-        if not effective_carrier:
-            # Also check any product line whose product is a delivery carrier's product
-            # This handles backend orders where delivery product is manually added (is_delivery=False)
-            for line in self.order_line:
-                if line.product_id:
-                    p = line.product_id
-                    # Search by variant (product.product) first, then by template as fallback
-                    linked_carrier = self.env["delivery.carrier"].sudo().search(
-                        [("product_id", "=", p.id)], limit=1
-                    )
-                    if not linked_carrier and p.product_tmpl_id:
-                        # Fallback: match by template (in case carrier uses template product)
-                        linked_carrier = self.env["delivery.carrier"].sudo().search(
-                            [("product_id.product_tmpl_id", "=", p.product_tmpl_id.id)], limit=1
-                        )
-                    _logger.info(
-                        "[Monta Filter] %s: line product '%s' (id=%s, tmpl=%s) -> carrier: %s",
-                        self.name, p.display_name, p.id,
-                        p.product_tmpl_id.id if p.product_tmpl_id else "N/A",
-                        linked_carrier.name if linked_carrier else "Not found"
-                    )
-                    if linked_carrier:
-                        effective_carrier = linked_carrier
-                        _logger.info("[Monta Filter] %s: using carrier '%s' from product line", self.name, linked_carrier.name)
-                        break
-
-        # PRIMARY: Check if the carrier has a 'Monta' route in its standard route_ids field
-        carrier_allowed = False
-        if effective_carrier:
-            try:
-                if any(r.name == "Monta" for r in effective_carrier.route_ids):
-                    carrier_allowed = True
-            except Exception:
-                pass
-
-        # FALLBACK: If route check didn't match, check the manual whitelist in Monta Config
-        if not carrier_allowed:
-            if cfg.x_monta_route_ids and effective_carrier not in cfg.x_monta_route_ids:
-                carrier_name = (effective_carrier.name if effective_carrier else "None/Empty")
-                _logger.info("[Monta Filter] Skipping %s: shipping method '%s' has no 'Monta' route and is not in whitelist", self.name, carrier_name)
-                return False
-
-        return True
-
     def _create_monta_log(self, payload, level="info", tag="Monta API", console_summary=None):
         self.ensure_one()
         valid_level = "info" if level == "warning" else level
@@ -185,22 +112,12 @@ class SaleOrder(models.Model):
             if not p:
                 continue
 
-            # Skip subscription products per user request
-            name = (p.name or "").upper()
-            display_name = (p.display_name or "").upper()
-            if "(SUBSCRIPTION)" in name or "(SUBSCRIPTION)" in display_name:
-                continue
-            if hasattr(p, "recurring_invoice") and p.recurring_invoice:
-                continue
-
             qty = float(l.product_uom_qty or 0.0)
             if qty <= 0:
                 continue
 
             leaves = expand_to_leaf_components(self.env, self.company_id.id, p, qty)
             if not leaves:
-                # If it's not a subscription, but we can't expand it, it might be a missing BoM
-                # But we only log error if it's not a subscription
                 missing.append(f"'{p.display_name}' has no resolvable components.")
                 continue
 
@@ -226,11 +143,12 @@ class SaleOrder(models.Model):
                 tag="Monta SKU check",
                 console_summary=f"[Monta SKU check] {len(missing)} missing",
             )
-            # We no longer raise ValidationError here to avoid crashing background writes.
-            # Callers like action_confirm will handle raising it if needed.
-        
+            raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
+
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
-        return lines, missing
+        if not lines:
+            raise ValidationError("Order lines expanded to empty/zero quantities.")
+        return lines
 
     def _prepare_monta_order_payload(self):
         self.ensure_one()
@@ -240,11 +158,7 @@ class SaleOrder(models.Model):
 
         partner = self.partner_id
         street, house_number, house_suffix = self._split_street(partner.street or "", partner.street2 or "")
-        lines, _missing = self._prepare_monta_lines()
-        
-        if not lines:
-            # If no lines (e.g. only subscriptions), we shouldn't even call this or we should skip the POST
-            return None
+        lines = self._prepare_monta_lines()
 
         invoice_id_digits = re.sub(r"\D", "", self.name or "")
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
@@ -274,7 +188,7 @@ class SaleOrder(models.Model):
                 "DeliveryAddress": dict(addr_common),
                 "InvoiceAddress": dict(addr_common),
             },
-            "Lines": lines,
+            "OrderLines": lines,
             "Invoice": {
                 "PaymentMethodDescription": "Odoo Order",
                 "AmountInclTax": float(self.amount_total or 0.0),
@@ -297,10 +211,6 @@ class SaleOrder(models.Model):
             return 0, {"note": "Blocked: company not allowed in Monta Configuration"}
         if not self._is_allowed_instance():
             return 0, {"note": "Blocked: instance URL guard"}
-        
-        if method == "POST" and path == "/order" and not payload:
-            return 0, {"note": "Skipped: no lines to push (possibly all subscriptions)"}
-            
         client = MontaClient(self.env, company=self.company_id)
         return client.request(self, method, path, payload=payload, headers=headers)
 
@@ -322,13 +232,16 @@ class SaleOrder(models.Model):
 
     def _monta_create(self):
         self.ensure_one()
-        
-        payload = self._prepare_monta_order_payload()
-        if not payload:
-            _logger.info("[Monta] Skipping push for %s: no shippable lines found.", self.name)
+
+        if self.name and self.name.startswith("BC"):
+            self.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": False})
             return
 
-        status, body = self._monta_request("POST", "/order", payload)
+        force = bool(self.env.context.get("force_send_to_monta"))
+        if not force and self.monta_sync_state == "sent":
+            return
+
+        status, body = self._monta_request("POST", "/order", self._prepare_monta_order_payload())
 
         Status = self.env["monta.order.status"].sudo()
         account_key = Status._current_account_key() if hasattr(Status, "_current_account_key") else ""
@@ -421,8 +334,7 @@ class SaleOrder(models.Model):
                     }
                 )
             upsert_snapshot(self.name, "error", status, body)
-            _logger.error("[Monta] Order %s rejected with 400. Response: %s", self.name, body)
-            self.message_post(body=f"Failed to send order to Monta. Response: {body}")
+            self.message_post(body="Failed to send order to Monta.")
 
     def _monta_delete(self, note="Cancelled from Odoo"):
         self.ensure_one()
@@ -434,57 +346,16 @@ class SaleOrder(models.Model):
     # Hooks
     # ---------------------------------------------------------
     def action_confirm(self):
-        # ✅ Mitigation for Odoo 18 Subscription Validation Error
-        # We only provide a last-resort safety net here.
-        # The proactive pre-check was causing regular orders from website to be flagged as subscriptions.
-        Plan = self.env["sale.subscription.plan"].sudo()
-
-        def _assign_plan_if_missing(orders):
-            for order in orders:
-                if not getattr(order, "plan_id", False):
-                    default_plan = Plan.search([], limit=1)
-                    if default_plan:
-                        order.with_context(skip_monta_write_hook=True).write({"plan_id": default_plan.id})
-                        _logger.info("[Monta Mitigation] Auto-assigned subscription plan %s to %s", default_plan.name, order.name)
-
-        try:
-            res = super().action_confirm()
-        except Exception as e:
-            err_msg = str(e)
-            if "recurring plan" in err_msg.lower() or "recurring product" in err_msg.lower():
-                # Last-resort: assign a plan and retry, but only for orders still needing confirmation
-                _logger.warning("[Monta Mitigation] Caught subscription constraint for %s; retrying. %s", self.mapped('name'), err_msg)
-                _assign_plan_if_missing(self)
-                # Only retry orders still in draft (first attempt may have partially confirmed)
-                still_draft = self.filtered(lambda o: o.state == "draft")
-                if still_draft:
-                    res = super(SaleOrder, still_draft).action_confirm()
-                else:
-                    res = True  # already confirmed by the partial first attempt
-            else:
-                raise
-
+        res = super().action_confirm()
         for order in self:
-            try:
-                if order.monta_sync_state != "sent" and order._is_company_allowed() and order._is_monta_enabled_for_order():
-                    # check if it has any non-subscription lines
-                    lines, missing = order._prepare_monta_lines()
-                    if missing:
-                        msg = "Cannot push to Monta sync during confirmation:\n- " + "\n- ".join(missing)
-                        # If this is called from a payment return/webhook (non-interactive), don't crash.
-                        is_ui_action = self.env.context.get('params', {}).get('action') or self.env.context.get('active_model')
-                        if not is_ui_action or self.env.context.get('payment_tx_id'):
-                            # Use logger only - avoid message_post which triggers write() -> subscription constraint
-                            _logger.warning("[Monta SKU] %s for %s", msg, order.name)
-                            continue
-                        raise ValidationError(msg)
-                    if lines:
-                        order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
-                        order._monta_create()
-            except ValidationError:
-                raise
-            except Exception as sync_err:
-                _logger.error("[Monta] Sync failed for %s during confirmation: %s", order.name, sync_err)
+            if order._is_company_allowed():
+                if order.name and order.name.startswith("BC"):
+                    continue
+                if order.monta_sync_state == "sent":
+                    continue
+                # mark for sync; and try once (but protected by skip flag in internal writes)
+                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
+                order._monta_create()
         return res
 
     def write(self, vals):
@@ -493,29 +364,28 @@ class SaleOrder(models.Model):
             return super().write(vals)
 
         tracked_fields = {"partner_id", "order_line", "client_order_ref", "validity_date", "commitment_date"}
-        if any(f in vals for f in tracked_fields):
-            # Only mark for sync if confirmed AND not already sent
-            for order in self:
-                if (
-                    order.state in ("sale", "done")
-                    and order.monta_sync_state != "sent"
-                    and order._is_company_allowed()
-                    and order._is_monta_enabled_for_order()
-                ):
-                    lines, _missing = order._prepare_monta_lines()
-                    if lines:
-                        vals["monta_needs_sync"] = True
-                        break
+        needs_sync = any(f in vals for f in tracked_fields)
 
         res = super().write(vals)
 
-        # Only push when confirmed + needs_sync + not already sent
-        for order in self.filtered(
-            lambda o: o.state in ("sale", "done") and o.monta_needs_sync and o.monta_sync_state != "sent"
-        ):
-            if order._is_company_allowed() and order._is_monta_enabled_for_order():
-                if order._should_push_now():
-                    order._monta_create()
+        if needs_sync:
+            for order in self:
+                if order.name and order.name.startswith("BC"):
+                    continue
+                if order.monta_sync_state == "sent":
+                    continue
+                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
+
+        # Only push when confirmed + needs_sync
+        for order in self.filtered(lambda o: o.state in ("sale", "done") and o.monta_needs_sync):
+            if not order._is_company_allowed():
+                continue
+            if order.name and order.name.startswith("BC"):
+                continue
+            if order.monta_sync_state == "sent":
+                continue
+            if order._should_push_now():
+                order._monta_create()
 
         return res
 
@@ -544,11 +414,6 @@ class SaleOrder(models.Model):
 
             if force:
                 order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": False, "monta_retry_count": 0})
-
-            # Explicit check for missing SKUs when sending
-            _lines, missing = order._prepare_monta_lines()
-            if missing:
-                raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
 
             order._monta_create()
 

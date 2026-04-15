@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import api, fields, models
+from odoo import models
 
 _logger = logging.getLogger(__name__)
 
@@ -22,16 +22,6 @@ class PurchaseOrder(models.Model):
                     _logger.info("[Monta IF] Skipped for PO %s (feature disabled or state not eligible)", po.name)
             except Exception as e:
                 _logger.error("[Monta IF] Failed for %s: %s", po.name, e, exc_info=True)
-        return True
-
-    @api.model
-    def cron_monta_push_inbound_forecast(self, batch_limit=50):
-        """Cron to push pending/confirmed POs that might have failed auto-push."""
-        domain = [("state", "in", ["purchase", "done"])]
-        pos = self.search(domain, limit=batch_limit, order="write_date desc")
-        if pos:
-            _logger.info("[Monta IF] Cron starting for %d POs", len(pos))
-            pos.action_monta_push_inbound_forecast()
         return True
 
     # Auto-push on confirm

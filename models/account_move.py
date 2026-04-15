@@ -96,7 +96,7 @@ class AccountMove(models.Model):
     def _monta_chatter_on_subscription(self, so, title, message_html, success=True):
         """Post a note in the subscription (sale.order) chatter."""
         icon = "✅" if success else "❌"
-        body = f"<p><b>{icon} {title}</b></p>{message_html}"
+        body = f"<div><strong>{icon} {title}</strong><br/>{message_html}</div>"
         try:
             so.message_post(
                 body=body,
@@ -199,7 +199,7 @@ class AccountMove(models.Model):
             self._monta_chatter_on_subscription(
                 sale_order,
                 "Monta Renewal Already Exists",
-                f"<p><b>Invoice:</b> {self.name}</p><p><b>Monta Order ID:</b> {webshop_order_id}</p>",
+                f"Invoice: {self.name}<br/>Monta Order ID: {webshop_order_id}",
                 success=True,
             )
             return True
@@ -405,11 +405,7 @@ class AccountMove(models.Model):
         self._monta_chatter_on_subscription(
             so,
             "Monta Renewal Sent",
-            f"""
-                <p><b>Invoice:</b> {self.name}</p>
-                <p><b>Monta Order ID:</b> {webshop_order_id}</p>
-                <p><b>API Status:</b> {status}</p>
-            """,
+            f"Invoice: {self.name}<br/>Monta Order ID: {webshop_order_id}<br/>API Status: {status}",
             success=True,
         )
 
@@ -418,12 +414,7 @@ class AccountMove(models.Model):
         self._monta_chatter_on_subscription(
             so,
             "Monta Renewal Failed",
-            f"""
-                <p><b>Invoice:</b> {self.name}</p>
-                <p><b>Monta Order ID:</b> {webshop_order_id}</p>
-                <p><b>API Status:</b> {status}</p>
-                <p><b>Response:</b> <pre>{json.dumps(body or {}, ensure_ascii=False, indent=2)}</pre></p>
-            """,
+            f"Invoice: {self.name}<br/>Monta Order ID: {webshop_order_id}<br/>API Status: {status}<br/>Response: <pre>{json.dumps(body or {}, ensure_ascii=False, indent=2)}</pre>",
             success=False,
         )
 
@@ -432,10 +423,6 @@ class AccountMove(models.Model):
         self._monta_chatter_on_subscription(
             so,
             "Monta Renewal Error",
-            f"""
-                <p><b>Invoice:</b> {self.name}</p>
-                <p><b>Monta Order ID:</b> {webshop_order_id}</p>
-                <p><b>Error:</b> {str(exc)}</p>
-            """,
+            f"Invoice: {self.name}<br/>Monta Order ID: {webshop_order_id}<br/>Error: {str(exc)}",
             success=False,
         )

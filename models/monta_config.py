@@ -8,12 +8,6 @@ class MontaConfig(models.Model):
     _description = "Monta Configuration"
     _rec_name = "name"
 
-    def _register_hook(self):
-        """Ensure crons are updated on every registry load/upgrade."""
-        from ..hooks import _ensure_cron
-        _ensure_cron(self.env)
-        return super()._register_hook()
-
     name = fields.Char(default="Monta Configuration", required=True)
 
     # API
@@ -45,18 +39,6 @@ class MontaConfig(models.Model):
     inbound_enable = fields.Boolean(string="Enable Inbound Forecast", default=False)
     warehouse_tz = fields.Char(string="Warehouse Timezone", default="Europe/Amsterdam")
     inbound_warehouse_display_name = fields.Char(string="Inbound Warehouse Display Name")
-
-    # Delivery/Fulfilment Filtering
-    x_monta_warehouse_ids = fields.Many2many(
-        "stock.warehouse",
-        string="Monta Warehouses",
-        help="Only orders belonging to these warehouses are synced with Monta. Leave empty to allow all.",
-    )
-    x_monta_route_ids = fields.Many2many(
-        "delivery.carrier",
-        string="Monta Shipping Methods",
-        help="Only orders using these shipping methods are synced with Monta. Leave empty to allow all.",
-    )
 
     supplier_code_override = fields.Char(string="Supplier Code Override")
     supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")

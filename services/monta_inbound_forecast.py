@@ -153,10 +153,6 @@ class MontaInboundForecastService(models.AbstractModel):
 
         cfg, base, user, pwd, tz, _wh = conf
 
-        if not cfg.inbound_enable:
-            _logger.info("[Monta IF] Inbound Forecast disabled in config — skipping PO %s", po.name)
-            return False
-
         if po.state not in ("purchase", "done"):
             return False
 

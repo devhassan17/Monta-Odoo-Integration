@@ -33,13 +33,9 @@
                         </group>
 
                         <group string="General Settings">
-                            <field name="inbound_enable"/>
-                            <field name="inbound_warehouse_display_name"/>
                             <field name="origin"/>
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
-                            <field name="x_monta_warehouse_ids" widget="many2many_tags" options="{'no_create': True}"/>
-                            <field name="x_monta_route_ids" widget="many2many_tags" options="{'no_create': True}" string="Monta Shipping Methods"/>
                         </group>
                     </group>
                 </sheet>

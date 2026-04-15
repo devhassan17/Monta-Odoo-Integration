@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "18.0.26.6",
-    "summary": "Integrate Odoo with Monta WMS — orders, EDD, inbound forecasts and stock sync.",
+    "version": "1.0.2",
+    "summary": "Integrate Odoo with Monta WMS — orders, EDD, and inbound forecasts.",
     "description": """
 Monta-Odoo Integration
 ======================
-This module synchronizes Sales Orders, Inbound Forecasts, Expected Delivery Dates (EDD),
-and stock quantities between Odoo and Monta WMS via Monta's API.
+This module synchronizes Sales Orders, Inbound Forecasts, and Expected Delivery Dates (EDD)
+between Odoo and Monta WMS via Monta's API.
 """,
     "author": "Managemyweb.co",
     "website": "https://fairchain.org/monta-plugin-documentation/",
@@ -21,9 +21,6 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
         "mrp",
         "purchase",
         "sale_subscription",
-        "stock",
-        "sale_stock",
-        "delivery",
     ],
     "data": [
         "security/ir.model.access.csv",
@@ -32,7 +29,6 @@ and stock quantities between Odoo and Monta WMS via Monta's API.
         "views/monta_order_status_views.xml",
         "views/sale_order_monta_sync_button.xml",
         "views/monta_config_views.xml",
-        "views/portal_my_orders_tnt.xml",
     ],
     "installable": True,
     "application": True,

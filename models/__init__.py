@@ -2,7 +2,6 @@ from . import account_move
 from . import monta_config
 from . import monta_order_status
 from . import monta_order_status_upsert
-from . import monta_qty_cron
 from . import monta_sale_log
 from . import monta_status_sync
 from . import monta_sync
