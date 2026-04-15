@@ -43,6 +43,9 @@ class MontaClient:
 
         start = time.time()
         _logger.info("[Monta API] %s %s | User: %s", method_u, url, user)
+        if payload:
+             import json
+             _logger.info("[Monta API] Request Payload: %s", json.dumps(payload))
 
         # Request log
         if order:
@@ -82,6 +85,11 @@ class MontaClient:
 
             msg = "[Monta API] %s %s | Status: %s | Time: %.2fs" % (method_u, url, resp.status_code, elapsed)
             (_logger.info if resp.ok else _logger.error)(msg)
+            if not resp.ok:
+                _logger.error("[Monta API] Error Response Body: %s", resp.text)
+            else:
+                import json
+                _logger.info("[Monta API] Response Body: %s", json.dumps(body))
 
             # Response log
             if order:

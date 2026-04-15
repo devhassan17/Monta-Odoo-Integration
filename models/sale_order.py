@@ -213,7 +213,7 @@ class SaleOrder(models.Model):
                 "DeliveryAddress": dict(addr_common),
                 "InvoiceAddress": dict(addr_common),
             },
-            "OrderLines": lines,
+            "Lines": lines,
             "Invoice": {
                 "PaymentMethodDescription": "Odoo Order",
                 "AmountInclTax": float(self.amount_total or 0.0),
