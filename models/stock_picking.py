@@ -99,7 +99,7 @@ class StockPicking(models.Model):
         payload = so._prepare_monta_order_payload()
         
         # Overwrite lines with what's actually in THIS picking
-        payload["OrderLines"] = self._prepare_monta_lines()
+        payload["Lines"] = self._prepare_monta_lines()
         
         payload["WebshopOrderId"] = webshop_order_id
         payload["Reference"] = (self.name or "").strip()
