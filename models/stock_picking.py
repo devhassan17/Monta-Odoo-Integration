@@ -118,8 +118,19 @@ class StockPicking(models.Model):
         for move in self.move_ids:
             if move.product_id.tracking != 'none':
                 _logger.info("[Monta] Disabling tracking for product %s to allow WMS fulfillment", move.product_id.display_name)
-                # Set tracking to none on the product product (and thus the template)
                 move.product_id.sudo().write({'tracking': 'none'})
+
+    def _monta_auto_validate_immediately(self):
+        """Helper to quickly set quantities and validate picking."""
+        self.ensure_one()
+        if self.state in ("done", "cancel"):
+            return
+        _logger.info("[Monta] Immediately auto-validating picking %s after successful push", self.name)
+        for move in self.move_ids:
+            if move.state not in ("done", "cancel"):
+                # Odoo 18 quantity field assignment
+                move.quantity = move.product_uom_qty
+        return self.with_context(skip_backorder=True, picking_label_report=False).button_validate()
 
     def action_push_to_monta(self, sale_order=None):
         """Pushes the picking to Monta."""
@@ -185,6 +196,10 @@ class StockPicking(models.Model):
                 "monta_pushed": True,
                 "monta_last_push": fields.Datetime.now(),
             })
+            
+            # Immediately validate in Odoo so user doesn't have to click it
+            self._monta_auto_validate_immediately()
+            
             return True
 
         # Error handling

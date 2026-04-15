@@ -4,7 +4,7 @@ import logging
 import re
 from collections import defaultdict
 
-from odoo import fields, models, _
+from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
 from ..services.monta_client import MontaClient
@@ -217,6 +217,29 @@ class SaleOrder(models.Model):
             payload["Origin"] = cfg.origin.strip()
 
         return payload
+
+    # ---------------------------------------------------------
+    # Creation Hooks
+    # ---------------------------------------------------------
+    @api.model_create_multi
+    def create(self, vals_list):
+        orders = super().create(vals_list)
+        for order in orders:
+            # Auto-confirm subscription renewals so they generate deliveries for Monta
+            # Odoo 18 uses subscription_id for orders generated from a subscription
+            is_renewal = False
+            if hasattr(order, 'subscription_id') and order.subscription_id:
+                is_renewal = True
+            elif self.env.context.get('default_subscription_id'):
+                is_renewal = True
+
+            if is_renewal and order.state == 'draft':
+                try:
+                    _logger.info("[Monta] Auto-confirming renewal order: %s", order.name)
+                    order.action_confirm()
+                except Exception as e:
+                    _logger.warning("[Monta] Failed to auto-confirm renewal %s: %s", order.name, e)
+        return orders
 
     # ---------------------------------------------------------
     # API
