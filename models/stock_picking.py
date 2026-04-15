@@ -112,6 +112,15 @@ class StockPicking(models.Model):
         payload["Invoice"]["WebshopFactuurID"] = int(self.id) if self.id else 9999
         return payload
 
+    def _monta_ensure_untracked_products(self):
+        """Disables Lot/Serial tracking for all products in this picking to prevent validation blockers."""
+        self.ensure_one()
+        for move in self.move_ids:
+            if move.product_id.tracking != 'none':
+                _logger.info("[Monta] Disabling tracking for product %s to allow WMS fulfillment", move.product_id.display_name)
+                # Set tracking to none on the product product (and thus the template)
+                move.product_id.sudo().write({'tracking': 'none'})
+
     def action_push_to_monta(self, sale_order=None):
         """Pushes the picking to Monta."""
         self.ensure_one()
@@ -120,6 +129,9 @@ class StockPicking(models.Model):
 
         if not sale_order:
             sale_order = self.sale_id
+            
+        # Clear lot tracking blockers before sending to Monta
+        self._monta_ensure_untracked_products()
 
         webshop_order_id = self._monta_make_webshop_order_id(sale_order)
         is_renewal = not (webshop_order_id == sale_order.name)

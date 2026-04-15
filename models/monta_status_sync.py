@@ -221,8 +221,17 @@ class StockPicking(models.Model):
             }
             try:
                 picking.write(vals)
+                
+                # Auto-validate if shipped
+                if status == "Shipped" and picking.state not in ("done", "cancel"):
+                    _logger.info("[Monta] Auto-validating picking %s because it is Shipped in Monta", picking.name)
+                    # For Odoo 18, we set quantities on move lines first to avoid backorder prompt
+                    for move in picking.move_ids:
+                        if move.state not in ("done", "cancel"):
+                            move.quantity = move.product_uom_qty
+                    picking.with_context(skip_backorder=True, picking_label_report=False).button_validate()
             except Exception as e:
-                _logger.exception("[Monta] Picking %s (%s) -> write failed: %s", picking.name, ref, e)
+                _logger.exception("[Monta] Picking %s (%s) -> write/validate failed: %s", picking.name, ref, e)
 
             try:
                 Snapshot.upsert_for_renewal(
