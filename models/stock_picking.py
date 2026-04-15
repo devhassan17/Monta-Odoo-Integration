@@ -77,17 +77,21 @@ class StockPicking(models.Model):
         """Build Monta lines from stock moves in the picking."""
         self.ensure_one()
         components = []
-        for m in self.move_ids_without_package:
-            # We use product_uom_qty (demanded) or quantity (reserved/done)?
-            # If we are confirming the picking, product_uom_qty is the demanded qty.
+        # Use move_ids for better compatibility across Odoo versions/configs
+        for m in self.move_ids:
             if m.product_id and m.product_uom_qty > 0:
                 components.append((m.product_id, m.product_uom_qty))
         
         if not self.sale_id:
-             # Fallback if somehow no sale_id, but it is required by _is_push_eligible
              return []
              
-        return self.sale_id._prepare_monta_lines_from_components(components)
+        lines = self.sale_id._prepare_monta_lines_from_components(components)
+        
+        # Log the specific lines being sent
+        product_summary = ", ".join([f"{l['Sku']} (qty {l['OrderedQuantity']})" for l in lines])
+        _logger.info("[Monta Push] %s: Preparing payload with %s products: %s", self.name, len(lines), product_summary)
+        
+        return lines
 
     def _monta_prepare_payload(self, so, webshop_order_id):
         """Reuse existing sale.order payload generator but overwrite lines with picking contents."""
