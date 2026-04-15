@@ -21,6 +21,7 @@ between Odoo and Monta WMS via Monta's API.
         "mrp",
         "purchase",
         "sale_subscription",
+        "stock",
     ],
     "data": [
         "security/ir.model.access.csv",
@@ -28,6 +29,7 @@ between Odoo and Monta WMS via Monta's API.
         "views/monta_menu.xml",                 
         "views/monta_order_status_views.xml",
         "views/sale_order_monta_sync_button.xml",
+        "views/stock_picking_views.xml",
         "views/monta_config_views.xml",
     ],
     "installable": True,

@@ -44,10 +44,10 @@ class MontaOrderStatus(models.Model):
         required=True,  # keep required, renewal row will still point to related SO
     )
 
-    # ✅ NEW: link renewal invoice
-    invoice_id = fields.Many2one(
-        "account.move",
-        string="Invoice",
+    # ✅ NEW: link renewal picking (delivery)
+    picking_id = fields.Many2one(
+        "stock.picking",
+        string="Delivery",
         index=True,
         ondelete="set null",
     )
@@ -146,7 +146,7 @@ class MontaOrderStatus(models.Model):
             {
                 "sale_order_id": so.id,
                 "order_kind": "sale",
-                "invoice_id": False,
+                "picking_id": False,
                 "last_sync": vals.get("last_sync") or fields.Datetime.now(),
             }
         )
@@ -172,12 +172,12 @@ class MontaOrderStatus(models.Model):
         return self.sudo().create(base_vals)
 
     @api.model
-    def upsert_for_renewal(self, so, invoice, webshop_order_id: str, **vals):
-        """✅ NEW: snapshot row for subscription renewal invoice."""
+    def upsert_for_renewal(self, so, picking, webshop_order_id: str, **vals):
+        """✅ NEW: snapshot row for subscription renewal picking."""
         if not so or not so.id:
             raise ValueError("upsert_for_renewal requires a valid sale.order")
-        if not invoice or not invoice.id:
-            raise ValueError("upsert_for_renewal requires a valid account.move")
+        if not picking or not picking.id:
+            raise ValueError("upsert_for_renewal requires a valid stock.picking")
         if not webshop_order_id:
             raise ValueError("upsert_for_renewal requires webshop_order_id")
 
@@ -186,7 +186,7 @@ class MontaOrderStatus(models.Model):
         base_vals.update(
             {
                 "sale_order_id": so.id,
-                "invoice_id": invoice.id,
+                "picking_id": picking.id,
                 "order_kind": "renewal",
                 "last_sync": vals.get("last_sync") or fields.Datetime.now(),
             }
@@ -215,7 +215,7 @@ class MontaOrderStatus(models.Model):
     def action_manual_send_to_monta(self):
         """
         ✅ Updated:
-        - If row is renewal (invoice_id exists): send renewal invoice to Monta.
+        - If row is renewal (picking_id exists): send renewal picking to Monta.
         - Else: send sale order as before.
         """
         for record in self:
@@ -224,12 +224,12 @@ class MontaOrderStatus(models.Model):
                 continue
 
             try:
-                if record.order_kind == "renewal" and record.invoice_id:
-                    # send renewal invoice payload
-                    record.invoice_id.with_context(force_send_to_monta=True)._action_send_renewal_to_monta(
+                if record.order_kind == "renewal" and record.picking_id:
+                    # send renewal picking payload
+                    record.picking_id.with_context(force_send_to_monta=True).action_send_renewal_to_monta(
                         sale_order=sale_order
                     )
-                    sale_order.message_post(body="✅ Renewal invoice sent to Monta manually from Monta Order Status.")
+                    sale_order.message_post(body="✅ Renewal delivery sent to Monta manually from Monta Order Status.")
                 else:
                     # normal sale order send
                     sale_order.with_context(force_send_to_monta=True)._action_send_to_monta()

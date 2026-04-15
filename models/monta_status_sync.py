@@ -127,6 +127,9 @@ class SaleOrder(models.Model):
 
             # Snapshot for history/audit
             try:
+                # If it's a renewal (name starts with SO...PICK...), we should use upsert_for_renewal if possible, 
+                # but upsert_for_order might be fine if we pass the right identifiers.
+                # Actually, SaleOrder model here usually handles the 'sale' kind.
                 Snapshot.upsert_for_order(
                     so,
                     monta_order_ref=meta.get("monta_order_ref") or so.name,
@@ -139,3 +142,100 @@ class SaleOrder(models.Model):
                 )
             except Exception as e:
                 _logger.exception("[Monta] Snapshot upsert failed for %s: %s", so.name, e)
+
+
+class StockPicking(models.Model):
+    _inherit = "stock.picking"
+
+    def _monta_candidate_reference(self):
+        self.ensure_one()
+        return self.monta_webshop_order_id or False
+
+    def action_monta_sync_status(self):
+        _logger.info("[Monta] Manual sync for %d pickings", len(self))
+        self._monta_sync_batch()
+        return True
+
+    @api.model
+    def cron_monta_sync_status(self, batch_limit=200):
+        domain = [
+            ("picking_type_code", "=", "outgoing"),
+            ("monta_pushed", "=", True),
+            ("monta_status", "!=", "Shipped")
+        ]
+        pickings = self.search(domain, limit=batch_limit, order="write_date desc")
+        _logger.info("[Monta] Picking Cron sync starting for %d pickings", len(pickings))
+        pickings._monta_sync_batch()
+        _logger.info("[Monta] Picking Cron sync finished")
+        return True
+
+    def _monta_sync_batch(self):
+        from ..services.monta_status_resolver import MontaStatusResolver
+        Snapshot = self.env["monta.order.status"].sudo()
+        resolver_by_company = {}
+
+        for picking in self:
+            ref = picking._monta_candidate_reference()
+            if not ref:
+                continue
+
+            company = picking.company_id or self.env.company
+            resolver = resolver_by_company.get(company.id)
+            if not resolver:
+                try:
+                    resolver = MontaStatusResolver(self.env, company=company)
+                    resolver_by_company[company.id] = resolver
+                except Exception as e:
+                    _logger.exception("[Monta] Resolver init failed for company %s: %s", company.display_name, e)
+                    continue
+
+            try:
+                status, meta = resolver.resolve(ref)
+            except Exception as e:
+                _logger.exception("[Monta] Picking %s (%s) -> resolve() failed: %s", picking.name, ref, e)
+                continue
+
+            meta = meta or {}
+            now = fields.Datetime.now()
+
+            if not status:
+                try:
+                    Snapshot.upsert_for_renewal(
+                        picking.sale_id,
+                        picking,
+                        ref,
+                        status=False,
+                        delivery_message=meta.get("reason"),
+                        status_raw=meta.get("status_raw"),
+                        last_sync=now,
+                    )
+                except Exception:
+                    _logger.exception("[Monta] Snapshot upsert failed for picking %s", picking.name)
+                continue
+
+            vals = {
+                "monta_status": status,
+                "monta_status_code": meta.get("status_code"),
+                "monta_track_trace": meta.get("track_trace"),
+                "monta_delivery_date": meta.get("delivery_date"),
+            }
+            try:
+                picking.write(vals)
+            except Exception as e:
+                _logger.exception("[Monta] Picking %s (%s) -> write failed: %s", picking.name, ref, e)
+
+            try:
+                Snapshot.upsert_for_renewal(
+                    picking.sale_id,
+                    picking,
+                    ref,
+                    monta_order_ref=meta.get("monta_order_ref") or ref,
+                    status=status,
+                    delivery_message=meta.get("delivery_message"),
+                    track_trace=meta.get("track_trace"),
+                    delivery_date=meta.get("delivery_date"),
+                    status_raw=meta.get("status_raw"),
+                    last_sync=now,
+                )
+            except Exception as e:
+                _logger.exception("[Monta] Snapshot upsert failed for picking %s: %s", picking.name, e)

@@ -354,8 +354,9 @@ class SaleOrder(models.Model):
                 if order.monta_sync_state == "sent":
                     continue
                 # mark for sync; and try once (but protected by skip flag in internal writes)
-                order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
-                order._monta_create()
+                # order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
+                # order._monta_create()
+                pass
         return res
 
     def write(self, vals):
@@ -384,8 +385,9 @@ class SaleOrder(models.Model):
                 continue
             if order.monta_sync_state == "sent":
                 continue
-            if order._should_push_now():
-                order._monta_create()
+            # if order._should_push_now():
+            #     order._monta_create()
+            pass
 
         return res
 
@@ -415,7 +417,17 @@ class SaleOrder(models.Model):
             if force:
                 order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": False, "monta_retry_count": 0})
 
-            order._monta_create()
+            # Instead of SO-based create, trigger the first eligible outgoing picking
+            pickings = order.picking_ids.filtered(lambda p: p._is_monta_push_eligible())
+            if pickings:
+                # Trigger for all relevant pickings that haven't been pushed yet (or all if forced)
+                to_push = pickings if force else pickings.filtered(lambda p: not p.monta_pushed)
+                for p in to_push:
+                    p.action_push_to_monta()
+            else:
+                # Fallback to SO-based create if no picking exists? 
+                # (User said "only Send order on that time when delivery is triggered", so maybe skip)
+                pass
 
         return True
 

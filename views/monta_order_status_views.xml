@@ -10,7 +10,7 @@
           <field name="order_name"/>
           <field name="order_kind"/>
           <field name="sale_order_id"/>
-          <field name="invoice_id"/>
+          <field name="picking_id"/>
           <field name="status"/>
           <field name="status_code"/>
           <field name="source"/>
@@ -44,7 +44,7 @@
                 <field name="order_name" readonly="1"/>
                 <field name="order_kind" readonly="1"/>
                 <field name="sale_order_id" readonly="1"/>
-                <field name="invoice_id" readonly="1"/>
+                <field name="picking_id" readonly="1"/>
                 <field name="monta_order_ref" readonly="1"/>
                 <field name="source" readonly="1"/>
               </group>
@@ -75,7 +75,7 @@
           <field name="order_name"/>
           <field name="order_kind"/>
           <field name="sale_order_id"/>
-          <field name="invoice_id"/>
+          <field name="picking_id"/>
           <field name="status"/>
           <field name="status_code"/>
           <field name="source"/>
@@ -85,7 +85,7 @@
           <group expand="0" string="Group By">
             <filter string="Kind" name="grp_kind" context="{'group_by':'order_kind'}"/>
             <filter string="Sale Order" name="grp_so" context="{'group_by':'sale_order_id'}"/>
-            <filter string="Invoice" name="grp_inv" context="{'group_by':'invoice_id'}"/>
+            <filter string="Delivery" name="grp_picking" context="{'group_by':'picking_id'}"/>
             <filter string="Status" name="grp_status" context="{'group_by':'status'}"/>
             <filter string="Source" name="grp_source" context="{'group_by':'source'}"/>
             <filter string="Delivery Date" name="grp_delivery" context="{'group_by':'delivery_date'}"/>

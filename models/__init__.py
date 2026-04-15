@@ -1,4 +1,3 @@
-from . import account_move
 from . import monta_config
 from . import monta_order_status
 from . import monta_order_status_upsert
@@ -16,4 +15,5 @@ from . import sale_order_line
 from . import sale_order_monta_actions
 from . import sale_order_monta_fields
 from . import sku_test_log
+from . import stock_picking
 from . import stock_warehouse_ext

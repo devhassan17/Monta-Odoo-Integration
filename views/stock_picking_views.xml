@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_picking_form_monta" model="ir.ui.view">
+        <field name="name">stock.picking.form.monta</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="stock.view_picking_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//header" position="inside">
+                <button name="action_send_renewal_to_monta" 
+                        string="Push to Monta" 
+                        type="object" 
+                        class="oe_highlight"
+                        invisible="monta_pushed == True or picking_type_code != 'outgoing'"/>
+            </xpath>
+            <xpath expr="//sheet/group" position="after">
+                <group string="Monta Integration" name="monta_integration" invisible="picking_type_code != 'outgoing'">
+                    <group>
+                        <field name="monta_pushed" readonly="1"/>
+                        <field name="monta_webshop_order_id" readonly="1"/>
+                        <field name="monta_last_push" readonly="1"/>
+                    </group>
+                    <group>
+                        <field name="monta_status" readonly="1"/>
+                        <field name="monta_status_code" readonly="1"/>
+                        <field name="monta_track_trace" widget="url" readonly="1"/>
+                        <field name="monta_delivery_date" readonly="1"/>
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>
