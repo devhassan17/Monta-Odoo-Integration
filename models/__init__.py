@@ -1,4 +1,5 @@
 from . import monta_config
+from . import account_move
 from . import monta_order_status
 from . import monta_order_status_upsert
 from . import monta_sale_log

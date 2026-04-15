@@ -102,21 +102,27 @@ class SaleOrder(models.Model):
     # Payload prep
     # ---------------------------------------------------------
     def _prepare_monta_lines(self):
-        from math import isfinite
+        components = [(l.product_id, l.product_uom_qty) for l in self.order_line if l.product_id and l.product_uom_qty > 0]
+        return self._prepare_monta_lines_from_components(components)
 
+    def _prepare_monta_lines_from_components(self, components):
+        """
+        Generic helper to build Monta lines from (product, qty) pairs.
+        Used by both Sales Order and Stock Picking.
+        """
+        from math import isfinite
         sku_qty = defaultdict(float)
         missing = []
 
-        for l in self.order_line:
-            p = l.product_id
+        for p, qty in components:
             if not p:
                 continue
 
-            qty = float(l.product_uom_qty or 0.0)
-            if qty <= 0:
+            qty_f = float(qty or 0.0)
+            if qty_f <= 0:
                 continue
 
-            leaves = expand_to_leaf_components(self.env, self.company_id.id, p, qty)
+            leaves = expand_to_leaf_components(self.env, self.company_id.id, p, qty_f)
             if not leaves:
                 missing.append(f"'{p.display_name}' has no resolvable components.")
                 continue
@@ -146,8 +152,9 @@ class SaleOrder(models.Model):
             raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
 
         lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
+        
         if not lines:
-            raise ValidationError("Order lines expanded to empty/zero quantities.")
+            raise ValidationError("Order lines expanded to empty/zero quantities in Monta format.")
         return lines
 
     def _prepare_monta_order_payload(self):

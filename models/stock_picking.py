@@ -73,15 +73,38 @@ class StockPicking(models.Model):
         self.write({"monta_webshop_order_id": webshop_order_id})
         return webshop_order_id
 
+    def _prepare_monta_lines(self):
+        """Build Monta lines from stock moves in the picking."""
+        self.ensure_one()
+        components = []
+        for m in self.move_ids_without_package:
+            # We use product_uom_qty (demanded) or quantity (reserved/done)?
+            # If we are confirming the picking, product_uom_qty is the demanded qty.
+            if m.product_id and m.product_uom_qty > 0:
+                components.append((m.product_id, m.product_uom_qty))
+        
+        if not self.sale_id:
+             # Fallback if somehow no sale_id, but it is required by _is_push_eligible
+             return []
+             
+        return self.sale_id._prepare_monta_lines_from_components(components)
+
     def _monta_prepare_payload(self, so, webshop_order_id):
-        """Reuse existing sale.order payload generator."""
+        """Reuse existing sale.order payload generator but overwrite lines with picking contents."""
+        self.ensure_one()
         payload = so._prepare_monta_order_payload()
+        
+        # Overwrite lines with what's actually in THIS picking
+        payload["OrderLines"] = self._prepare_monta_lines()
+        
         payload["WebshopOrderId"] = webshop_order_id
         payload["Reference"] = (self.name or "").strip()
         
-        # WebshopFactuurID needs an integer. 
-        # For first delivery, we could try to parse digits from SO name or use self.id.
-        # Let's use self.id to be safe and consistently stable for this delivery record.
+        # Recalculate invoice amount if possible? 
+        # Actually, if it's a partial shipment, we might still send the total amount?
+        # Usually WMS wants the order total for the first shipment.
+        # For now, keeping the SO total to avoid complexity.
+        
         payload["Invoice"]["WebshopFactuurID"] = int(self.id) if self.id else 9999
         return payload
 
@@ -179,13 +202,6 @@ class StockPicking(models.Model):
                 if v:
                     return str(v)
         return fallback
-
-    @api.model
-    def create(self, vals):
-        res = super(StockPicking, self).create(vals)
-        # For renewals, we might want to push when it's created and confirmed
-        # But Odoo often creates deliveries in 'draft' or 'waiting'
-        return res
 
     def action_confirm(self):
         res = super(StockPicking, self).action_confirm()
