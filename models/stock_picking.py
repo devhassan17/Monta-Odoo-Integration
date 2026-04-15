@@ -88,7 +88,7 @@ class StockPicking(models.Model):
         lines = self.sale_id._prepare_monta_lines_from_components(components)
         
         # Log the specific lines being sent
-        product_summary = ", ".join([f"{l['Sku']} (qty {l['OrderedQuantity']})" for l in lines])
+        product_summary = ", ".join([f"{l['Sku']} (qty {l['Quantity']})" for l in lines])
         _logger.info("[Monta Push] %s: Preparing payload with %s products: %s", self.name, len(lines), product_summary)
         
         return lines

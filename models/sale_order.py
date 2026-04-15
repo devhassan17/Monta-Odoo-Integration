@@ -161,7 +161,15 @@ class SaleOrder(models.Model):
             )
             raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
 
-        lines = [{"Sku": sku, "OrderedQuantity": int(q)} for sku, q in sku_qty.items() if int(q) > 0]
+        # Monta v6 expects 'Quantity' (not 'OrderedQuantity')
+        lines = [
+            {
+                "Sku": sku, 
+                "Quantity": int(q),
+                "Description": sku # Use SKU as fallback description
+            } 
+            for sku, q in sku_qty.items() if int(q) > 0
+        ]
         
         if not lines:
             raise ValidationError("Order lines expanded to empty/zero quantities in Monta format.")
