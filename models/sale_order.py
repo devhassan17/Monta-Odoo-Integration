@@ -161,12 +161,12 @@ class SaleOrder(models.Model):
             )
             raise ValidationError("Cannot push to Monta:\n- " + "\n- ".join(missing))
 
-        # Monta v6 expects 'Quantity' (not 'OrderedQuantity')
+        # Monta v6 official documentation confirms 'OrderedQuantity' is required
         lines = [
             {
                 "Sku": sku, 
-                "Quantity": int(q),
-                "Description": sku # Use SKU as fallback description
+                "OrderedQuantity": int(q),
+                "Description": sku
             } 
             for sku, q in sku_qty.items() if int(q) > 0
         ]
