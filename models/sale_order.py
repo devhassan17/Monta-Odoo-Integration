@@ -226,16 +226,23 @@ class SaleOrder(models.Model):
         orders = super().create(vals_list)
         for order in orders:
             # Auto-confirm subscription renewals so they generate deliveries for Monta
-            # Odoo 18 uses subscription_id for orders generated from a subscription
+            # Odoo 18 detection:
             is_renewal = False
-            if hasattr(order, 'subscription_id') and order.subscription_id:
+            
+            # check the ORM fields safely
+            fields_exist = order._fields
+            
+            if 'subscription_id' in fields_exist and order.subscription_id:
                 is_renewal = True
-            elif self.env.context.get('default_subscription_id'):
+            elif 'subscription_management' in fields_exist and order.subscription_management in ('renew', 'upsell'):
+                is_renewal = True
+            elif self.env.context.get('default_subscription_id') or self.env.context.get('subscription_id'):
                 is_renewal = True
 
             if is_renewal and order.state == 'draft':
                 try:
-                    _logger.info("[Monta] Auto-confirming renewal order: %s", order.name)
+                    _logger.info("[Monta] Auto-confirming renewal/subscription order: %s (Type: %s)", 
+                                 order.name, order.subscription_management if 'subscription_management' in fields_exist else 'N/A')
                     order.action_confirm()
                 except Exception as e:
                     _logger.warning("[Monta] Failed to auto-confirm renewal %s: %s", order.name, e)
