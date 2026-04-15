@@ -118,16 +118,6 @@ class SaleOrder(models.Model):
             if not p:
                 continue
 
-            # Skip subscription products per user request
-            name = (p.name or "").upper()
-            display_name = (p.display_name or "").upper()
-            if "(SUBSCRIPTION)" in name or "(SUBSCRIPTION)" in display_name:
-                continue
-            if hasattr(p, "recurring_confirm") and p.recurring_confirm: # Odoo 18 subscription flag
-                continue
-            if hasattr(p, "recurring_invoice") and p.recurring_invoice:
-                continue
-
             qty_f = float(qty or 0.0)
             if qty_f <= 0:
                 continue

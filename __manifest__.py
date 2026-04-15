@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "summary": "Integrate Odoo with Monta WMS — orders, EDD, and inbound forecasts.",
     "description": """
 Monta-Odoo Integration
