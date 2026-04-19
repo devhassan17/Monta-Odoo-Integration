@@ -47,11 +47,53 @@ class SaleOrder(models.Model):
                 lambda p: p.picking_type_code == 'outgoing' and p.monta_pushed
             )
             if pickings:
-                # Take the most recently pushed picking's Monta status
-                latest = pickings.sorted(key=lambda p: p.monta_last_push or fields.Datetime.now(), reverse=True)[0]
+                latest = pickings.sorted(
+                    key=lambda p: p.monta_last_push or fields.Datetime.now(), reverse=True
+                )[0]
                 order.monta_delivery_status = latest.monta_status or ''
             else:
                 order.monta_delivery_status = ''
+
+    # Re-declare delivery_status as Char so we can store any Monta status
+    # string (e.g. "Sent to Monta", "Blocked", "Shipped") without being
+    # constrained to the parent's Selection list.
+    delivery_status = fields.Char(
+        string="Delivery Status",
+        compute="_compute_delivery_status_monta",
+        store=False,
+    )
+
+    def _compute_delivery_status_monta(self):
+        """
+        Replaces Odoo's native delivery_status compute.
+        - If the order has Monta-pushed pickings → show Monta's real status.
+        - Otherwise fall back to Odoo's standard logic (pending/partial/full).
+        """
+        for order in self:
+            monta_pickings = order.picking_ids.filtered(
+                lambda p: p.picking_type_code == 'outgoing' and p.monta_pushed
+            )
+            if monta_pickings:
+                latest = monta_pickings.sorted(
+                    key=lambda p: p.monta_last_push or fields.Datetime.now(), reverse=True
+                )[0]
+                monta_st = (latest.monta_status or '').strip()
+                if monta_st:
+                    order.delivery_status = monta_st
+                    continue
+
+            # --- Fallback: reproduce Odoo's standard delivery_status logic ---
+            pickings = order.picking_ids.filtered(
+                lambda p: p.picking_type_code == 'outgoing' and p.state != 'cancel'
+            )
+            if not pickings:
+                order.delivery_status = 'nothing_to_send'
+            elif all(p.state == 'done' for p in pickings):
+                order.delivery_status = 'full'
+            elif any(p.state == 'done' for p in pickings):
+                order.delivery_status = 'partial'
+            else:
+                order.delivery_status = 'pending'
 
     # ---------------------------------------------------------
     # Helpers
