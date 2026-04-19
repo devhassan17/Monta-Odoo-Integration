@@ -219,83 +219,6 @@ class SaleOrder(models.Model):
 
         return payload
 
-    # ---------------------------------------------------------
-    # Creation Hooks
-    # ---------------------------------------------------------
-    @api.model_create_multi
-    def create(self, vals_list):
-        orders = super().create(vals_list)
-        for order in orders:
-            # Auto-confirm subscription renewals so they generate deliveries for Monta
-            is_renewal = self._monta_detect_renewal(order)
-
-            if is_renewal:
-                if order.state == 'draft':
-                    # Confirm it so Odoo generates the delivery
-                    try:
-                        _logger.info(
-                            "[Monta] Auto-confirming renewal/subscription order: %s",
-                            order.name,
-                        )
-                        order.sudo().action_confirm()
-                    except Exception as e:
-                        _logger.warning("[Monta] Failed to auto-confirm renewal %s: %s", order.name, e)
-                elif order.state in ('sale', 'done'):
-                    # SO already confirmed (Odoo subscription cron created it confirmed)
-                    # Push all eligible unpushed outgoing pickings to Monta
-                    try:
-                        pickings = order.picking_ids.filtered(
-                            lambda p: p._is_monta_push_eligible() and not p.monta_pushed
-                        )
-                        for p in pickings:
-                            _logger.info(
-                                "[Monta] Pushing delivery %s for already-confirmed renewal %s",
-                                p.name, order.name,
-                            )
-                            p.action_push_to_monta()
-                    except Exception as e:
-                        _logger.warning("[Monta] Failed to push delivery for renewal %s: %s", order.name, e)
-        return orders
-
-    @api.model
-    def _monta_detect_renewal(self, order):
-        """Detect if a sale order is a subscription renewal using all known Odoo field variants."""
-        f = order._fields
-        ctx = self.env.context
-
-        # Odoo 16/17/18: subscription_id (many2one to sale.subscription or sale.order)
-        if 'subscription_id' in f and order.subscription_id:
-            return True
-
-        # Odoo 16 sale_subscription: subscription_management
-        if 'subscription_management' in f and order.subscription_management in ('renew', 'upsell'):
-            return True
-
-        # Odoo 17/18 sale_subscription: is_subscription boolean
-        if 'is_subscription' in f and order.is_subscription:
-            return True
-
-        # Odoo 17/18: subscription_state (recurring, paused, etc.)
-        if 'subscription_state' in f and order.subscription_state in ('1_draft', '2_renewal', '3_progress', '4_paused', '5_closed', '6_churn'):
-            return True
-
-        # Odoo 17/18: recurring_monthly or recurring_plan indicates subscription
-        if 'recurring_monthly' in f and order.recurring_monthly:
-            return True
-
-        # Odoo 17/18: plan_id (new subscription plan field)
-        if 'plan_id' in f and order.plan_id:
-            return True
-
-        # Context-based detection (explicit renewal context from Odoo cron)
-        if (
-            ctx.get('default_subscription_id')
-            or ctx.get('subscription_id')
-            or ctx.get('is_subscription_renewal')
-        ):
-            return True
-
-        return False
 
     # ---------------------------------------------------------
     # API
@@ -440,26 +363,7 @@ class SaleOrder(models.Model):
     # Hooks
     # ---------------------------------------------------------
     def action_confirm(self):
-        # Filter to only orders that are actually in a confirmable state.
-        # This prevents 'Some orders are not in a state requiring confirmation'
-        # when our create() hook has already auto-confirmed a subscription SO
-        # and the UI button click arrives a moment later.
-        confirmable = self.filtered(lambda o: o.state in ('draft', 'sent'))
-        if not confirmable:
-            return True
-        res = confirmable._action_confirm_for_monta()
-        return res
-
-    def _action_confirm_for_monta(self):
-        """Thin wrapper so super().action_confirm() is called on the filtered recordset."""
         res = super().action_confirm()
-        for order in self:
-            if order._is_company_allowed():
-                if order.name and order.name.startswith('BC'):
-                    continue
-                if order.monta_sync_state == 'sent':
-                    continue
-                pass
         return res
 
     def write(self, vals):

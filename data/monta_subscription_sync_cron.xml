@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data noupdate="1">
+
+    <!--
+        Monta Subscription Delivery Sync Cron
+        ======================================
+        Runs every hour and checks for subscription Sale Orders where the number
+        of posted invoices exceeds the number of Monta-pushed deliveries.
+        When a gap is found, a new outgoing delivery is created and pushed to
+        Monta automatically.
+
+        This does NOT depend on invoice posting hooks and does NOT interfere
+        with Odoo's subscription date management.
+    -->
+    <record id="ir_cron_monta_subscription_delivery_sync" model="ir.cron">
+      <field name="name">Monta: Subscription Renewal Delivery Sync</field>
+      <field name="model_id" ref="sale.model_sale_order"/>
+      <field name="state">code</field>
+      <field name="code">model._cron_monta_subscription_delivery_sync()</field>
+      <field name="interval_number">1</field>
+      <field name="interval_type">hours</field>
+      <field name="numbercall">-1</field>
+      <field name="active">True</field>
+      <field name="user_id" ref="base.user_root"/>
+    </record>
+
+  </data>
+</odoo>
