@@ -76,6 +76,27 @@ class AccountMove(models.Model):
                 )
                 continue
 
+            # ------------------------------------------------------------------
+            # CRITICAL GUARD: skip if this is the FIRST invoice for this SO.
+            # The first delivery was already pushed to Monta automatically when
+            # the SO was confirmed (via stock_picking.action_confirm() override).
+            # Only 2nd+ invoices represent genuine subscription renewals that
+            # need a fresh delivery. Without this check, manually clicking
+            # "Create Invoice" would send a duplicate delivery to Monta.
+            # ------------------------------------------------------------------
+            prior_invoices = so.invoice_ids.filtered(
+                lambda inv: inv.id != move.id
+                and inv.move_type == 'out_invoice'
+                and inv.state == 'posted'
+            )
+            if not prior_invoices:
+                _logger.info(
+                    "[Monta] Invoice %s is the first invoice for SO %s — "
+                    "skipping renewal delivery (initial delivery already sent via action_confirm).",
+                    move.name, so.name,
+                )
+                continue
+
             # Create a new delivery for this renewal period and push to Monta
             try:
                 picking = self._monta_create_renewal_delivery(so, move)
