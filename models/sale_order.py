@@ -440,16 +440,25 @@ class SaleOrder(models.Model):
     # Hooks
     # ---------------------------------------------------------
     def action_confirm(self):
+        # Filter to only orders that are actually in a confirmable state.
+        # This prevents 'Some orders are not in a state requiring confirmation'
+        # when our create() hook has already auto-confirmed a subscription SO
+        # and the UI button click arrives a moment later.
+        confirmable = self.filtered(lambda o: o.state in ('draft', 'sent'))
+        if not confirmable:
+            return True
+        res = confirmable._action_confirm_for_monta()
+        return res
+
+    def _action_confirm_for_monta(self):
+        """Thin wrapper so super().action_confirm() is called on the filtered recordset."""
         res = super().action_confirm()
         for order in self:
             if order._is_company_allowed():
-                if order.name and order.name.startswith("BC"):
+                if order.name and order.name.startswith('BC'):
                     continue
-                if order.monta_sync_state == "sent":
+                if order.monta_sync_state == 'sent':
                     continue
-                # mark for sync; and try once (but protected by skip flag in internal writes)
-                # order.with_context(skip_monta_write_hook=True).write({"monta_needs_sync": True})
-                # order._monta_create()
                 pass
         return res
 
