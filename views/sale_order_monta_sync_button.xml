@@ -18,6 +18,7 @@
                   class="oe_stat_button"
                   icon="fa-truck">
             <div class="o_stat_info">
+              <span class="o_stat_value"><field name="monta_delivery_status" nolabel="1"/></span>
               <span class="o_stat_text">Monta Status</span>
             </div>
           </button>

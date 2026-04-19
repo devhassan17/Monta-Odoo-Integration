@@ -195,6 +195,7 @@ class StockPicking(models.Model):
             self.write({
                 "monta_pushed": True,
                 "monta_last_push": fields.Datetime.now(),
+                "monta_status": "Sent to Monta",  # Will be updated by status sync cron
             })
             
             # Immediately validate in Odoo so user doesn't have to click it

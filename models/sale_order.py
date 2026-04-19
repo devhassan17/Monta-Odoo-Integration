@@ -34,6 +34,25 @@ class SaleOrder(models.Model):
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
 
+    monta_delivery_status = fields.Char(
+        string="Monta Delivery Status",
+        compute="_compute_monta_delivery_status",
+        store=False,
+    )
+
+    def _compute_monta_delivery_status(self):
+        """Show Monta's actual delivery status from the linked picking(s)."""
+        for order in self:
+            pickings = order.picking_ids.filtered(
+                lambda p: p.picking_type_code == 'outgoing' and p.monta_pushed
+            )
+            if pickings:
+                # Take the most recently pushed picking's Monta status
+                latest = pickings.sorted(key=lambda p: p.monta_last_push or fields.Datetime.now(), reverse=True)[0]
+                order.monta_delivery_status = latest.monta_status or ''
+            else:
+                order.monta_delivery_status = ''
+
     # ---------------------------------------------------------
     # Helpers
     # ---------------------------------------------------------
@@ -226,27 +245,75 @@ class SaleOrder(models.Model):
         orders = super().create(vals_list)
         for order in orders:
             # Auto-confirm subscription renewals so they generate deliveries for Monta
-            # Odoo 18 detection:
-            is_renewal = False
-            
-            # check the ORM fields safely
-            fields_exist = order._fields
-            
-            if 'subscription_id' in fields_exist and order.subscription_id:
-                is_renewal = True
-            elif 'subscription_management' in fields_exist and order.subscription_management in ('renew', 'upsell'):
-                is_renewal = True
-            elif self.env.context.get('default_subscription_id') or self.env.context.get('subscription_id'):
-                is_renewal = True
+            is_renewal = self._monta_detect_renewal(order)
 
-            if is_renewal and order.state == 'draft':
-                try:
-                    _logger.info("[Monta] Auto-confirming renewal/subscription order: %s (Type: %s)", 
-                                 order.name, order.subscription_management if 'subscription_management' in fields_exist else 'N/A')
-                    order.action_confirm()
-                except Exception as e:
-                    _logger.warning("[Monta] Failed to auto-confirm renewal %s: %s", order.name, e)
+            if is_renewal:
+                if order.state == 'draft':
+                    # Confirm it so Odoo generates the delivery
+                    try:
+                        _logger.info(
+                            "[Monta] Auto-confirming renewal/subscription order: %s",
+                            order.name,
+                        )
+                        order.sudo().action_confirm()
+                    except Exception as e:
+                        _logger.warning("[Monta] Failed to auto-confirm renewal %s: %s", order.name, e)
+                elif order.state in ('sale', 'done'):
+                    # SO already confirmed (Odoo subscription cron created it confirmed)
+                    # Push all eligible unpushed outgoing pickings to Monta
+                    try:
+                        pickings = order.picking_ids.filtered(
+                            lambda p: p._is_monta_push_eligible() and not p.monta_pushed
+                        )
+                        for p in pickings:
+                            _logger.info(
+                                "[Monta] Pushing delivery %s for already-confirmed renewal %s",
+                                p.name, order.name,
+                            )
+                            p.action_push_to_monta()
+                    except Exception as e:
+                        _logger.warning("[Monta] Failed to push delivery for renewal %s: %s", order.name, e)
         return orders
+
+    @api.model
+    def _monta_detect_renewal(self, order):
+        """Detect if a sale order is a subscription renewal using all known Odoo field variants."""
+        f = order._fields
+        ctx = self.env.context
+
+        # Odoo 16/17/18: subscription_id (many2one to sale.subscription or sale.order)
+        if 'subscription_id' in f and order.subscription_id:
+            return True
+
+        # Odoo 16 sale_subscription: subscription_management
+        if 'subscription_management' in f and order.subscription_management in ('renew', 'upsell'):
+            return True
+
+        # Odoo 17/18 sale_subscription: is_subscription boolean
+        if 'is_subscription' in f and order.is_subscription:
+            return True
+
+        # Odoo 17/18: subscription_state (recurring, paused, etc.)
+        if 'subscription_state' in f and order.subscription_state in ('1_draft', '2_renewal', '3_progress', '4_paused', '5_closed', '6_churn'):
+            return True
+
+        # Odoo 17/18: recurring_monthly or recurring_plan indicates subscription
+        if 'recurring_monthly' in f and order.recurring_monthly:
+            return True
+
+        # Odoo 17/18: plan_id (new subscription plan field)
+        if 'plan_id' in f and order.plan_id:
+            return True
+
+        # Context-based detection (explicit renewal context from Odoo cron)
+        if (
+            ctx.get('default_subscription_id')
+            or ctx.get('subscription_id')
+            or ctx.get('is_subscription_renewal')
+        ):
+            return True
+
+        return False
 
     # ---------------------------------------------------------
     # API
