@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+
+    <!--
+        Override the subscription form to show the real Monta delivery status
+        (e.g. "Sent to Monta", "Blocked", "Shipped") instead of Odoo's native
+        "Fully Delivered" which is computed purely from stock-picking states and
+        has no awareness of what Monta actually reports.
+
+        We replace the delivery_status Selection field (rendered by Odoo's
+        SelectionField widget, which crashes on non-selection values) with our
+        plain-text monta_delivery_status Char field when a Monta-pushed picking
+        exists, and fall back gracefully otherwise.
+    -->
+    <record id="view_subscription_form_monta_delivery_status" model="ir.ui.view">
+      <field name="name">sale.order.subscription.monta.delivery.status</field>
+      <field name="model">sale.order</field>
+      <field name="inherit_id" ref="sale_subscription.subscription_view_form"/>
+      <field name="arch" type="xml">
+
+        <!-- Replace "Delivery Status" label+field with Monta's status -->
+        <xpath expr="//field[@name='delivery_status']" position="replace">
+          <label for="monta_delivery_status" string="Delivery Status"/>
+          <field name="monta_delivery_status"
+                 widget="char"
+                 readonly="1"
+                 placeholder="Pending Monta sync…"/>
+        </xpath>
+
+      </field>
+    </record>
+
+  </data>
+</odoo>

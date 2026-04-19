@@ -200,7 +200,11 @@ class AccountMove(models.Model):
             return None
 
         # ---- Create the picking ----
-        picking = self.env['stock.picking'].sudo().create({
+        # Strip all 'default_*' context keys coming from the invoice form
+        # (e.g. default_move_type='out_invoice') which would bleed into the
+        # stock.picking creation and cause "Wrong value for move_type" errors.
+        clean_ctx = {k: v for k, v in self.env.context.items() if not k.startswith('default_')}
+        picking = self.env['stock.picking'].sudo().with_context(clean_ctx).create({
             'picking_type_id': picking_type.id,
             'partner_id': so.partner_id.id,
             'origin': f"{so.name} (Renewal: {invoice.name})",
@@ -208,6 +212,7 @@ class AccountMove(models.Model):
             'location_id': src_loc.id,
             'location_dest_id': dest_loc.id,
             'company_id': so.company_id.id,
+            'move_type': 'direct',  # "As soon as possible" — explicit to avoid any context bleeding
             'move_ids': [(0, 0, v) for v in move_vals],
         })
 
