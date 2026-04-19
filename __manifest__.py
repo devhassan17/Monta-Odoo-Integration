@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     "name": "Monta-Odoo Integration",
-    "version": "1.1.3",
+    "version": "1.1.4",
     "summary": "Integrate Odoo with Monta WMS — orders, EDD, and inbound forecasts.",
     "description": """
 Monta-Odoo Integration
@@ -31,7 +31,6 @@ between Odoo and Monta WMS via Monta's API.
         "views/sale_order_monta_sync_button.xml",
         "views/stock_picking_views.xml",
         "views/monta_config_views.xml",
-        "views/subscription_monta_status.xml",
     ],
     "installable": True,
     "application": True,

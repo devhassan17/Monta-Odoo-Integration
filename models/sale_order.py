@@ -34,25 +34,6 @@ class SaleOrder(models.Model):
     monta_needs_sync = fields.Boolean(default=False, copy=False)
     monta_retry_count = fields.Integer(default=0, copy=False)
 
-    monta_delivery_status = fields.Char(
-        string="Monta Delivery Status",
-        compute="_compute_monta_delivery_status",
-        store=False,
-    )
-
-    def _compute_monta_delivery_status(self):
-        """Show Monta's actual delivery status from the latest pushed picking."""
-        for order in self:
-            pickings = order.picking_ids.filtered(
-                lambda p: p.picking_type_code == 'outgoing' and p.monta_pushed
-            )
-            if pickings:
-                latest = pickings.sorted(
-                    key=lambda p: p.monta_last_push or fields.Datetime.now(), reverse=True
-                )[0]
-                order.monta_delivery_status = latest.monta_status or ''
-            else:
-                order.monta_delivery_status = ''
 
     # ---------------------------------------------------------
     # Helpers
