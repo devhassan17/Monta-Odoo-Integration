@@ -451,14 +451,12 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
-        # Prevent duplicate deliveries during the initial checkout phase.
-        # Website checkouts generate a first invoice instantly, causing a date shift today.
-        # We ignore any date shifts that happen within the first 24 hours of SO confirmation.
-        elapsed_hours = (fields.Datetime.now() - order.date_order).total_seconds() / 3600.0 if order.date_order else 0
-        if elapsed_hours < 24:
+        # Prevent triggering on the first invoice during website checkout
+        invoices = order.invoice_ids.filtered(lambda inv: inv.state not in ('cancel', 'draft') and inv.move_type == 'out_invoice')
+        if len(invoices) <= 1:
             _logger.info(
-                "[Monta] Skipping renewal delivery creation for SO %s because it is still in the 24-hour initial checkout phase.",
-                order.name
+                "[Monta] Skipping renewal delivery creation for SO %s because invoice count is %d (initial checkout phase).",
+                order.name, len(invoices)
             )
             return
 
