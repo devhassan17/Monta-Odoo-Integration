@@ -153,6 +153,10 @@ class MontaInboundForecastService(models.AbstractModel):
 
         cfg, base, user, pwd, tz, _wh = conf
 
+        if not cfg.inbound_enable:
+            _logger.info("[Monta IF] Inbound forecast is disabled in configuration. Skipping PO %s", po.name)
+            return False
+
         if po.state not in ("purchase", "done"):
             return False
 
@@ -183,6 +187,10 @@ class MontaInboundForecastService(models.AbstractModel):
             return False
 
         _cfg, base, user, pwd, _tz, _wh = conf
+
+        if not _cfg.inbound_enable:
+            _logger.info("[Monta IF] Inbound forecast is disabled. Skipping delete for PO %s", po.name)
+            return False
 
         auth = HTTPBasicAuth(user, pwd)
         url = f"{base}/inboundforecast/group/{po.name}"

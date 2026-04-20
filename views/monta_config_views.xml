@@ -37,6 +37,11 @@
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
                         </group>
+                        
+                        <group string="Inbound Settings">
+                            <field name="inbound_enable" widget="boolean_toggle"/>
+                            <!-- Additional inbound settings can be shown here later if needed -->
+                        </group>
                     </group>
                 </sheet>
             </form>
