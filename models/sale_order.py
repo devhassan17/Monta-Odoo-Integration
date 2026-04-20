@@ -451,12 +451,14 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
-        # Prevent triggering on the first invoice during website checkout
+        # Link deliveries to invoices: only create a new delivery if invoices outpace existing outgoing pickings
         invoices = order.invoice_ids.filtered(lambda inv: inv.state not in ('cancel', 'draft') and inv.move_type == 'out_invoice')
-        if len(invoices) <= 1:
+        out_pickings = order.picking_ids.filtered(lambda p: p.picking_type_code == 'outgoing' and p.state != 'cancel')
+        
+        if len(out_pickings) >= len(invoices):
             _logger.info(
-                "[Monta] Skipping renewal delivery creation for SO %s because invoice count is %d (initial checkout phase).",
-                order.name, len(invoices)
+                "[Monta] Skipping renewal delivery creation for SO %s because delivery count (%d) handles invoice count (%d).",
+                order.name, len(out_pickings), len(invoices)
             )
             return
 
@@ -479,10 +481,9 @@ class SaleOrder(models.Model):
         mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
         
         if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-            _logger.info(
-                "[Monta] SO %s: renewal detected but Mollie Mandate is invalid/missing. Skipping Monta delivery creation.",
-                order.name,
-            )
+            msg = f"📦 Monta Renewal Blocked: Cannot generate renewal delivery because the customer's Mollie Mandate is missing or invalid (Status: {mollie_status or 'None'})."
+            order.message_post(body=msg)
+            _logger.info("[Monta] SO %s: renewal detected but Mollie Mandate is invalid. Skipping Monta delivery creation.", order.name)
             return
 
         # BC orders skip
