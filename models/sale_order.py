@@ -451,6 +451,15 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
+        # Prevent double-delivery when triggered by the UI 'Create Invoice' wizard
+        if order.env.context.get('active_model') in ('sale.order', 'sale.subscription'):
+            _logger.info(
+                "[Monta] SO %s: renewal detected but triggered by manual UI. "
+                "Skipping to prevent duplicate deliveries.",
+                order.name,
+            )
+            return
+
         # Subscription detection
         f = order._fields
         is_sub = (
