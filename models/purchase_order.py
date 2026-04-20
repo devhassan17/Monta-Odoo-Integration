@@ -11,6 +11,11 @@ class PurchaseOrder(models.Model):
 
     # Manual trigger (from button or shell)
     def action_monta_push_inbound_forecast(self):
+        cfg = self.env["monta.config"].sudo().get_for_company(self.env.company)
+        if cfg and not cfg.inbound_enable:
+            _logger.info("[Monta IF] Inbound Forecast explicitly disabled in Monta Config. Aborting push.")
+            return True
+
         svc = self.env["monta.inbound.forecast.service"]
         for po in self:
             try:
@@ -37,6 +42,10 @@ class PurchaseOrder(models.Model):
     def write(self, vals):
         res = super().write(vals)
         try:
+            cfg = self.env["monta.config"].sudo().get_for_company(self.env.company)
+            if cfg and not cfg.inbound_enable:
+                return res
+                
             to_push = self.filtered(lambda p: p.state in ("purchase", "done"))
             if to_push:
                 svc = self.env["monta.inbound.forecast.service"]
@@ -53,6 +62,10 @@ class PurchaseOrder(models.Model):
     def button_cancel(self):
         res = super().button_cancel()
         try:
+            cfg = self.env["monta.config"].sudo().get_for_company(self.env.company)
+            if cfg and not cfg.inbound_enable:
+                return res
+
             svc = self.env["monta.inbound.forecast.service"]
             for po in self:
                 svc.delete_for_po(po, note="Cancelled from Odoo")
@@ -62,9 +75,11 @@ class PurchaseOrder(models.Model):
 
     def unlink(self):
         try:
-            svc = self.env["monta.inbound.forecast.service"]
-            for po in self:
-                svc.delete_for_po(po, note="Deleted from Odoo (unlink)")
+            cfg = self.env["monta.config"].sudo().get_for_company(self.env.company)
+            if cfg and cfg.inbound_enable:
+                svc = self.env["monta.inbound.forecast.service"]
+                for po in self:
+                    svc.delete_for_po(po, note="Deleted from Odoo (unlink)")
         except Exception as e:
             _logger.error("[Monta IF] Unlink delete failed: %s", e, exc_info=True)
         return super().unlink()
