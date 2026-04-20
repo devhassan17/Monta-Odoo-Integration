@@ -32,6 +32,26 @@ class StockPicking(models.Model):
         # Optional: check if SO name is BC... to skip
         if self.sale_id.name and self.sale_id.name.startswith("BC"):
             return False
+
+        # Subscription Mandate Filter (only required for renewals)
+        f = self.sale_id._fields
+        is_sub = (
+            ('is_subscription' in f and self.sale_id.is_subscription)
+            or ('plan_id' in f and bool(self.sale_id.plan_id))
+            or ('subscription_state' in f and getattr(self.sale_id, 'subscription_state', '') in (
+                '2_renewal', '3_progress', '4_paused'
+            ))
+        )
+        if is_sub and not self._monta_is_first_delivery():
+            order = self.sale_id
+            partner = order.partner_id
+            mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
+            mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
+            mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
+            
+            if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
+                return False
+
         return True
 
     def _monta_is_first_delivery(self):

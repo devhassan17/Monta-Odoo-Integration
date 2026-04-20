@@ -463,6 +463,19 @@ class SaleOrder(models.Model):
         if not is_sub:
             return
 
+        # Mollie Mandate Validation
+        partner = order.partner_id
+        mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
+        mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
+        mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
+        
+        if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
+            _logger.info(
+                "[Monta] SO %s: renewal detected but Mollie Mandate is invalid/missing. Skipping Monta delivery creation.",
+                order.name,
+            )
+            return
+
         # BC orders skip
         if order.name and order.name.startswith('BC'):
             return
