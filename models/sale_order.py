@@ -451,14 +451,14 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
-        # Link deliveries to invoices: only create a new delivery if invoices outpace existing outgoing pickings
-        invoices = order.invoice_ids.filtered(lambda inv: inv.state not in ('cancel', 'draft') and inv.move_type == 'out_invoice')
-        out_pickings = order.picking_ids.filtered(lambda p: p.picking_type_code == 'outgoing' and p.state != 'cancel')
-        
-        if len(out_pickings) >= len(invoices):
+        # Prevent duplicate deliveries during the initial checkout phase.
+        # Website checkouts generate a first invoice instantly, causing a date shift today.
+        # We ignore any date shifts that happen within the first 24 hours of SO confirmation.
+        elapsed_hours = (fields.Datetime.now() - order.date_order).total_seconds() / 3600.0 if order.date_order else 0
+        if elapsed_hours < 24:
             _logger.info(
-                "[Monta] Skipping renewal delivery creation for SO %s because delivery count (%d) handles invoice count (%d).",
-                order.name, len(out_pickings), len(invoices)
+                "[Monta] Skipping renewal delivery creation for SO %s because it is still in the 24-hour initial checkout phase.",
+                order.name
             )
             return
 
