@@ -451,6 +451,15 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
+        # Prevent triggering on the first invoice during website checkout
+        invoices = order.invoice_ids.filtered(lambda inv: inv.state not in ('cancel', 'draft') and inv.move_type == 'out_invoice')
+        if len(invoices) <= 1:
+            _logger.info(
+                "[Monta] Skipping renewal delivery creation for SO %s because invoice count is %d (initial checkout phase).",
+                order.name, len(invoices)
+            )
+            return
+
         # Subscription detection
         f = order._fields
         is_sub = (

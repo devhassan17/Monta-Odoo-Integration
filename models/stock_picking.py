@@ -59,23 +59,14 @@ class StockPicking(models.Model):
         self.ensure_one()
         if not self.sale_id:
             return False
-        # Search for any other picking for the same SO that was already pushed or has a status row with 'Sent'
-        others = self.search([
+            
+        # The first delivery is simply the oldest outgoing picking created for this SO.
+        first_picking = self.search([
             ("sale_id", "=", self.sale_id.id),
-            ("id", "!=", self.id),
-            ("monta_pushed", "=", True)
-        ])
-        if others:
-            return False
+            ("picking_type_code", "=", "outgoing")
+        ], order="id asc", limit=1)
         
-        # Also check monta.order.status for any row linked to this SO that is successfully 'Sent'
-        # (This covers cases where a picking was deleted but the order exists in Monta)
-        Status = self.env["monta.order.status"].sudo()
-        existing = Status.search([
-            ("sale_order_id", "=", self.sale_id.id),
-            ("status", "in", ["Sent", "sent"])
-        ])
-        return not bool(existing)
+        return first_picking and first_picking.id == self.id
 
     def _monta_make_webshop_order_id(self, so):
         self.ensure_one()
