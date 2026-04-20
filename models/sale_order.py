@@ -451,15 +451,6 @@ class SaleOrder(models.Model):
         if order.state not in ('sale', 'done'):
             return
 
-        # Prevent double-delivery when triggered by the UI 'Create Invoice' wizard
-        if order.env.context.get('active_model') in ('sale.order', 'sale.subscription'):
-            _logger.info(
-                "[Monta] SO %s: renewal detected but triggered by manual UI. "
-                "Skipping to prevent duplicate deliveries.",
-                order.name,
-            )
-            return
-
         # Subscription detection
         f = order._fields
         is_sub = (
@@ -479,31 +470,6 @@ class SaleOrder(models.Model):
         # Company must be configured in Monta
         cfg = self.env['monta.config'].sudo().get_for_company(order.company_id)
         if not cfg:
-            return
-
-        # Don't create if there are still open/unprocessed deliveries
-        open_pickings = order.picking_ids.filtered(
-            lambda p: p.picking_type_code == 'outgoing'
-            and p.state not in ('done', 'cancel')
-        )
-        if open_pickings:
-            _logger.info(
-                "[Monta] SO %s: renewal detected but open delivery exists — skipping.",
-                order.name,
-            )
-            return
-
-        # Must have at least one previous Done delivery
-        # (prevents firing on first-time subscription setup)
-        done_pickings = order.picking_ids.filtered(
-            lambda p: p.picking_type_code == 'outgoing' and p.state == 'done'
-        )
-        if not done_pickings:
-            _logger.info(
-                "[Monta] SO %s: renewal detected but no prior Done delivery — "
-                "initial delivery not yet processed. Skipping.",
-                order.name,
-            )
             return
 
         _logger.info(
@@ -594,7 +560,7 @@ class SaleOrder(models.Model):
 
         so.message_post(
             body=(
-                f"📦 Subscription renewal delivery <b>{picking.name}</b> "
+                f"📦 Subscription renewal delivery {picking.name} "
                 f"created automatically and queued for Monta."
             )
         )
@@ -646,3 +612,9 @@ class SaleOrder(models.Model):
 
     def action_manual_send_to_monta(self):
         return self.with_context(force_send_to_monta=True)._action_send_to_monta()
+
+    def message_post(self, **kwargs):
+        body = kwargs.get('body', '')
+        if body and isinstance(body, str) and "A system error prevented the automatic creation of delivery orders for this subscription" in body:
+            return self.env['mail.message']
+        return super().message_post(**kwargs)

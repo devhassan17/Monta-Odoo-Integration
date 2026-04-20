@@ -239,7 +239,7 @@ class MontaSubscriptionSync(models.Model):
         # Chatter note
         so.message_post(
             body=(
-                f"📦 Subscription renewal delivery <b>{picking.name}</b> "
+                f"📦 Subscription renewal delivery {picking.name} "
                 f"created automatically and queued for Monta."
             )
         )
