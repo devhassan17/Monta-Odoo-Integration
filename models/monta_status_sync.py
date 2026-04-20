@@ -30,7 +30,11 @@ class SaleOrder(models.Model):
 
     @api.model
     def cron_monta_sync_status(self, batch_limit=200):
-        domain = [("state", "in", ["sale", "done"]), ("monta_status", "!=", "Shipped")]
+        domain = [
+            ("state", "in", ["sale", "done"]), 
+            ("monta_status", "!=", "Shipped"),
+            ("monta_track_trace", "=", False)
+        ]
         orders = self.search(domain, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Cron sync starting for %d orders", len(orders))
         orders._monta_sync_batch()
@@ -161,7 +165,8 @@ class StockPicking(models.Model):
         domain = [
             ("picking_type_code", "=", "outgoing"),
             ("monta_pushed", "=", True),
-            ("monta_status", "!=", "Shipped")
+            ("monta_status", "!=", "Shipped"),
+            ("monta_track_trace", "=", False)
         ]
         pickings = self.search(domain, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Picking Cron sync starting for %d pickings", len(pickings))
