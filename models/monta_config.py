@@ -44,6 +44,13 @@ class MontaConfig(models.Model):
     supplier_code_map = fields.Text(string="Supplier Code Map (JSON)", default="{}")
     default_supplier_code = fields.Char(string="Default Supplier Code")
 
+    # Delivery Filter
+    monta_route_id = fields.Many2one(
+        "stock.route",
+        string="Monta Route",
+        help="If set, only orders using a delivery product with this route will be pushed to Monta.",
+    )
+
     # -------------------------
     # Singleton helpers
     # -------------------------

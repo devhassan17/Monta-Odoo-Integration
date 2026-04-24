@@ -29,9 +29,16 @@ class StockPicking(models.Model):
         cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
         if not cfg:
             return False
-        # Optional: check if SO name is BC... to skip
         if self.sale_id.name and self.sale_id.name.startswith("BC"):
             return False
+            
+        # Route Filter (Delivery Product Route)
+        if cfg.monta_route_id:
+            carrier = getattr(self.sale_id, 'carrier_id', False)
+            delivery_product = carrier.product_id if carrier else False
+            if not delivery_product or cfg.monta_route_id not in delivery_product.route_ids:
+                _logger.info("[Monta Skip] Picking %s skipped because delivery product routes do not match configured Monta Route.", self.name)
+                return False
 
         # Subscription Mandate Filter (only required for renewals)
         f = self.sale_id._fields

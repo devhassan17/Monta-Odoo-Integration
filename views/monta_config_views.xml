@@ -36,6 +36,7 @@
                             <field name="origin"/>
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
+                            <field name="monta_route_id"/>
                         </group>
                         
                         <group string="Inbound Settings">
