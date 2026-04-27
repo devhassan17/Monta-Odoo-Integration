@@ -24,6 +24,8 @@ class StockPicking(models.Model):
         self.ensure_one()
         if self.picking_type_code != 'outgoing':
             return False
+        if self.state in ('cancel', 'done'):
+            return False
         if not self.sale_id:
             return False
         cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
@@ -114,10 +116,11 @@ class StockPicking(models.Model):
         if not self.sale_id:
             return False
             
-        # The first delivery is simply the oldest outgoing picking created for this SO.
+        # The first delivery is simply the oldest non-cancelled outgoing picking created for this SO.
         first_picking = self.search([
             ("sale_id", "=", self.sale_id.id),
-            ("picking_type_code", "=", "outgoing")
+            ("picking_type_code", "=", "outgoing"),
+            ("state", "!=", "cancel")
         ], order="id asc", limit=1)
         
         return first_picking and first_picking.id == self.id
