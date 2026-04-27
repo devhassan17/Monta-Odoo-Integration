@@ -36,7 +36,8 @@
                             <field name="origin"/>
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
-                            <field name="monta_route_id"/>
+                            <field name="enable_route_filter" widget="boolean_toggle"/>
+                            <field name="monta_route_ids" widget="many2many_tags" invisible="enable_route_filter == False"/>
                         </group>
                         
                         <group string="Inbound Settings">

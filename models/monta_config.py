@@ -45,10 +45,15 @@ class MontaConfig(models.Model):
     default_supplier_code = fields.Char(string="Default Supplier Code")
 
     # Delivery Filter
-    monta_route_id = fields.Many2one(
+    enable_route_filter = fields.Boolean(
+        string="Enable Route Filter",
+        default=False,
+        help="If enabled, only orders with delivery products matching the selected Monta Routes will be pushed."
+    )
+    monta_route_ids = fields.Many2many(
         "stock.route",
-        string="Monta Route",
-        help="If set, only orders using a delivery product with this route will be pushed to Monta.",
+        string="Monta Routes",
+        help="If route filter is enabled, only orders using a delivery product with one of these routes will be pushed to Monta.",
     )
 
     # -------------------------

@@ -33,11 +33,19 @@ class StockPicking(models.Model):
             return False
             
         # Route Filter (Delivery Product Route)
-        if cfg.monta_route_id:
+        if cfg.enable_route_filter and cfg.monta_route_ids:
             carrier = getattr(self.sale_id, 'carrier_id', False)
             delivery_product = carrier.product_id if carrier else False
-            if not delivery_product or cfg.monta_route_id not in delivery_product.route_ids:
-                _logger.info("[Monta Skip] Picking %s skipped because delivery product routes do not match configured Monta Route.", self.name)
+            
+            if not delivery_product or not set(cfg.monta_route_ids.ids).intersection(set(delivery_product.route_ids.ids)):
+                _logger.info(
+                    "[Monta Skip] Picking %s skipped because delivery product routes do not match configured Monta Routes. "
+                    "(Carrier: %s, Product Routes: %s, Config Routes: %s)",
+                    self.name,
+                    carrier.name if carrier else 'None',
+                    delivery_product.route_ids.ids if delivery_product else [],
+                    cfg.monta_route_ids.ids
+                )
                 return False
 
         # Subscription Mandate Filter (only required for renewals)
