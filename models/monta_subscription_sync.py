@@ -120,28 +120,55 @@ class MontaSubscriptionSync(models.Model):
         """
         Return True if this subscription SO needs a new Monta delivery.
 
-        Rule:
-          posted invoice count > monta-pushed outgoing delivery count
+        Smart Timeline-based Rule:
+        1. Never exceed the number of invoices.
+        2. Ignore backlogs: only trigger if the latest invoice was created in the last 7 days.
+        3. Only trigger if the latest Monta delivery is older than the latest invoice.
         """
         posted_invoices = so.invoice_ids.filtered(
             lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
-        )
-        invoice_count = len(posted_invoices)
-        if invoice_count == 0:
-            return False  # No invoice yet — initial delivery handled by stock_picking hook
+        ).sorted(lambda inv: inv.create_date or inv.invoice_date, reverse=True)
+        
+        if not posted_invoices:
+            return False
 
         monta_deliveries = so.picking_ids.filtered(
             lambda p: p.picking_type_code == "outgoing" and p.monta_pushed
-        )
-        delivery_count = len(monta_deliveries)
+        ).sorted("create_date", reverse=True)
 
-        needs = invoice_count > delivery_count
-        if needs:
-            _logger.info(
-                "[Monta Sub Sync] SO %s: %d invoices, %d Monta deliveries → needs new delivery",
-                so.name, invoice_count, delivery_count,
-            )
-        return needs
+        # Guard 1: Never create more deliveries than invoices
+        invoice_count = len(posted_invoices)
+        delivery_count = len(monta_deliveries)
+        if delivery_count >= invoice_count:
+            return False
+
+        latest_invoice = posted_invoices[0]
+
+        # Guard 2: Recency check (Ignore historical backlogs)
+        from datetime import timedelta
+        if latest_invoice.create_date:
+            if (fields.Datetime.now() - latest_invoice.create_date) > timedelta(days=7):
+                return False
+
+        # Guard 3: Timeline check
+        if not monta_deliveries:
+            return True
+
+        latest_delivery = monta_deliveries[0]
+        
+        # If the latest delivery was created BEFORE the latest invoice
+        # (with a 1-hour buffer to handle simultaneously created records where delivery might be slightly older)
+        if latest_invoice.create_date and latest_delivery.create_date:
+            buffer_time = latest_invoice.create_date - timedelta(hours=1)
+            if latest_delivery.create_date < buffer_time:
+                _logger.info(
+                    "[Monta Sub Sync] SO %s: New invoice %s (created %s) has no matching delivery. "
+                    "Latest delivery was %s. Triggering 1 renewal delivery.",
+                    so.name, latest_invoice.name, latest_invoice.create_date, latest_delivery.create_date
+                )
+                return True
+
+        return False
 
     # ------------------------------------------------------------------
     # Delivery creation
