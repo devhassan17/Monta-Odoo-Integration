@@ -30,14 +30,30 @@ class SaleOrder(models.Model):
 
     @api.model
     def cron_monta_sync_status(self, batch_limit=200):
+        from dateutil.relativedelta import relativedelta
+        cutoff = fields.Datetime.now() - relativedelta(days=60)
+        
+        # 1. Sync Sale Orders (Initial deliveries)
         domain = [
             ("state", "in", ["sale", "done"]), 
-            ("monta_status", "!=", "Shipped"),
-            ("monta_track_trace", "=", False)
+            ("create_date", ">", cutoff),
+            ("monta_status", "not in", ("Delivered", "delivered", "Cancelled", "cancelled", "Error", "error", "Blocked", "blocked")),
         ]
         orders = self.search(domain, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Cron sync starting for %d orders", len(orders))
         orders._monta_sync_batch()
+        
+        # 2. Sync Pickings (Crucial for Subscription Renewals!)
+        pick_domain = [
+            ("picking_type_code", "=", "outgoing"),
+            ("monta_pushed", "=", True),
+            ("create_date", ">", cutoff),
+            ("monta_status", "not in", ("Delivered", "delivered", "Cancelled", "cancelled", "Error", "error", "Blocked", "blocked")),
+        ]
+        pickings = self.env["stock.picking"].search(pick_domain, limit=batch_limit, order="write_date desc")
+        _logger.info("[Monta] Cron sync starting for %d pickings", len(pickings))
+        pickings._monta_sync_batch()
+        
         _logger.info("[Monta] Cron sync finished")
         return True
 
