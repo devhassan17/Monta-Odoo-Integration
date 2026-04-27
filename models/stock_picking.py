@@ -215,7 +215,7 @@ class StockPicking(models.Model):
         webshop_order_id = self._monta_make_webshop_order_id(sale_order)
         is_renewal = not (webshop_order_id == sale_order.name)
 
-        # Idempotency guard
+        # Idempotency guard: Monta Status check
         Status = self.env["monta.order.status"].sudo()
         existing = Status.search(
             [
@@ -224,8 +224,23 @@ class StockPicking(models.Model):
             ],
             limit=1,
         )
-        if existing and not self.env.context.get("force_send_to_monta"):
+        # STRONG BLOCK: If the order was already sent successfully, NEVER send it again, even if forced.
+        if existing:
             return True
+            
+        # STRONG BLOCK: Prevent pushing ancient unfulfilled base orders in testing/staging environments.
+        # If this is a subscription, and it's trying to push the base delivery (not a renewal),
+        # but the Sales Order itself was created more than 30 days ago, we block it to prevent shipping old backlogs.
+        f = sale_order._fields
+        is_sub = (
+            ('is_subscription' in f and sale_order.is_subscription)
+            or ('plan_id' in f and bool(sale_order.plan_id))
+            or ('subscription_state' in f and getattr(sale_order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+        )
+        if is_sub and not is_renewal:
+            if sale_order.create_date and (fields.Datetime.now() - sale_order.create_date).days > 30:
+                self.write({"monta_status": "Blocked: Ancient Subscription Base Delivery"})
+                return False
 
         # Snapshot creation
         kind = "renewal" if is_renewal else "sale"
