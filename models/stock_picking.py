@@ -35,15 +35,33 @@ class StockPicking(models.Model):
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter and cfg.monta_route_ids:
             carrier = getattr(self.sale_id, 'carrier_id', False)
-            delivery_product = carrier.product_id if carrier else False
+            has_matching_route = False
+            debug_checked_routes = []
             
-            if not delivery_product or not set(cfg.monta_route_ids.ids).intersection(set(delivery_product.route_ids.ids)):
+            # 1. Try to check the carrier product first
+            if carrier and carrier.product_id:
+                debug_checked_routes = carrier.product_id.route_ids.ids
+                if set(cfg.monta_route_ids.ids).intersection(set(debug_checked_routes)):
+                    has_matching_route = True
+
+            # 2. If no match yet, check all products on the Sales Order (useful for API/Webshop orders where carrier_id is empty)
+            if not has_matching_route:
+                for line in self.sale_id.order_line:
+                    if line.product_id:
+                        p_routes = line.product_id.route_ids.ids
+                        if set(cfg.monta_route_ids.ids).intersection(set(p_routes)):
+                            has_matching_route = True
+                            break
+                        if getattr(line, 'is_delivery', False):
+                            debug_checked_routes = p_routes  # Keep delivery line routes for debug log
+            
+            if not has_matching_route:
                 _logger.info(
-                    "[Monta Skip] Picking %s skipped because delivery product routes do not match configured Monta Routes. "
-                    "(Carrier: %s, Product Routes: %s, Config Routes: %s)",
+                    "[Monta Skip] Picking %s skipped because no delivery/order product matches configured Monta Routes. "
+                    "(Carrier: %s, Checked Routes: %s, Config Routes: %s)",
                     self.name,
                     carrier.name if carrier else 'None',
-                    delivery_product.route_ids.ids if delivery_product else [],
+                    debug_checked_routes,
                     cfg.monta_route_ids.ids
                 )
                 return False
