@@ -622,6 +622,19 @@ class SaleOrder(models.Model):
             if pickings:
                 # Trigger for all relevant pickings that haven't been pushed yet (or all if forced)
                 to_push = pickings if force else pickings.filtered(lambda p: not p.monta_pushed)
+                
+                # Safety feature for Staging/Testing: 
+                # If this is a subscription order, ONLY push the single most recent unpushed delivery.
+                # This prevents accidentally pushing months-old historical deliveries that were never synced.
+                f = order._fields
+                is_sub = (
+                    ('is_subscription' in f and order.is_subscription)
+                    or ('plan_id' in f and bool(order.plan_id))
+                    or ('subscription_state' in f and getattr(order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+                )
+                if is_sub and to_push:
+                    to_push = to_push.sorted('create_date', reverse=True)[0]
+                    
                 for p in to_push:
                     p.action_push_to_monta()
             else:
