@@ -14,7 +14,7 @@ def _hash_account(base: str, user: str) -> str:
 class MontaOrderStatus(models.Model):
     _name = "monta.order.status"
     _description = "Monta Order Status snapshot"
-    _order = "last_sync desc, id desc"
+    _order = "id desc"
 
     monta_account_key = fields.Char(string="Monta Account Key", index=True)
     is_current_account = fields.Boolean(
