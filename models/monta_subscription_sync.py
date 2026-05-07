@@ -124,18 +124,12 @@ class MontaSubscriptionSync(models.Model):
         1. Never exceed the number of invoices.
         2. Ignore backlogs: only trigger if the latest invoice was created in the last 7 days.
         3. Only trigger if the latest Monta delivery is older than the latest invoice.
-        4. Guard: Skip if only 1 invoice (initial checkout phase).
-        5. Guard: Mollie Mandate validation.
         """
         posted_invoices = so.invoice_ids.filtered(
             lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
         ).sorted(lambda inv: inv.create_date or inv.invoice_date, reverse=True)
         
         if not posted_invoices:
-            return False
-
-        # Guard: Never interfere with the initial checkout phase (Period 1)
-        if len(posted_invoices) <= 1:
             return False
 
         monta_deliveries = so.picking_ids.filtered(
@@ -146,16 +140,6 @@ class MontaSubscriptionSync(models.Model):
         invoice_count = len(posted_invoices)
         delivery_count = len(monta_deliveries)
         if delivery_count >= invoice_count:
-            return False
-
-        # Guard: Mollie Mandate Validation
-        partner = so.partner_id
-        mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(so, 'mollie_customer_id', False)
-        mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(so, 'mollie_mandate_id', False)
-        mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(so, 'mollie_mandate_status', '')
-        
-        if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-            _logger.info("[Monta Sub Sync] SO %s: renewal detected but Mollie Mandate is invalid. Skipping.", so.name)
             return False
 
         latest_invoice = posted_invoices[0]

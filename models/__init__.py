@@ -4,7 +4,6 @@ from . import monta_order_status
 from . import monta_order_status_upsert
 from . import monta_sale_log
 from . import monta_status_sync
-from . import monta_subscription_sync
 from . import monta_sync
 from . import product_product
 from . import product_template
