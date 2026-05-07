@@ -397,16 +397,6 @@ class SaleOrder(models.Model):
         return res
 
     # ---------------------------------------------------------
-    # Subscription renewal helpers
-    # ---------------------------------------------------------
-    def _monta_handle_subscription_renewal(self, order, old_date):
-        """
-        Called after write() when next_invoice_date changed.
-        Creates a new Monta delivery only when:
-          1. next_invoice_date moved FORWARD (genuine renewal, not manual edit)
-          2. The SO is a confirmed subscription
-          3. At least one previous Monta-pushed delivery exists (not first setup)
-          4. No open, unprocessed outgoing delivery already pending
     def action_cancel(self):
         res = super().action_cancel()
         for order in self:
