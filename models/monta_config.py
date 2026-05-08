@@ -22,6 +22,7 @@ class MontaConfig(models.Model):
         string="Allowed Odoo Base URLs",
         help="Comma-separated list of Odoo web.base.url values allowed to push to Monta. Leave empty to allow all.",
     )
+    enabled = fields.Boolean(string="Global Sync Enabled", default=True, help="Turn off to completely disable all Monta push/sync operations.")
     origin = fields.Char(string="Origin", help="Optional Monta 'Origin' field (send only if set).")
     match_loose = fields.Boolean(string="Loose Matching", default=True)
 
@@ -76,9 +77,11 @@ class MontaConfig(models.Model):
     def get_for_company(self, company):
         """
         Backward-compatible helper used by other models.
-        Returns config if company is allowed, otherwise None.
+        Returns config if enabled AND company is allowed, otherwise None.
         """
         cfg = self.get_singleton()
+        if not cfg.enabled:
+            return None
         if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
             return None
         return cfg

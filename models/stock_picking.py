@@ -35,48 +35,52 @@ class StockPicking(models.Model):
             return False
             
         # Route Filter (Delivery Product Route)
-        if cfg.enable_route_filter and cfg.monta_route_ids:
+        if cfg.enable_route_filter:
+            # If enabled but no routes are selected in config, block everything (per user request)
+            if not cfg.monta_route_ids:
+                _logger.info("[Monta Skip] Picking %s skipped because Route Filter is enabled but no routes are selected in Monta Configuration.", self.name)
+                return False
+
             carrier = getattr(self.sale_id, 'carrier_id', False)
             has_matching_route = False
             debug_checked_routes = []
             
-            def get_all_routes_for_product(product):
+            def get_all_routes_from_obj(obj):
                 routes = set()
-                if not product:
+                if not obj:
                     return routes
-                # 1. Product routes
-                if hasattr(product, 'route_ids') and product.route_ids:
-                    routes.update(product.route_ids.ids)
+                # 1. Standard routes
+                if hasattr(obj, 'route_ids') and obj.route_ids:
+                    routes.update(obj.route_ids.ids)
                 # 2. Product Template routes
-                if hasattr(product, 'product_tmpl_id') and product.product_tmpl_id and hasattr(product.product_tmpl_id, 'route_ids'):
-                    routes.update(product.product_tmpl_id.route_ids.ids)
-                # 3. Delivery Carrier custom routes (e.g. Odoo Studio fields)
-                carriers = product.env['delivery.carrier'].sudo().search([('product_id', '=', product.id)])
-                for c in carriers:
-                    for field_name in ['route_ids', 'x_studio_route_ids', 'x_route_ids', 'x_route_id']:
-                        if hasattr(c, field_name):
-                            val = getattr(c, field_name)
-                            if val:
-                                # Handle both Many2one and Many2many fields
-                                routes.update(val.ids if hasattr(val, 'ids') else [val.id])
+                if hasattr(obj, 'product_tmpl_id') and obj.product_tmpl_id and hasattr(obj.product_tmpl_id, 'route_ids'):
+                    routes.update(obj.product_tmpl_id.route_ids.ids)
+                # 3. Custom/Studio fields (x_route_id, x_studio_route_ids, etc.)
+                for field_name in ['x_route_id', 'x_route_ids', 'x_studio_route_id', 'x_studio_route_ids', 'x_route_ids', 'x_route_id']:
+                    if hasattr(obj, field_name):
+                        val = getattr(obj, field_name)
+                        if val:
+                            routes.update(val.ids if hasattr(val, 'ids') else [val.id])
                 return routes
 
-            # 1. Try to check the carrier product first
-            if carrier and carrier.product_id:
-                debug_checked_routes = list(get_all_routes_for_product(carrier.product_id))
-                if set(cfg.monta_route_ids.ids).intersection(set(debug_checked_routes)):
+            # 1. Check the Delivery Method (Carrier) and its Product
+            if carrier:
+                carrier_routes = get_all_routes_from_obj(carrier)
+                if carrier.product_id:
+                    carrier_routes.update(get_all_routes_from_obj(carrier.product_id))
+                
+                debug_checked_routes = list(carrier_routes)
+                if set(cfg.monta_route_ids.ids).intersection(carrier_routes):
                     has_matching_route = True
 
-            # 2. If no match yet, check all products on the Sales Order (useful for API/Webshop orders where carrier_id is empty)
+            # 2. If no match yet, check all products on the Sales Order (fallback for API/Webshop orders)
             if not has_matching_route:
                 for line in self.sale_id.order_line:
                     if line.product_id:
-                        p_routes = get_all_routes_for_product(line.product_id)
+                        p_routes = get_all_routes_from_obj(line.product_id)
                         if set(cfg.monta_route_ids.ids).intersection(p_routes):
                             has_matching_route = True
                             break
-                        if getattr(line, 'is_delivery', False):
-                            debug_checked_routes = list(p_routes)  # Keep delivery line routes for debug log
             
             if not has_matching_route:
                 _logger.info(
