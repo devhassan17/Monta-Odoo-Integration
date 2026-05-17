@@ -56,6 +56,12 @@ class MontaConfig(models.Model):
         string="Monta Routes",
         help="If route filter is enabled, only orders using a delivery product with one of these routes will be pushed to Monta.",
     )
+    route_filter_skip_subscriptions = fields.Boolean(
+        string="Route Filter: Skip Subscriptions",
+        default=True,
+        help="When enabled, the Route Filter is NOT applied to subscription orders (new subscriptions and renewals). "
+             "They will always be pushed to Monta regardless of the route configuration.",
+    )
 
     # -------------------------
     # Singleton helpers

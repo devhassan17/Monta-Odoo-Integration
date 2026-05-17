@@ -36,62 +36,80 @@ class StockPicking(models.Model):
             
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
-            # If enabled but no routes are selected in config, block everything (per user request)
-            if not cfg.monta_route_ids:
-                _logger.info("[Monta Skip] Picking %s skipped because Route Filter is enabled but no routes are selected in Monta Configuration.", self.name)
-                return False
-
-            carrier = getattr(self.sale_id, 'carrier_id', False)
-            has_matching_route = False
-            debug_checked_routes = []
-            
-            def get_all_routes_from_obj(obj):
-                routes = set()
-                if not obj:
-                    return routes
-                # 1. Standard routes
-                if hasattr(obj, 'route_ids') and obj.route_ids:
-                    routes.update(obj.route_ids.ids)
-                # 2. Product Template routes
-                if hasattr(obj, 'product_tmpl_id') and obj.product_tmpl_id and hasattr(obj.product_tmpl_id, 'route_ids'):
-                    routes.update(obj.product_tmpl_id.route_ids.ids)
-                # 3. Custom/Studio fields (x_route_id, x_studio_route_ids, etc.)
-                for field_name in ['x_route_id', 'x_route_ids', 'x_studio_route_id', 'x_studio_route_ids', 'x_route_ids', 'x_route_id']:
-                    if hasattr(obj, field_name):
-                        val = getattr(obj, field_name)
-                        if val:
-                            routes.update(val.ids if hasattr(val, 'ids') else [val.id])
-                return routes
-
-            # 1. Check the Delivery Method (Carrier) and its Product
-            if carrier:
-                carrier_routes = get_all_routes_from_obj(carrier)
-                if carrier.product_id:
-                    carrier_routes.update(get_all_routes_from_obj(carrier.product_id))
-                
-                debug_checked_routes = list(carrier_routes)
-                if set(cfg.monta_route_ids.ids).intersection(carrier_routes):
-                    has_matching_route = True
-
-            # 2. If no match yet, check all products on the Sales Order (fallback for API/Webshop orders)
-            if not has_matching_route:
-                for line in self.sale_id.order_line:
-                    if line.product_id:
-                        p_routes = get_all_routes_from_obj(line.product_id)
-                        if set(cfg.monta_route_ids.ids).intersection(p_routes):
-                            has_matching_route = True
-                            break
-            
-            if not has_matching_route:
+            # --- Subscription bypass ---
+            # Detect if this picking belongs to a subscription SO
+            _f = self.sale_id._fields
+            _is_sub = (
+                ('is_subscription' in _f and self.sale_id.is_subscription)
+                or ('plan_id' in _f and bool(self.sale_id.plan_id))
+                or ('subscription_state' in _f and getattr(self.sale_id, 'subscription_state', '') in (
+                    '2_renewal', '3_progress', '4_paused'
+                ))
+            )
+            if _is_sub and cfg.route_filter_skip_subscriptions:
+                # Subscriptions are allowed through regardless of route configuration
                 _logger.info(
-                    "[Monta Skip] Picking %s skipped because no delivery/order product matches configured Monta Routes. "
-                    "(Carrier: %s, Checked Routes: %s, Config Routes: %s)",
+                    "[Monta Route] Picking %s belongs to a subscription SO — route filter bypassed "
+                    "(Route Filter: Skip Subscriptions is ON).",
                     self.name,
-                    carrier.name if carrier else 'None',
-                    debug_checked_routes,
-                    cfg.monta_route_ids.ids
                 )
-                return False
+            else:
+                # If enabled but no routes are selected in config, block everything (per user request)
+                if not cfg.monta_route_ids:
+                    _logger.info("[Monta Skip] Picking %s skipped because Route Filter is enabled but no routes are selected in Monta Configuration.", self.name)
+                    return False
+
+                carrier = getattr(self.sale_id, 'carrier_id', False)
+                has_matching_route = False
+                debug_checked_routes = []
+                
+                def get_all_routes_from_obj(obj):
+                    routes = set()
+                    if not obj:
+                        return routes
+                    # 1. Standard routes
+                    if hasattr(obj, 'route_ids') and obj.route_ids:
+                        routes.update(obj.route_ids.ids)
+                    # 2. Product Template routes
+                    if hasattr(obj, 'product_tmpl_id') and obj.product_tmpl_id and hasattr(obj.product_tmpl_id, 'route_ids'):
+                        routes.update(obj.product_tmpl_id.route_ids.ids)
+                    # 3. Custom/Studio fields (x_route_id, x_studio_route_ids, etc.)
+                    for field_name in ['x_route_id', 'x_route_ids', 'x_studio_route_id', 'x_studio_route_ids', 'x_route_ids', 'x_route_id']:
+                        if hasattr(obj, field_name):
+                            val = getattr(obj, field_name)
+                            if val:
+                                routes.update(val.ids if hasattr(val, 'ids') else [val.id])
+                    return routes
+
+                # 1. Check the Delivery Method (Carrier) and its Product
+                if carrier:
+                    carrier_routes = get_all_routes_from_obj(carrier)
+                    if carrier.product_id:
+                        carrier_routes.update(get_all_routes_from_obj(carrier.product_id))
+                    
+                    debug_checked_routes = list(carrier_routes)
+                    if set(cfg.monta_route_ids.ids).intersection(carrier_routes):
+                        has_matching_route = True
+
+                # 2. If no match yet, check all products on the Sales Order (fallback for API/Webshop orders)
+                if not has_matching_route:
+                    for line in self.sale_id.order_line:
+                        if line.product_id:
+                            p_routes = get_all_routes_from_obj(line.product_id)
+                            if set(cfg.monta_route_ids.ids).intersection(p_routes):
+                                has_matching_route = True
+                                break
+                
+                if not has_matching_route:
+                    _logger.info(
+                        "[Monta Skip] Picking %s skipped because no delivery/order product matches configured Monta Routes. "
+                        "(Carrier: %s, Checked Routes: %s, Config Routes: %s)",
+                        self.name,
+                        carrier.name if carrier else 'None',
+                        debug_checked_routes,
+                        cfg.monta_route_ids.ids
+                    )
+                    return False
 
         # Subscription Mandate Filter (only required for renewals)
         f = self.sale_id._fields
