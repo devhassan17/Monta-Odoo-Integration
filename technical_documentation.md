@@ -15,44 +15,6 @@ The module has three primary pillars:
 2. **Vendor Inbound Forecasts (Inbound)**: Pushes Purchase Orders and incoming delivery forecasts to Monta so WMS is prepared to receive supplier shipments.
 3. **Status and Expected Delivery Date (EDD/ETA) Updates**: Queries Monta regularly via cron jobs to pull fulfillment progress, track-and-trace links, actual delivery dates, and updates the Odoo picking/sales orders accordingly.
 
-```mermaid
-graph TD
-    %% Sales Flow
-    subgraph Outbound Flow (Sales & Subscriptions)
-        A[Odoo Sales Order confirmed] --> B{Subscription renewal?}
-        B -- Yes --> C[Subscription Sync Cron checks gaps/invoice counts]
-        C --> D[Create Outgoing Stock Picking with SO...-PICK suffix]
-        B -- No --> E[Standard Outgoing Stock Picking created]
-        D --> F[picking.action_confirm]
-        E --> F
-        F --> G{Push Eligible? <br> Route Filter <br> Mollie Mandate <br> Ancient order guard}
-        G -- Yes --> H[Bypass Lot Tracking]
-        H --> I[Expand Pack/BoM variants recursively]
-        I --> J[Post Payload to Monta WMS /order]
-        J --> K[Odoo Picking auto-validated immediately]
-    end
-
-    %% Inbound Flow
-    subgraph Inbound Flow (Purchases)
-        L[Odoo Purchase Order confirmed] --> M{Inbound enabled in Config?}
-        M -- Yes --> N[Query Monta WMS for PO Group /inboundforecast/group/PO_NAME]
-        N -- Not Found --> O[POST PO details & component lines as new Inbound Forecast]
-        N -- Exists --> P[PUT update existing Inbound Forecast group header]
-    end
-
-    %% Status Updates
-    subgraph Status & EDD Feedback Sync
-        Q[Sync Status Cron runs half-hourly] --> R[Sync non-shipped Sales Orders & pushed Outgoing Pickings]
-        R --> S[Query Monta API /order/WEBSHOP_ORDER_ID]
-        S --> T[Freshest Wins check: Shipments -> OrderEvents -> Orders Header]
-        T --> U{Authoritative overrides? <br> Blocked > Backorder > Others}
-        U --> V[Update Odoo Sales Order/Picking fields <br> write monta_status, monta_track_trace]
-        V --> W[Upsert monta.order.status history snapshot]
-        V --> X[Auto-validate related Odoo Pickings if Shipped]
-    end
-```
-
----
 
 ## 2. Directory and File Map
 
