@@ -136,9 +136,9 @@ class StockPicking(models.Model):
                     return False
 
         # ── Subscription Mollie Mandate check ───────────────────────────────
-        # At this point we know this is an invoice-driven subscription delivery
-        # (native deliveries were already blocked above).
-        # Validate Mollie mandate — only if Mollie is installed.
+        # Only applies to renewal deliveries (invoice #2+).
+        # First invoice = brand new customer, no Mollie mandate exists yet.
+        # Mollie only creates a mandate after the customer's first payment.
         f = self.sale_id._fields
         is_sub = (
             ('is_subscription' in f and self.sale_id.is_subscription)
@@ -148,24 +148,38 @@ class StockPicking(models.Model):
             ))
         )
         if is_sub:
-            order = self.sale_id
-            partner = order.partner_id
-            mollie_fields_exist = (
-                'mollie_customer_id' in partner._fields
-                or 'mollie_customer_id' in order._fields
-            )
-            if mollie_fields_exist:
-                mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
-                mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
-                mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
+            # Check if this is a first-invoice delivery (SO has exactly 1 posted invoice)
+            posted_invoice_count = len(self.sale_id.invoice_ids.filtered(
+                lambda inv: inv.move_type == 'out_invoice' and inv.state == 'posted'
+            ))
+            is_first_invoice_delivery = posted_invoice_count <= 1
 
-                if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-                    _logger.info(
-                        "[Monta Picking] %s: Mollie mandate invalid "
-                        "(cust=%s, mandate=%s, status=%s) — blocking push.",
-                        self.name, mollie_cust, mollie_mandate, mollie_status,
-                    )
-                    return False
+            if is_first_invoice_delivery:
+                _logger.info(
+                    "[Monta Picking] %s: First invoice delivery for SO %s "
+                    "— Mollie mandate check skipped (new customer).",
+                    self.name, self.sale_id.name,
+                )
+            else:
+                # Renewal: validate Mollie mandate only if Mollie is installed
+                order = self.sale_id
+                partner = order.partner_id
+                mollie_fields_exist = (
+                    'mollie_customer_id' in partner._fields
+                    or 'mollie_customer_id' in order._fields
+                )
+                if mollie_fields_exist:
+                    mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
+                    mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
+                    mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
+
+                    if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
+                        _logger.info(
+                            "[Monta Picking] %s: Mollie mandate invalid "
+                            "(cust=%s, mandate=%s, status=%s) — blocking renewal push.",
+                            self.name, mollie_cust, mollie_mandate, mollie_status,
+                        )
+                        return False
 
         return True
 

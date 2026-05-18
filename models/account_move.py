@@ -82,69 +82,114 @@ class AccountMove(models.Model):
         conditions and either pushes the delivery to Monta or skips silently.
 
         Odoo's default behaviour is 100% preserved — we only ADD delivery
-        creation after the standard posting flow.
-        """
-        # ── Phase 1a: Let Odoo complete its full posting flow first ──────────
+        creation after the stand        # ── Phase 1a: Let Odoo complete its full posting flow first ──────────
+        # IMPORTANT: super() runs Odoo's default posting. Our code runs AFTER.
+        # If anything in our code fails, it must NEVER affect Odoo's result.
         res = super().action_post()
 
-        # ── Phase 1b: Create renewal delivery for qualifying invoices ────────
-        for move in self:
-            if move.state != "posted":
-                continue
-            if move.move_type != "out_invoice":
-                continue
+        # ── Phase 1b: Create delivery for qualifying subscription invoices ───
+        # Wrapped in top-level try/except — any bug in our code is logged
+        # and silently discarded. Odoo's default cron is never affected.
+        try:
+            for move in self:
+                if move.state != "posted":
+                    continue
+                if move.move_type != "out_invoice":
+                    continue
 
-            # Resolve linked in-progress subscription SO
-            so = self._monta_get_subscription_so(move)
-            if not so:
-                continue
+                # Resolve linked in-progress subscription SO
+                so = self._monta_get_subscription_so(move)
+                if not so:
+                    if move.invoice_line_ids.mapped("sale_line_ids"):
+                        _logger.debug(
+                            "[Monta Invoice Hook] Invoice %s: not an in-progress "
+                            "subscription or no Monta config — skip.",
+                            move.name,
+                        )
+                    continue
 
-            # Guard: must be a subscription invoice (defensive — so must be in-progress sub)
-            if not self._monta_is_subscription_invoice(move, so):
-                continue
-
-            # Guard: Mollie mandate must be valid — no mandate = no delivery
-            if not self._monta_has_valid_mollie_mandate(so):
-                continue
-
-            # Guard: skip if a delivery already exists for this invoice period
-            if self._monta_delivery_already_exists(move, so):
-                continue
-
-            # ── CREATE THE DELIVERY ────────────────────────────────────────────
-            # Delivery is created for every subscription invoice where:
-            #   - SO is in-progress subscription
-            #   - Mollie mandate is valid
-            #   - No duplicate delivery exists
-            # The native Odoo delivery (created at SO confirmation) is blocked
-            # in stock_picking._is_monta_push_eligible() for all subscriptions.
-            try:
                 _logger.info(
-                    "[Monta Invoice Hook] 📄 Invoice %s posted for SO %s "
-                    "— creating renewal delivery (Phase 1).",
+                    "[Monta Invoice Hook] 🔍 Invoice %s posted for SO %s "
+                    "(subscription_state=%s) — evaluating delivery.",
                     move.name, so.name,
+                    getattr(so, 'subscription_state', 'n/a'),
                 )
-                picking = so._monta_create_subscription_delivery(invoice=move)
-                if picking:
+
+                # Guard: must be a valid subscription invoice
+                if not self._monta_is_subscription_invoice(move, so):
                     _logger.info(
-                        "[Monta Invoice Hook] ✅ Delivery %s created for SO %s. "
-                        "Phase 2 Monta push will depend on eligibility check.",
-                        picking.name, so.name,
-                    )
-                else:
-                    _logger.warning(
-                        "[Monta Invoice Hook] ⚠️  Delivery creation returned None "
-                        "for SO %s (invoice %s). Check logs above.",
+                        "[Monta Invoice Hook] SO %s: invoice %s not eligible — skip.",
                         so.name, move.name,
                     )
-            except Exception:
-                _logger.exception(
-                    "[Monta Invoice Hook] ❌ Error creating renewal delivery "
-                    "for SO %s (invoice %s).",
-                    so.name, move.name,
+                    continue
+
+                # Detect first vs renewal invoice.
+                # First invoice: new customer, no Mollie mandate yet → skip Mollie check.
+                # Renewal (2nd+): Mollie mandate required.
+                all_posted_invoices = so.invoice_ids.filtered(
+                    lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
+                ).sorted(lambda inv: inv.create_date or inv.invoice_date)
+                is_first_invoice = (
+                    len(all_posted_invoices) == 1
+                    and all_posted_invoices[0].id == move.id
                 )
 
+                if is_first_invoice:
+                    _logger.info(
+                        "[Monta Invoice Hook] SO %s: FIRST invoice %s "
+                        "— no Mollie check (new customer).",
+                        so.name, move.name,
+                    )
+                else:
+                    if not self._monta_has_valid_mollie_mandate(so):
+                        _logger.info(
+                            "[Monta Invoice Hook] SO %s: RENEWAL invoice %s — "
+                            "Mollie mandate invalid, no delivery created.",
+                            so.name, move.name,
+                        )
+                        continue
+
+                # Guard: no duplicate delivery for this period
+                if self._monta_delivery_already_exists(move, so):
+                    continue
+
+                # ── CREATE DELIVERY ──────────────────────────────────────────
+                try:
+                    _logger.info(
+                        "[Monta Invoice Hook] 📄 Creating delivery for SO %s "
+                        "invoice %s (%s).",
+                        so.name, move.name,
+                        "first invoice" if is_first_invoice else "renewal",
+                    )
+                    picking = so._monta_create_subscription_delivery(invoice=move)
+                    if picking:
+                        _logger.info(
+                            "[Monta Invoice Hook] ✅ Delivery %s created for SO %s.",
+                            picking.name, so.name,
+                        )
+                    else:
+                        _logger.warning(
+                            "[Monta Invoice Hook] ⚠️  No delivery created for SO %s "
+                            "invoice %s. Check logs above.",
+                            so.name, move.name,
+                        )
+                except Exception:
+                    _logger.exception(
+                        "[Monta Invoice Hook] ❌ Error creating delivery "
+                        "for SO %s (invoice %s).",
+                        so.name, move.name,
+                    )
+
+        except Exception:
+            # Safety net: our code must NEVER crash Odoo's invoice posting.
+            # Log and continue — Odoo's result (res) is always returned intact.
+            _logger.exception(
+                "[Monta Invoice Hook] ❌ Unexpected error in Monta hook — "
+                "Odoo's invoice posting was NOT affected."
+            )
+
         return res
+
 
     # -------------------------------------------------------------------------
     # Phase 1 guard helpers
