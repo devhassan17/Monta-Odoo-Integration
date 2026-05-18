@@ -99,18 +99,25 @@ class AccountMove(models.Model):
             if not so:
                 continue
 
-            # Guard: skip the initial checkout invoice (Odoo native flow handles it)
-            if not self._monta_is_renewal_invoice(move, so):
+            # Guard: must be a subscription invoice (defensive — so must be in-progress sub)
+            if not self._monta_is_subscription_invoice(move, so):
                 continue
 
-            # Guard: skip if a delivery already exists for this renewal period
+            # Guard: Mollie mandate must be valid — no mandate = no delivery
+            if not self._monta_has_valid_mollie_mandate(so):
+                continue
+
+            # Guard: skip if a delivery already exists for this invoice period
             if self._monta_delivery_already_exists(move, so):
                 continue
 
             # ── CREATE THE DELIVERY ────────────────────────────────────────────
-            # No Monta checks here. The delivery is created unconditionally for
-            # every valid renewal. Phase 2 (stock_picking._is_monta_push_eligible)
-            # handles the Monta-specific checks during action_confirm().
+            # Delivery is created for every subscription invoice where:
+            #   - SO is in-progress subscription
+            #   - Mollie mandate is valid
+            #   - No duplicate delivery exists
+            # The native Odoo delivery (created at SO confirmation) is blocked
+            # in stock_picking._is_monta_push_eligible() for all subscriptions.
             try:
                 _logger.info(
                     "[Monta Invoice Hook] 📄 Invoice %s posted for SO %s "
@@ -190,28 +197,67 @@ class AccountMove(models.Model):
         return so
 
     @api.model
-    def _monta_is_renewal_invoice(self, move, so):
+    def _monta_is_subscription_invoice(self, move, so):
         """
-        Return True only if this is a RENEWAL invoice (not the initial checkout).
+        Return True if this invoice should trigger a Monta delivery.
 
-        The first/oldest posted invoice on a subscription SO corresponds to the
-        original purchase.  Odoo already creates a delivery for it during SO
-        confirmation — we must not create a duplicate.
+        Since the native Odoo delivery for subscriptions is now blocked in
+        stock_picking._is_monta_push_eligible(), we handle ALL subscription
+        invoices here — both the first invoice and all renewals.
 
-        Any subsequent invoice = renewal → we create a new delivery.
+        The only invoice we skip is if somehow there are no posted invoices
+        at all (defensive check).
         """
         all_posted = so.invoice_ids.filtered(
             lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
-        ).sorted(lambda inv: inv.create_date or inv.invoice_date)
-
+        )
         if not all_posted:
             return False
+        return True
 
-        if all_posted[0].id == move.id:
-            _logger.debug(
-                "[Monta Invoice Hook] Invoice %s is the FIRST invoice on SO %s "
-                "(initial checkout) — Odoo native delivery handles this, skip.",
-                move.name, so.name,
+    @api.model
+    def _monta_has_valid_mollie_mandate(self, so):
+        """
+        Return True if the SO's customer has a valid Mollie mandate.
+        Returns True (no block) if Mollie is not installed on this instance.
+        """
+        partner = so.partner_id
+        mollie_installed = (
+            "mollie_customer_id" in partner._fields
+            or "mollie_customer_id" in so._fields
+        )
+        if not mollie_installed:
+            return True
+
+        mollie_cust = (
+            getattr(partner, "mollie_customer_id", False)
+            or getattr(so, "mollie_customer_id", False)
+        )
+        mollie_mandate = (
+            getattr(partner, "mollie_mandate_id", False)
+            or getattr(so, "mollie_mandate_id", False)
+        )
+        mollie_status = (
+            getattr(partner, "mollie_mandate_status", "")
+            or getattr(so, "mollie_mandate_status", "")
+        )
+
+        if not mollie_cust:
+            _logger.info(
+                "[Monta Invoice Hook] SO %s [%s]: ⛔ No Mollie Customer ID — skip.",
+                so.name, partner.name,
+            )
+            return False
+        if not mollie_mandate:
+            _logger.info(
+                "[Monta Invoice Hook] SO %s [%s]: ⛔ No Mollie Mandate ID — skip.",
+                so.name, partner.name,
+            )
+            return False
+        if mollie_status != "valid":
+            _logger.info(
+                "[Monta Invoice Hook] SO %s [%s]: ⛔ Mandate status '%s' ≠ 'valid' — skip.",
+                so.name, partner.name, mollie_status,
             )
             return False
 

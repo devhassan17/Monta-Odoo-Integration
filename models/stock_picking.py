@@ -33,6 +33,30 @@ class StockPicking(models.Model):
             return False
         if self.sale_id.name and self.sale_id.name.startswith("BC"):
             return False
+
+        # ── Subscription guard (MUST be first subscription check) ────────────
+        # For subscription SOs, Odoo creates a native delivery at SO confirmation.
+        # We must NOT push that native delivery to Monta — it would duplicate
+        # the invoice-driven delivery that our account_move hook creates.
+        # Only deliveries created by our renewal hook have 'Subscription Renewal'
+        # in their origin. Block everything else for subscription SOs.
+        _sf = self.sale_id._fields
+        _is_sub_so = (
+            ('subscription_state' in _sf and getattr(self.sale_id, 'subscription_state', '') in (
+                '2_renewal', '3_progress', '4_paused'
+            ))
+            or ('is_subscription' in _sf and self.sale_id.is_subscription)
+            or ('plan_id' in _sf and bool(self.sale_id.plan_id))
+        )
+        if _is_sub_so:
+            _is_renewal_picking = 'Subscription Renewal' in (self.origin or '')
+            if not _is_renewal_picking:
+                _logger.info(
+                    "[Monta] SO %s: Blocking native delivery %s — "
+                    "subscriptions only push invoice-driven deliveries.",
+                    self.sale_id.name, self.name,
+                )
+                return False
             
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
@@ -111,7 +135,10 @@ class StockPicking(models.Model):
                     )
                     return False
 
-        # Subscription Mandate Filter (only required for renewals)
+        # ── Subscription Mollie Mandate check ───────────────────────────────
+        # At this point we know this is an invoice-driven subscription delivery
+        # (native deliveries were already blocked above).
+        # Validate Mollie mandate — only if Mollie is installed.
         f = self.sale_id._fields
         is_sub = (
             ('is_subscription' in f and self.sale_id.is_subscription)
@@ -120,11 +147,9 @@ class StockPicking(models.Model):
                 '2_renewal', '3_progress', '4_paused'
             ))
         )
-        if is_sub and not self._monta_is_first_delivery():
+        if is_sub:
             order = self.sale_id
             partner = order.partner_id
-            # Only enforce Mollie guard when Mollie fields actually exist on this instance.
-            # Using getattr with False default silently blocks ALL subscriptions on non-Mollie systems.
             mollie_fields_exist = (
                 'mollie_customer_id' in partner._fields
                 or 'mollie_customer_id' in order._fields
@@ -136,7 +161,8 @@ class StockPicking(models.Model):
 
                 if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
                     _logger.info(
-                        "[Monta Picking] %s: Mollie mandate invalid (cust=%s, mandate=%s, status=%s) — blocking renewal push.",
+                        "[Monta Picking] %s: Mollie mandate invalid "
+                        "(cust=%s, mandate=%s, status=%s) — blocking push.",
                         self.name, mollie_cust, mollie_mandate, mollie_status,
                     )
                     return False
