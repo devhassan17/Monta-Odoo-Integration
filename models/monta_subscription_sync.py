@@ -448,7 +448,7 @@ class MontaSubscriptionSync(models.Model):
         picking = self.env["stock.picking"].sudo().with_context(clean_ctx).create({
             "picking_type_id": picking_type.id,
             "partner_id": so.partner_id.id,
-            "origin": f"{so.name} (Subscription Renewal – {invoice_ref})",
+            "origin": f"{so.name} (Subscription Renewal - {invoice_ref})",
             "sale_id": so.id,
             "location_id": src_loc.id,
             "location_dest_id": dest_loc.id,

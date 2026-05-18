@@ -23,41 +23,22 @@ class StockPicking(models.Model):
         """Check if this picking should be pushed to Monta."""
         self.ensure_one()
         if self.picking_type_code != 'outgoing':
+            _logger.debug("[Monta Eligible] %s: NOT outgoing -- skip.", self.name)
             return False
         if self.state in ('cancel', 'done'):
+            _logger.debug("[Monta Eligible] %s: state=%s -- skip.", self.name, self.state)
             return False
         if not self.sale_id:
+            _logger.debug("[Monta Eligible] %s: no sale_id -- skip.", self.name)
             return False
         cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
         if not cfg:
+            _logger.info("[Monta Eligible] %s: no Monta config for company %s -- skip.", self.name, self.company_id.name)
             return False
         if self.sale_id.name and self.sale_id.name.startswith("BC"):
+            _logger.debug("[Monta Eligible] %s: BC order -- skip.", self.name)
             return False
 
-        # ── Subscription guard (MUST be first subscription check) ────────────
-        # For subscription SOs, Odoo creates a native delivery at SO confirmation.
-        # We must NOT push that native delivery to Monta — it would duplicate
-        # the invoice-driven delivery that our account_move hook creates.
-        # Only deliveries created by our renewal hook have 'Subscription Renewal'
-        # in their origin. Block everything else for subscription SOs.
-        _sf = self.sale_id._fields
-        _is_sub_so = (
-            ('subscription_state' in _sf and getattr(self.sale_id, 'subscription_state', '') in (
-                '2_renewal', '3_progress', '4_paused'
-            ))
-            or ('is_subscription' in _sf and self.sale_id.is_subscription)
-            or ('plan_id' in _sf and bool(self.sale_id.plan_id))
-        )
-        if _is_sub_so:
-            _is_renewal_picking = 'Subscription Renewal' in (self.origin or '')
-            if not _is_renewal_picking:
-                _logger.info(
-                    "[Monta] SO %s: Blocking native delivery %s — "
-                    "subscriptions only push invoice-driven deliveries.",
-                    self.sale_id.name, self.name,
-                )
-                return False
-            
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
             # --- Subscription bypass ---
@@ -135,53 +116,12 @@ class StockPicking(models.Model):
                     )
                     return False
 
-        # ── Subscription Mollie Mandate check ───────────────────────────────
-        # Only applies to renewal deliveries (invoice #2+).
-        # First invoice = brand new customer, no Mollie mandate exists yet.
-        # Mollie only creates a mandate after the customer's first payment.
-        f = self.sale_id._fields
-        is_sub = (
-            ('is_subscription' in f and self.sale_id.is_subscription)
-            or ('plan_id' in f and bool(self.sale_id.plan_id))
-            or ('subscription_state' in f and getattr(self.sale_id, 'subscription_state', '') in (
-                '2_renewal', '3_progress', '4_paused'
-            ))
+        _logger.info(
+            "[Monta Eligible] %s (SO %s): ELIGIBLE -- will push to Monta.",
+            self.name, self.sale_id.name,
         )
-        if is_sub:
-            # Check if this is a first-invoice delivery (SO has exactly 1 posted invoice)
-            posted_invoice_count = len(self.sale_id.invoice_ids.filtered(
-                lambda inv: inv.move_type == 'out_invoice' and inv.state == 'posted'
-            ))
-            is_first_invoice_delivery = posted_invoice_count <= 1
-
-            if is_first_invoice_delivery:
-                _logger.info(
-                    "[Monta Picking] %s: First invoice delivery for SO %s "
-                    "— Mollie mandate check skipped (new customer).",
-                    self.name, self.sale_id.name,
-                )
-            else:
-                # Renewal: validate Mollie mandate only if Mollie is installed
-                order = self.sale_id
-                partner = order.partner_id
-                mollie_fields_exist = (
-                    'mollie_customer_id' in partner._fields
-                    or 'mollie_customer_id' in order._fields
-                )
-                if mollie_fields_exist:
-                    mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
-                    mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
-                    mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
-
-                    if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-                        _logger.info(
-                            "[Monta Picking] %s: Mollie mandate invalid "
-                            "(cust=%s, mandate=%s, status=%s) — blocking renewal push.",
-                            self.name, mollie_cust, mollie_mandate, mollie_status,
-                        )
-                        return False
-
         return True
+
 
     def _monta_is_first_delivery(self):
         """Returns True if this is the first (successful or pending) Monta push for the related Sales Order."""
