@@ -409,25 +409,31 @@ class MontaSubscriptionSync(models.Model):
             )
             return None
 
-        # ── Build stock move lines from SO order lines ───────────────────────
+        # ── Build stock move lines from Invoice lines ───────────────────────
         move_vals = []
-        for line in so.order_line:
+        lines_source = invoice.invoice_line_ids if invoice else so.order_line
+        for line in lines_source:
             product = line.product_id
             if not product:
                 continue
             if product.type not in ("product", "consu"):
                 continue  # Services have no stock moves
-            if line.product_uom_qty <= 0:
+            
+            qty = line.quantity if hasattr(line, 'quantity') else getattr(line, 'product_uom_qty', 0.0)
+            if qty <= 0:
                 continue
+
+            uom = getattr(line, 'product_uom_id', False) or getattr(line, 'product_uom', False)
+            sale_line = line.sale_line_ids[:1] if hasattr(line, 'sale_line_ids') else line
 
             move_vals.append({
                 "name": product.name or product.display_name,
                 "product_id": product.id,
-                "product_uom_qty": line.product_uom_qty,
-                "product_uom": line.product_uom.id or product.uom_id.id,
+                "product_uom_qty": qty,
+                "product_uom": uom.id if uom else product.uom_id.id,
                 "location_id": src_loc.id,
                 "location_dest_id": dest_loc.id,
-                "sale_line_id": line.id,
+                "sale_line_id": sale_line.id if sale_line else False,
                 "company_id": so.company_id.id,
             })
 
