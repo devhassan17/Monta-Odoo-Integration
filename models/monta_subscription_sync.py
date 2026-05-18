@@ -286,9 +286,13 @@ class MontaSubscriptionSync(models.Model):
         # Renewal invoices = everything after the first (index 1+)
         renewal_invoices = list(all_invoices[1:])
 
-        # All Monta-pushed outgoing deliveries for this SO
-        monta_deliveries = so.picking_ids.filtered(
-            lambda p: p.picking_type_code == "outgoing" and p.monta_pushed
+        # ALL non-cancelled outgoing deliveries for this SO (pushed OR not pushed).
+        # IMPORTANT: do NOT filter by monta_pushed=True here.
+        # If a delivery was created by a previous cron run but the Monta push
+        # failed (monta_pushed=False), we must NOT create another delivery for
+        # the same period — that would produce a duplicate.
+        all_outgoing_deliveries = so.picking_ids.filtered(
+            lambda p: p.picking_type_code == "outgoing" and p.state != "cancel"
         )
 
         unprocessed = []
@@ -314,7 +318,7 @@ class MontaSubscriptionSync(models.Model):
             invoice_threshold = inv_created - timedelta(hours=1)
             has_matching_delivery = any(
                 d.create_date and d.create_date >= invoice_threshold
-                for d in monta_deliveries
+                for d in all_outgoing_deliveries
             )
 
             if has_matching_delivery:
@@ -350,7 +354,27 @@ class MontaSubscriptionSync(models.Model):
             invoice: The renewal account.move that triggered this delivery
                      (used only for logging/chatter context).
         """
-        # ── Locate outgoing picking type ────────────────────────────────────
+        # ── Final duplicate guard (DB-level) ─────────────────────────────────
+        # Last line of defence: if any non-cancelled outgoing delivery already
+        # exists for this SO with create_date >= invoice post time, abort.
+        # This prevents duplicates if two cron runs overlap simultaneously.
+        if invoice and invoice.create_date:
+            guard_threshold = invoice.create_date - timedelta(hours=1)
+            existing = self.env["stock.picking"].sudo().search([
+                ("sale_id", "=", so.id),
+                ("picking_type_code", "=", "outgoing"),
+                ("state", "!=", "cancel"),
+                ("create_date", ">=", guard_threshold),
+            ], limit=1)
+            if existing:
+                _logger.warning(
+                    "[Monta Sub Sync] SO %s: delivery %s already exists for invoice %s "
+                    "(created %s) — aborting to prevent duplicate.",
+                    so.name, existing.name, invoice.name, existing.create_date,
+                )
+                return None
+
+        # ── Locate outgoing picking type ──────────────────────────────────────
         warehouse = so.warehouse_id or self.env["stock.warehouse"].sudo().search(
             [("company_id", "=", so.company_id.id)], limit=1
         )
