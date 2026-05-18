@@ -88,7 +88,7 @@ class MontaSubscriptionSync(models.Model):
                 pending_invoices = self._monta_get_unprocessed_renewal_invoices(so)
 
                 for invoice in pending_invoices:
-                    picking = self._monta_create_subscription_delivery(so, invoice)
+                    picking = so._monta_create_subscription_delivery(invoice=invoice)
                     if picking:
                         created += 1
                         _logger.info(
@@ -339,8 +339,9 @@ class MontaSubscriptionSync(models.Model):
     # Step 4 — Create and push the renewal delivery
     # ------------------------------------------------------------------
 
-    @api.model
-    def _monta_create_subscription_delivery(self, so, invoice=None):
+    def _monta_create_subscription_delivery(self, invoice=None):
+        self.ensure_one()
+        so = self
         """
         Create a new outgoing stock picking for one subscription renewal period
         and push it to Monta.

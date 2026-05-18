@@ -39,13 +39,33 @@ class StockPicking(models.Model):
             _logger.debug("[Monta Eligible] %s: BC order -- skip.", self.name)
             return False
 
+        # Block native/regular deliveries of subscription Sales Orders from being sent to Monta.
+        # Subscription orders must ONLY send invoice-driven deliveries (origin contains 'Subscription Renewal').
+        _sf = self.sale_id._fields
+        _is_sub_so = (
+            'Subscription Renewal' in (self.origin or '')
+            or ('subscription_state' in _sf and getattr(self.sale_id, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+            or ('is_subscription' in _sf and self.sale_id.is_subscription)
+            or ('plan_id' in _sf and bool(self.sale_id.plan_id))
+        )
+        if _is_sub_so:
+            _is_renewal_picking = 'Subscription Renewal' in (self.origin or '')
+            if not _is_renewal_picking:
+                _logger.info(
+                    "[Monta] SO %s: Blocking native delivery %s — "
+                    "subscriptions only push invoice-driven deliveries.",
+                    self.sale_id.name, self.name,
+                )
+                return False
+
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
             # --- Subscription bypass ---
             # Detect if this picking belongs to a subscription SO
             _f = self.sale_id._fields
             _is_sub = (
-                ('is_subscription' in _f and self.sale_id.is_subscription)
+                'Subscription Renewal' in (self.origin or '')
+                or ('is_subscription' in _f and self.sale_id.is_subscription)
                 or ('plan_id' in _f and bool(self.sale_id.plan_id))
                 or ('subscription_state' in _f and getattr(self.sale_id, 'subscription_state', '') in (
                     '2_renewal', '3_progress', '4_paused'

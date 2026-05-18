@@ -85,23 +85,31 @@ class AccountMove(models.Model):
                     move.name, so.name,
                 )
 
-                # Skip the first invoice -- the native Odoo delivery (created at
-                # SO confirmation) already handles the first period.
-                # Only renewal invoices (2nd+) need a new delivery.
-                if not self._monta_is_renewal_invoice(move, so):
-                    continue
+                # Detect if this is the first posted invoice for this subscription
+                all_posted = so.invoice_ids.filtered(
+                    lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
+                ).sorted(lambda inv: inv.create_date or inv.invoice_date)
 
-                # Mollie mandate check -- renewal requires valid mandate
-                if not self._monta_has_valid_mollie_mandate(so):
+                is_first_invoice = bool(all_posted and all_posted[0].id == move.id)
+
+                if is_first_invoice:
                     _logger.info(
-                        "[Monta Invoice Hook] SO %s: renewal invoice %s -- "
-                        "Mollie mandate invalid, no delivery created.",
+                        "[Monta Invoice Hook] SO %s: First invoice %s -- "
+                        "Mollie mandate check bypassed.",
                         so.name, move.name,
                     )
-                    continue
+                else:
+                    # Renewal invoice (2nd+) requires valid Mollie mandate
+                    if not self._monta_has_valid_mollie_mandate(so):
+                        _logger.info(
+                            "[Monta Invoice Hook] SO %s: renewal invoice %s -- "
+                            "Mollie mandate invalid, no delivery created.",
+                            so.name, move.name,
+                        )
+                        continue
 
-                # Skip if an invoice-driven delivery already exists for this period
-                if self._monta_renewal_delivery_exists(so):
+                # Skip if an invoice-driven delivery already exists for this specific invoice
+                if self._monta_renewal_delivery_exists(move, so):
                     continue
 
                 # Create the renewal delivery
@@ -109,12 +117,12 @@ class AccountMove(models.Model):
                     picking = so._monta_create_subscription_delivery(invoice=move)
                     if picking:
                         _logger.info(
-                            "[Monta Invoice Hook] Renewal delivery %s created for SO %s.",
+                            "[Monta Invoice Hook] Renewal/Invoice delivery %s created for SO %s.",
                             picking.name, so.name,
                         )
                     else:
                         _logger.warning(
-                            "[Monta Invoice Hook] No renewal delivery returned for SO %s invoice %s.",
+                            "[Monta Invoice Hook] No delivery returned for SO %s invoice %s.",
                             so.name, move.name,
                         )
                 except Exception:
@@ -172,52 +180,26 @@ class AccountMove(models.Model):
         return so
 
     @api.model
-    def _monta_is_renewal_invoice(self, move, so):
+    def _monta_renewal_delivery_exists(self, move, so):
         """
-        Return True only if this is a RENEWAL invoice (not the first/checkout invoice).
+        Duplicate guard -- return True if an invoice-driven delivery
+        already exists for this SO and this specific invoice.
 
-        The first posted invoice corresponds to the initial subscription purchase.
-        Odoo's native delivery (created at SO confirmation) handles that period.
-        Any subsequent invoice is a renewal and needs a new delivery.
+        Looks for a delivery with origin containing 'Subscription Renewal - {invoice_name}'.
         """
-        all_posted = so.invoice_ids.filtered(
-            lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
-        ).sorted(lambda inv: inv.create_date or inv.invoice_date)
-
-        if not all_posted:
-            return False
-
-        if all_posted[0].id == move.id:
-            _logger.info(
-                "[Monta Invoice Hook] SO %s: invoice %s is the FIRST invoice -- "
-                "native delivery handles this period, skip.",
-                so.name, move.name,
-            )
-            return False
-
-        return True
-
-    @api.model
-    def _monta_renewal_delivery_exists(self, so):
-        """
-        Duplicate guard -- return True if an invoice-driven renewal delivery
-        already exists for this SO.
-
-        Only looks for deliveries OUR hook created (identified by
-        'Subscription Renewal' in origin). Native Odoo deliveries are ignored.
-        """
+        invoice_ref = move.name if move else "Renewal"
         existing = self.env["stock.picking"].sudo().search([
             ("sale_id", "=", so.id),
             ("picking_type_code", "=", "outgoing"),
             ("state", "!=", "cancel"),
-            ("origin", "ilike", "Subscription Renewal"),
+            ("origin", "like", f"Subscription Renewal - {invoice_ref}"),
         ], limit=1)
 
         if existing:
             _logger.info(
-                "[Monta Invoice Hook] SO %s: renewal delivery %s already exists "
-                "(origin: %s) -- skipping duplicate.",
-                so.name, existing.name, existing.origin,
+                "[Monta Invoice Hook] SO %s: delivery %s already exists for invoice %s "
+                "-- skipping duplicate.",
+                so.name, existing.name, invoice_ref,
             )
             return True
 
