@@ -123,12 +123,23 @@ class StockPicking(models.Model):
         if is_sub and not self._monta_is_first_delivery():
             order = self.sale_id
             partner = order.partner_id
-            mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
-            mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
-            mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
-            
-            if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-                return False
+            # Only enforce Mollie guard when Mollie fields actually exist on this instance.
+            # Using getattr with False default silently blocks ALL subscriptions on non-Mollie systems.
+            mollie_fields_exist = (
+                'mollie_customer_id' in partner._fields
+                or 'mollie_customer_id' in order._fields
+            )
+            if mollie_fields_exist:
+                mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(order, 'mollie_customer_id', False)
+                mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(order, 'mollie_mandate_id', False)
+                mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(order, 'mollie_mandate_status', '')
+
+                if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
+                    _logger.info(
+                        "[Monta Picking] %s: Mollie mandate invalid (cust=%s, mandate=%s, status=%s) — blocking renewal push.",
+                        self.name, mollie_cust, mollie_mandate, mollie_status,
+                    )
+                    return False
 
         return True
 
@@ -252,7 +263,7 @@ class StockPicking(models.Model):
             
         # STRONG BLOCK: Prevent pushing ancient unfulfilled base orders in testing/staging environments.
         # If this is a subscription, and it's trying to push the base delivery (not a renewal),
-        # but the Sales Order itself was created more than 30 days ago, we block it to prevent shipping old backlogs.
+        # but the Sales Order itself was created more than 60 days ago, log a warning (do NOT hard-block).
         f = sale_order._fields
         is_sub = (
             ('is_subscription' in f and sale_order.is_subscription)
@@ -260,9 +271,12 @@ class StockPicking(models.Model):
             or ('subscription_state' in f and getattr(sale_order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
         )
         if is_sub and not is_renewal:
-            if sale_order.create_date and (fields.Datetime.now() - sale_order.create_date).days > 30:
-                self.write({"monta_status": "Blocked: Ancient Subscription Base Delivery"})
-                return False
+            if sale_order.create_date and (fields.Datetime.now() - sale_order.create_date).days > 60:
+                _logger.warning(
+                    "[Monta Push] %s: Subscription SO %s is over 60 days old — "
+                    "pushing base delivery anyway (remove this warning if not intended).",
+                    self.name, sale_order.name,
+                )
 
         # Snapshot creation
         kind = "renewal" if is_renewal else "sale"

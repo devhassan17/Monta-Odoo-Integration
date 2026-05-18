@@ -1,22 +1,54 @@
 # -*- coding: utf-8 -*-
 """
-Monta Subscription Delivery Sync
-==================================
-When a subscription renews in Odoo, this cron detects the gap between
-the number of posted invoices and the number of Monta-pushed deliveries
-for that subscription SO, then creates and pushes the missing delivery.
+Monta Subscription Renewal Delivery Sync
+=========================================
 
-This approach:
-  - Does NOT hook into invoice posting (no invoice dependency)
-  - Does NOT auto-confirm or touch dates (no date-doubling)
-  - Works purely with Odoo's native stock.picking delivery objects
-  - Is safe to run multiple times (idempotent)
+PURPOSE
+-------
+When Odoo renews a subscription it only creates a new invoice — it does NOT
+create a new stock delivery.  This module fills that gap: for every posted
+renewal invoice that has no matching Monta-pushed delivery, it creates one
+delivery and pushes it to Monta automatically.
+
+DESIGN RULES
+------------
+1. **Only "In Progress" subscriptions** (`subscription_state = '3_progress'`).
+   Paused, churned, or draft subscriptions are ignored entirely.
+
+2. **Valid Mollie mandate required.**
+   Every subscription customer must have:
+     - A Mollie Customer ID
+     - A Mollie Mandate ID
+     - Mandate status = 'valid'
+   If ANY of these is missing, the SO is skipped and a clear log message is
+   written so the issue is easy to diagnose.
+   (If the Mollie module is not installed at all, this guard is skipped.)
+
+3. **Per-invoice matching — not count-based.**
+   We look at each individual renewal invoice (invoice #2 onwards) and check
+   whether a Monta-pushed delivery was created after that invoice was posted.
+   This means:
+     - Changing a renewal date → no new invoice → no extra delivery ✅
+     - Changing products → no new invoice → no extra delivery ✅
+     - Actual renewal → new invoice posted → one delivery created ✅
+
+4. **Backlog guard.**
+   Renewal invoices older than RENEWAL_LOOKBACK_DAYS are skipped to avoid
+   accidentally shipping historical periods in test/staging environments.
+
+5. **Idempotent.**
+   Safe to run multiple times — each invoice can only ever produce one delivery.
 """
 import logging
+from datetime import timedelta
 
 from odoo import api, fields, models
 
 _logger = logging.getLogger(__name__)
+
+# Renewal invoices older than this many days are treated as historical backlog
+# and will NOT trigger a new delivery.
+RENEWAL_LOOKBACK_DAYS = 7
 
 
 class MontaSubscriptionSync(models.Model):
@@ -25,196 +57,316 @@ class MontaSubscriptionSync(models.Model):
     # ------------------------------------------------------------------
     # Cron entry point
     # ------------------------------------------------------------------
+
     @api.model
     def _cron_monta_subscription_delivery_sync(self):
         """
-        Scheduled action: find subscription SOs where the number of posted
-        invoices exceeds the number of Monta-pushed outgoing deliveries, then
-        create and push a new delivery for each missing period.
+        Scheduled action — push one Monta delivery per unprocessed renewal invoice.
 
-        Logic:
-          posted_invoices  = invoices on this SO with state='posted'
-          monta_deliveries = outgoing pickings with monta_pushed=True
-          if posted_invoices > monta_deliveries → renewal delivery needed
+        Flow:
+          1. Find all in-progress subscription SOs in Monta-configured companies.
+          2. For each SO, validate Mollie mandate (hard requirement).
+          3. Find renewal invoices (invoice #2+) that have no matching delivery.
+          4. For each unmatched invoice, create and push a new delivery.
         """
-        _logger.info("[Monta Sub Sync] Starting subscription delivery sync cron")
+        _logger.info("[Monta Sub Sync] ─── Starting subscription renewal delivery sync ───")
 
-        subscription_orders = self._monta_find_subscription_orders()
-        _logger.info(
-            "[Monta Sub Sync] Found %d active subscription orders to check",
-            len(subscription_orders),
-        )
+        orders = self._monta_find_active_subscriptions()
+        _logger.info("[Monta Sub Sync] Found %d in-progress subscription(s) to evaluate.", len(orders))
 
         created = 0
-        for so in subscription_orders:
+        skipped_mollie = 0
+
+        for so in orders:
             try:
-                if self._monta_subscription_needs_delivery(so):
-                    picking = self._monta_create_subscription_delivery(so)
+                # ── Guard: Mollie mandate must be valid ──────────────────────
+                if not self._monta_has_valid_mollie_mandate(so):
+                    skipped_mollie += 1
+                    continue
+
+                # ── Find renewal invoices with no delivery yet ───────────────
+                pending_invoices = self._monta_get_unprocessed_renewal_invoices(so)
+
+                for invoice in pending_invoices:
+                    picking = self._monta_create_subscription_delivery(so, invoice)
                     if picking:
                         created += 1
                         _logger.info(
-                            "[Monta Sub Sync] Created renewal delivery %s for SO %s",
-                            picking.name, so.name,
+                            "[Monta Sub Sync] ✅ Created delivery %s for SO %s (renewal invoice: %s)",
+                            picking.name, so.name, invoice.name,
                         )
-            except Exception as e:
-                _logger.warning(
-                    "[Monta Sub Sync] Error processing SO %s: %s",
-                    so.name, e,
+
+            except Exception:
+                _logger.exception(
+                    "[Monta Sub Sync] ❌ Unexpected error processing SO %s", so.name
                 )
 
         _logger.info(
-            "[Monta Sub Sync] Done — created %d renewal delivery(ies)", created
+            "[Monta Sub Sync] ─── Done: %d delivery(ies) created | %d skipped (Mollie) ───",
+            created, skipped_mollie,
         )
 
     # ------------------------------------------------------------------
-    # Detection helpers
+    # Step 1 — Find active in-progress subscriptions
     # ------------------------------------------------------------------
+
     @api.model
-    def _monta_find_subscription_orders(self):
-        """Return confirmed subscription SOs for companies with Monta configured."""
-        # Find all companies that have Monta configured
+    def _monta_find_active_subscriptions(self):
+        """
+        Return confirmed, IN-PROGRESS subscription SOs from Monta-configured companies.
+
+        'In Progress' strictly means subscription_state = '3_progress'.
+        Paused ('4_paused'), churned ('6_churn'), and draft states are excluded.
+        """
+        # ── Resolve companies from Monta config ────────────────────────────
         configs = self.env["monta.config"].sudo().search([])
-        company_ids = configs.mapped("company_id").ids
-        if not company_ids:
+        if not configs:
+            _logger.warning("[Monta Sub Sync] No Monta configuration record found — aborting.")
             return self.browse()
 
-        # Find SOs that look like subscriptions (any known field variant)
+        company_ids = set()
+        for cfg in configs:
+            if cfg.allowed_company_ids:
+                # Config restricts to specific companies
+                company_ids.update(cfg.allowed_company_ids.ids)
+            else:
+                # No restriction = all companies allowed
+                company_ids.update(self.env["res.company"].sudo().search([]).ids)
+
+        if not company_ids:
+            _logger.warning("[Monta Sub Sync] Could not resolve any company IDs — aborting.")
+            return self.browse()
+
+        # ── Build domain ────────────────────────────────────────────────────
         domain = [
             ("state", "in", ["sale", "done"]),
-            ("company_id", "in", company_ids),
+            ("company_id", "in", list(company_ids)),
         ]
 
         f = self._fields
 
-        # Build subscription filter — use whichever field exists
-        sub_domain = False
-        if "is_subscription" in f:
-            sub_domain = ("is_subscription", "=", True)
+        # Priority: use subscription_state for the strictest filter.
+        # Fall back to older field names if subscription_state doesn't exist.
+        if "subscription_state" in f:
+            # STRICT: only in-progress subscriptions
+            domain.append(("subscription_state", "=", "3_progress"))
+        elif "is_subscription" in f:
+            domain.append(("is_subscription", "=", True))
         elif "plan_id" in f:
-            sub_domain = ("plan_id", "!=", False)
-        elif "subscription_state" in f:
-            sub_domain = ("subscription_state", "in", [
-                "3_progress", "4_paused", "2_renewal"
-            ])
-
-        if sub_domain:
-            domain.append(sub_domain)
+            domain.append(("plan_id", "!=", False))
         else:
-            # No subscription field found on this Odoo version — skip
             _logger.warning(
-                "[Monta Sub Sync] Cannot detect subscriptions: no known "
-                "subscription field found on sale.order"
+                "[Monta Sub Sync] No subscription field found on sale.order — aborting."
             )
             return self.browse()
 
-        orders = self.sudo().search(domain)
-
-        # Filter out BC orders
-        orders = orders.filtered(
+        orders = self.sudo().search(domain).filtered(
             lambda o: not (o.name and o.name.startswith("BC"))
+        )
+
+        _logger.info(
+            "[Monta Sub Sync] _monta_find_active_subscriptions: %d candidate(s) in companies %s",
+            len(orders), sorted(company_ids),
         )
         return orders
 
+    # ------------------------------------------------------------------
+    # Step 2 — Validate Mollie mandate
+    # ------------------------------------------------------------------
+
     @api.model
-    def _monta_subscription_needs_delivery(self, so):
+    def _monta_has_valid_mollie_mandate(self, so):
         """
-        Return True if this subscription SO needs a new Monta delivery.
+        Return True if the SO's customer has a valid Mollie mandate.
 
-        Smart Timeline-based Rule:
-        1. Never exceed the number of invoices.
-        2. Ignore backlogs: only trigger if the latest invoice was created in the last 7 days.
-        3. Only trigger if the latest Monta delivery is older than the latest invoice.
-        4. Guard: Skip if only 1 invoice (initial checkout phase).
-        5. Guard: Mollie Mandate validation.
+        Checks (all three must be present and valid):
+          - mollie_customer_id   : customer must exist in Mollie
+          - mollie_mandate_id    : a mandate must be on file
+          - mollie_mandate_status: must equal 'valid'
+
+        If the Mollie module is not installed (fields don't exist on the model),
+        this guard is skipped and True is returned (no blocking).
         """
-        posted_invoices = so.invoice_ids.filtered(
-            lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
-        ).sorted(lambda inv: inv.create_date or inv.invoice_date, reverse=True)
-        
-        if not posted_invoices:
-            return False
-
-        # Guard: Never interfere with the initial checkout phase (Period 1)
-        if len(posted_invoices) <= 1:
-            return False
-
-        monta_deliveries = so.picking_ids.filtered(
-            lambda p: p.picking_type_code == "outgoing" and p.monta_pushed
-        ).sorted("create_date", reverse=True)
-
-        # Guard 1: Never create more deliveries than invoices
-        invoice_count = len(posted_invoices)
-        delivery_count = len(monta_deliveries)
-        if delivery_count >= invoice_count:
-            return False
-
-        # Guard: Mollie Mandate Validation
         partner = so.partner_id
-        mollie_cust = getattr(partner, 'mollie_customer_id', False) or getattr(so, 'mollie_customer_id', False)
-        mollie_mandate = getattr(partner, 'mollie_mandate_id', False) or getattr(so, 'mollie_mandate_id', False)
-        mollie_status = getattr(partner, 'mollie_mandate_status', '') or getattr(so, 'mollie_mandate_status', '')
-        
-        if not mollie_cust or not mollie_mandate or mollie_status != 'valid':
-            _logger.info("[Monta Sub Sync] SO %s: renewal detected but Mollie Mandate is invalid. Skipping.", so.name)
-            return False
 
-        latest_invoice = posted_invoices[0]
-
-        # Guard 2: Recency check (Ignore historical backlogs)
-        from datetime import timedelta
-        if latest_invoice.create_date:
-            if (fields.Datetime.now() - latest_invoice.create_date) > timedelta(days=7):
-                return False
-
-        # Guard 3: Timeline check
-        if not monta_deliveries:
+        # If Mollie is not installed, skip this guard entirely
+        mollie_installed = (
+            'mollie_customer_id' in partner._fields
+            or 'mollie_customer_id' in so._fields
+        )
+        if not mollie_installed:
+            _logger.debug(
+                "[Monta Sub Sync] SO %s: Mollie not installed — mandate guard skipped.", so.name
+            )
             return True
 
-        latest_delivery = monta_deliveries[0]
-        
-        # If the latest delivery was created BEFORE the latest invoice
-        # (with a 1-hour buffer to handle simultaneously created records where delivery might be slightly older)
-        if latest_invoice.create_date and latest_delivery.create_date:
-            buffer_time = latest_invoice.create_date - timedelta(hours=1)
-            if latest_delivery.create_date < buffer_time:
-                _logger.info(
-                    "[Monta Sub Sync] SO %s: New invoice %s (created %s) has no matching delivery. "
-                    "Latest delivery was %s. Triggering 1 renewal delivery.",
-                    so.name, latest_invoice.name, latest_invoice.create_date, latest_delivery.create_date
-                )
-                return True
+        # Read all three Mollie fields — prefer partner-level, fall back to SO-level
+        mollie_cust = (
+            getattr(partner, 'mollie_customer_id', False)
+            or getattr(so, 'mollie_customer_id', False)
+        )
+        mollie_mandate = (
+            getattr(partner, 'mollie_mandate_id', False)
+            or getattr(so, 'mollie_mandate_id', False)
+        )
+        mollie_status = (
+            getattr(partner, 'mollie_mandate_status', '')
+            or getattr(so, 'mollie_mandate_status', '')
+        )
 
-        return False
+        if not mollie_cust:
+            _logger.info(
+                "[Monta Sub Sync] SO %s [%s]: ⛔ No Mollie Customer ID — skip.",
+                so.name, partner.name,
+            )
+            return False
+
+        if not mollie_mandate:
+            _logger.info(
+                "[Monta Sub Sync] SO %s [%s]: ⛔ No Mollie Mandate ID — skip.",
+                so.name, partner.name,
+            )
+            return False
+
+        if mollie_status != 'valid':
+            _logger.info(
+                "[Monta Sub Sync] SO %s [%s]: ⛔ Mollie mandate status is '%s' (expected 'valid') — skip.",
+                so.name, partner.name, mollie_status,
+            )
+            return False
+
+        _logger.debug(
+            "[Monta Sub Sync] SO %s: ✅ Mollie mandate valid (cust=%s, mandate=%s).",
+            so.name, mollie_cust, mollie_mandate,
+        )
+        return True
 
     # ------------------------------------------------------------------
-    # Delivery creation
+    # Step 3 — Find renewal invoices with no matching Monta delivery
     # ------------------------------------------------------------------
+
     @api.model
-    def _monta_create_subscription_delivery(self, so):
+    def _monta_get_unprocessed_renewal_invoices(self, so):
         """
-        Create a new outgoing stock picking for a subscription renewal and
-        push it to Monta.  Lines are taken from the SO lines (same products
-        and quantities as the original order).  Confirming the picking
-        triggers stock_picking.action_confirm() which calls
-        action_push_to_monta() automatically.
+        Return a list of posted renewal invoices that do not yet have a
+        corresponding Monta-pushed delivery.
+
+        Definition:
+          - Renewal invoice = any posted customer invoice after the FIRST one.
+            (The first invoice is the initial checkout delivery — already handled
+             by Odoo's native SO confirmation flow.)
+          - "Processed" = a Monta-pushed outgoing delivery exists whose create_date
+            is AFTER the invoice's create_date (with a 1-hour buffer).
+
+        Why this is immune to admin changes:
+          - Admin edits renewal date → only next_invoice_date changes → no new invoice
+          - Admin edits products → SO lines change → no new invoice immediately
+          - Both cases leave the invoice list unchanged → no unprocessed invoices found
+          - Only an actual subscription renewal (which posts a new invoice) can trigger.
+
+        Backlog guard:
+          Invoices older than RENEWAL_LOOKBACK_DAYS are skipped to prevent
+          accidentally shipping historical periods.
         """
-        # ---- Locate outgoing picking type ----
-        warehouse = so.warehouse_id
-        if not warehouse:
-            warehouse = self.env["stock.warehouse"].sudo().search(
-                [("company_id", "=", so.company_id.id)], limit=1
+        cutoff_date = fields.Datetime.now() - timedelta(days=RENEWAL_LOOKBACK_DAYS)
+
+        # All posted customer invoices, sorted oldest → newest
+        all_invoices = so.invoice_ids.filtered(
+            lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
+        ).sorted(lambda inv: inv.create_date or inv.invoice_date)
+
+        if len(all_invoices) <= 1:
+            # Only the initial checkout invoice exists — nothing to renew
+            _logger.debug(
+                "[Monta Sub Sync] SO %s: only %d posted invoice(s) — initial checkout only, skip.",
+                so.name, len(all_invoices),
+            )
+            return []
+
+        # Renewal invoices = everything after the first (index 1+)
+        renewal_invoices = list(all_invoices[1:])
+
+        # All Monta-pushed outgoing deliveries for this SO
+        monta_deliveries = so.picking_ids.filtered(
+            lambda p: p.picking_type_code == "outgoing" and p.monta_pushed
+        )
+
+        unprocessed = []
+        for invoice in renewal_invoices:
+            inv_created = invoice.create_date
+            if not inv_created:
+                continue
+
+            # ── Backlog guard: skip old invoices ─────────────────────────
+            if inv_created < cutoff_date:
+                _logger.info(
+                    "[Monta Sub Sync] SO %s: invoice %s is %d day(s) old — "
+                    "older than %d-day backlog window, skipping.",
+                    so.name, invoice.name,
+                    (fields.Datetime.now() - inv_created).days,
+                    RENEWAL_LOOKBACK_DAYS,
+                )
+                continue
+
+            # ── Check: is there a Monta delivery created after this invoice? ─
+            # We use a 1-hour buffer so deliveries created *slightly before*
+            # the invoice (due to clock/transaction timing) are still counted.
+            invoice_threshold = inv_created - timedelta(hours=1)
+            has_matching_delivery = any(
+                d.create_date and d.create_date >= invoice_threshold
+                for d in monta_deliveries
             )
 
-        picking_type = warehouse.out_type_id if warehouse else None
-        if not picking_type:
-            picking_type = self.env["stock.picking.type"].sudo().search(
+            if has_matching_delivery:
+                _logger.debug(
+                    "[Monta Sub Sync] SO %s: invoice %s already has a matching Monta delivery — skip.",
+                    so.name, invoice.name,
+                )
+            else:
+                _logger.info(
+                    "[Monta Sub Sync] SO %s: invoice %s (posted %s) has no Monta delivery yet — queuing.",
+                    so.name, invoice.name, inv_created,
+                )
+                unprocessed.append(invoice)
+
+        return unprocessed
+
+    # ------------------------------------------------------------------
+    # Step 4 — Create and push the renewal delivery
+    # ------------------------------------------------------------------
+
+    @api.model
+    def _monta_create_subscription_delivery(self, so, invoice=None):
+        """
+        Create a new outgoing stock picking for one subscription renewal period
+        and push it to Monta.
+
+        Products and quantities are taken from the current SO order lines.
+        Confirming the picking triggers our stock_picking.action_confirm() hook,
+        which calls action_push_to_monta() automatically.
+
+        Args:
+            so:      The subscription sale.order record.
+            invoice: The renewal account.move that triggered this delivery
+                     (used only for logging/chatter context).
+        """
+        # ── Locate outgoing picking type ────────────────────────────────────
+        warehouse = so.warehouse_id or self.env["stock.warehouse"].sudo().search(
+            [("company_id", "=", so.company_id.id)], limit=1
+        )
+
+        picking_type = (
+            (warehouse.out_type_id if warehouse else None)
+            or self.env["stock.picking.type"].sudo().search(
                 [("code", "=", "outgoing"), ("company_id", "=", so.company_id.id)],
                 limit=1,
             )
+        )
 
         if not picking_type:
             _logger.warning(
-                "[Monta Sub Sync] No outgoing picking type for SO %s", so.name
+                "[Monta Sub Sync] SO %s: no outgoing picking type found — cannot create delivery.",
+                so.name,
             )
             return None
 
@@ -227,18 +379,19 @@ class MontaSubscriptionSync(models.Model):
 
         if not src_loc or not dest_loc:
             _logger.warning(
-                "[Monta Sub Sync] Cannot resolve stock locations for SO %s", so.name
+                "[Monta Sub Sync] SO %s: cannot resolve stock locations — aborting delivery.",
+                so.name,
             )
             return None
 
-        # ---- Build move lines from SO order lines ----
+        # ── Build stock move lines from SO order lines ───────────────────────
         move_vals = []
         for line in so.order_line:
             product = line.product_id
             if not product:
                 continue
             if product.type not in ("product", "consu"):
-                continue  # Skip services
+                continue  # Services have no stock moves
             if line.product_uom_qty <= 0:
                 continue
 
@@ -255,19 +408,23 @@ class MontaSubscriptionSync(models.Model):
 
         if not move_vals:
             _logger.warning(
-                "[Monta Sub Sync] No storable product lines on SO %s", so.name
+                "[Monta Sub Sync] SO %s: no storable product lines found — cannot create delivery.",
+                so.name,
             )
             return None
 
-        # ---- Create the picking (strip invoice context to avoid move_type clash) ----
+        # ── Create the picking ───────────────────────────────────────────────
+        # Strip any default_ context keys to avoid move_type conflicts
         clean_ctx = {
             k: v for k, v in self.env.context.items()
             if not k.startswith("default_")
         }
+
+        invoice_ref = invoice.name if invoice else "Renewal"
         picking = self.env["stock.picking"].sudo().with_context(clean_ctx).create({
             "picking_type_id": picking_type.id,
             "partner_id": so.partner_id.id,
-            "origin": f"{so.name} (Subscription Renewal)",
+            "origin": f"{so.name} (Subscription Renewal – {invoice_ref})",
             "sale_id": so.id,
             "location_id": src_loc.id,
             "location_dest_id": dest_loc.id,
@@ -276,14 +433,14 @@ class MontaSubscriptionSync(models.Model):
             "move_ids": [(0, 0, v) for v in move_vals],
         })
 
-        # Confirm → triggers stock_picking.action_confirm() → action_push_to_monta()
+        # Confirm triggers our stock_picking.action_confirm() hook → action_push_to_monta()
         picking.action_confirm()
 
-        # Chatter note
+        # Post a chatter note on the SO for visibility
         so.message_post(
             body=(
-                f"📦 Subscription renewal delivery {picking.name} "
-                f"created automatically and queued for Monta."
+                f"📦 Subscription renewal delivery <b>{picking.name}</b> created automatically "
+                f"for invoice <b>{invoice_ref}</b> and queued for Monta."
             )
         )
 
