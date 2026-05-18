@@ -132,9 +132,14 @@ class AccountMove(models.Model):
                             "[Monta Invoice Hook] Renewal/Invoice delivery %s created for SO %s.",
                             picking.name, so.name,
                         )
+                        product_details = []
+                        for move_line in picking.move_ids:
+                            product_details.append(f"• {move_line.product_id.name} (Qty: {move_line.product_uom_qty})")
+                        details_html = "<br/>".join(product_details)
+                        
                         msg_success = (
                             f"📦 <b>Monta Integration:</b> Delivery <b>{picking.name}</b> has been created successfully "
-                            f"from this invoice's items and queued for Monta."
+                            f"from this invoice's items:<br/>{details_html}<br/>and queued for Monta."
                         )
                         move.message_post(body=msg_success)
                     else:

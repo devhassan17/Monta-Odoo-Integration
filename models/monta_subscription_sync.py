@@ -355,25 +355,7 @@ class MontaSubscriptionSync(models.Model):
             invoice: The renewal account.move that triggered this delivery
                      (used only for logging/chatter context).
         """
-        # ── Final duplicate guard (DB-level) ─────────────────────────────────
-        # Last line of defence: if any non-cancelled outgoing delivery already
-        # exists for this SO with create_date >= invoice post time, abort.
-        # This prevents duplicates if two cron runs overlap simultaneously.
-        if invoice and invoice.create_date:
-            guard_threshold = invoice.create_date - timedelta(hours=1)
-            existing = self.env["stock.picking"].sudo().search([
-                ("sale_id", "=", so.id),
-                ("picking_type_code", "=", "outgoing"),
-                ("state", "!=", "cancel"),
-                ("create_date", ">=", guard_threshold),
-            ], limit=1)
-            if existing:
-                _logger.warning(
-                    "[Monta Sub Sync] SO %s: delivery %s already exists for invoice %s "
-                    "(created %s) — aborting to prevent duplicate.",
-                    so.name, existing.name, invoice.name, existing.create_date,
-                )
-                return None
+
 
         # ── Locate outgoing picking type ──────────────────────────────────────
         warehouse = so.warehouse_id or self.env["stock.warehouse"].sudo().search(
@@ -467,11 +449,17 @@ class MontaSubscriptionSync(models.Model):
         # Confirm triggers our stock_picking.action_confirm() hook → action_push_to_monta()
         picking.action_confirm()
 
+        product_details = []
+        for v in move_vals:
+            product_details.append(f"• {v['name']} (Qty: {v['product_uom_qty']})")
+        details_html = "<br/>".join(product_details)
+
         # Post a chatter note on the SO for visibility
         so.message_post(
             body=(
                 f"📦 Subscription renewal delivery <b>{picking.name}</b> created automatically "
-                f"for invoice <b>{invoice_ref}</b> and queued for Monta."
+                f"for invoice <b>{invoice_ref}</b>.<br/>"
+                f"<b>Items in delivery:</b><br/>{details_html}"
             )
         )
 
