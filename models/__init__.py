@@ -18,3 +18,4 @@ from . import sale_order_monta_fields
 from . import sku_test_log
 from . import stock_picking
 from . import stock_warehouse_ext
+from . import monta_subscription_sync
