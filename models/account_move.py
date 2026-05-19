@@ -69,15 +69,23 @@ class AccountMove(models.Model):
         # Wrapped in try/except -- any bug here is logged silently and
         # NEVER propagates to affect Odoo's cron or invoice posting.
         try:
+            _logger.info("[Monta Invoice Hook] action_post triggered for %s invoices.", len(self))
             for move in self:
+                _logger.info(
+                    "[Monta Invoice Hook] Evaluating invoice %s: state=%s, type=%s, origin=%s",
+                    move.name, move.state, move.move_type, move.invoice_origin
+                )
                 if move.state != "posted":
+                    _logger.info("[Monta Invoice Hook] Invoice %s is not posted. Skipping.", move.name)
                     continue
                 if move.move_type != "out_invoice":
+                    _logger.info("[Monta Invoice Hook] Invoice %s is not out_invoice. Skipping.", move.name)
                     continue
 
                 # Resolve the linked in-progress subscription SO
                 so = self._monta_get_subscription_so(move)
                 if not so:
+                    _logger.info("[Monta Invoice Hook] Invoice %s: Could not resolve a qualifying subscription SO.", move.name)
                     continue
 
                 _logger.info(
@@ -162,11 +170,15 @@ class AccountMove(models.Model):
                     )
                     move.message_post(body=msg_err)
 
-        except Exception:
+        except Exception as e:
             # Safety net -- our code must never crash Odoo's invoice posting
             _logger.exception(
                 "[Monta Invoice Hook] Unexpected error -- Odoo invoice posting was NOT affected."
             )
+            try:
+                self.message_post(body=f"❌ <b>Monta Integration:</b> Unexpected hook error: {str(e)}")
+            except Exception:
+                pass
 
         # Step 3: Always return Odoo's result
         return res
@@ -181,29 +193,49 @@ class AccountMove(models.Model):
         Return the in-progress subscription Sale Order linked to this invoice.
         Returns None if not a qualifying subscription.
         """
+        _logger.info("[Monta Invoice Hook] _monta_get_subscription_so for %s", move.name)
+        
+        # 1. Try sale_line_ids
         so = move.invoice_line_ids.mapped("sale_line_ids.order_id")[:1]
+        _logger.info("[Monta Invoice Hook] SO from sale_line_ids mapping: %s", so.name if so else "None")
+        
+        # 2. Try invoice_origin fallback
         if not so and move.invoice_origin:
+            _logger.info("[Monta Invoice Hook] Fallback: Searching SO by origin name '%s'", move.invoice_origin)
             so = self.env["sale.order"].sudo().search([("name", "=", move.invoice_origin)], limit=1)
+            _logger.info("[Monta Invoice Hook] Fallback SO found: %s", so.name if so else "None")
+        
         if not so:
+            _logger.info("[Monta Invoice Hook] No Sale Order found for invoice %s.", move.name)
             return None
 
-        # Must be a subscription
+        # 3. Check if it's a subscription
         f = so._fields
         is_sub = (
             ('is_subscription' in f and so.is_subscription)
             or ('plan_id' in f and bool(so.plan_id))
             or ('subscription_state' in f and getattr(so, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused', 'draft', 'sent', 'sale'))
         )
+        _logger.info(
+            "[Monta Invoice Hook] SO %s subscription check: is_subscription=%s, plan_id=%s, subscription_state=%s -> qualified=%s",
+            so.name,
+            getattr(so, 'is_subscription', 'N/A'),
+            getattr(so, 'plan_id', 'N/A'),
+            getattr(so, 'subscription_state', 'N/A'),
+            is_sub
+        )
         if not is_sub:
             return None
 
         # Skip BC orders
         if so.name and so.name.startswith("BC"):
+            _logger.info("[Monta Invoice Hook] SO %s: Skipping BC order.", so.name)
             return None
 
         # Monta must be configured for this company
         cfg = self.env["monta.config"].sudo().get_for_company(so.company_id)
         if not cfg:
+            _logger.info("[Monta Invoice Hook] SO %s: No Monta config found for company %s.", so.name, so.company_id.name)
             return None
 
         return so
