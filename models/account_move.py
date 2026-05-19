@@ -185,18 +185,14 @@ class AccountMove(models.Model):
         if not so:
             return None
 
-        # Must be an in-progress subscription
+        # Must be a subscription
         f = so._fields
-        if "subscription_state" in f:
-            if so.subscription_state != "3_progress":
-                return None
-        elif "is_subscription" in f:
-            if not so.is_subscription:
-                return None
-        elif "plan_id" in f:
-            if not so.plan_id:
-                return None
-        else:
+        is_sub = (
+            ('is_subscription' in f and so.is_subscription)
+            or ('plan_id' in f and bool(so.plan_id))
+            or ('subscription_state' in f and getattr(so, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused', 'draft', 'sent', 'sale'))
+        )
+        if not is_sub:
             return None
 
         # Skip BC orders
