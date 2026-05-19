@@ -430,16 +430,29 @@ class SaleOrder(models.Model):
                 to_push = pickings if force else pickings.filtered(lambda p: not p.monta_pushed)
                 
                 # Safety feature for Staging/Testing: 
-                # If this is a subscription order, ONLY push the single most recent unpushed delivery.
-                # This prevents accidentally pushing months-old historical deliveries that were never synced.
+                # If this is a subscription order, ONLY push the single absolute newest renewal delivery.
+                # This prevents accidentally pushing older, historical unpushed deliveries (e.g. from previous periods).
                 f = order._fields
                 is_sub = (
                     ('is_subscription' in f and order.is_subscription)
                     or ('plan_id' in f and bool(order.plan_id))
                     or ('subscription_state' in f and getattr(order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+                    or any('Subscription Renewal' in (p.origin or '') for p in order.picking_ids)
                 )
                 if is_sub and to_push:
-                    to_push = to_push.sorted('create_date', reverse=True)[0]
+                    # Find all non-cancelled renewal pickings overall
+                    all_renewals = order.picking_ids.filtered(
+                        lambda p: p.picking_type_code == "outgoing"
+                        and p.state not in ("cancel", "done")
+                        and 'Subscription Renewal' in (p.origin or '')
+                    )
+                    if all_renewals:
+                        latest_renewal = all_renewals.sorted(
+                            key=lambda p: (p.create_date or fields.Datetime.now(), p.id),
+                            reverse=True
+                        )[0]
+                        # Filter to_push to only include the absolute newest renewal picking
+                        to_push = to_push.filtered(lambda p: p.id == latest_renewal.id)
                     
                 for p in to_push:
                     p.action_push_to_monta()
