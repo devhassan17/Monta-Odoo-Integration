@@ -455,7 +455,7 @@ class SaleOrder(models.Model):
                         to_push = to_push.filtered(lambda p: p.id == latest_renewal.id)
                     
                 for p in to_push:
-                    p.action_push_to_monta()
+                    p.with_context(monta_create_delivery=True).action_push_to_monta()
             else:
                 # Fallback to SO-based create if no picking exists? 
                 # (User said "only Send order on that time when delivery is triggered", so maybe skip)

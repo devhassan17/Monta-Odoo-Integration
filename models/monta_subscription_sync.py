@@ -447,7 +447,7 @@ class MontaSubscriptionSync(models.Model):
         })
 
         # Confirm triggers our stock_picking.action_confirm() hook → action_push_to_monta()
-        picking.action_confirm()
+        picking.with_context(monta_create_delivery=True).action_confirm()
 
         # If Route Filter is enabled but Skip Subscriptions is disabled, 
         # cancel the renewal delivery immediately so it can never be pushed in the future.

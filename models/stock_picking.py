@@ -58,6 +58,17 @@ class StockPicking(models.Model):
                 )
                 return False
             
+            # --- Safety feature: Block existing waiting/ready pickings ---
+            # Do not allow sending renewals that are in 'confirmed' (Waiting) or 'assigned' (Ready) state
+            # unless explicitly authorized by context (such as creation or manual sync).
+            if self.state in ('confirmed', 'assigned') and not self.env.context.get('monta_create_delivery'):
+                _logger.info(
+                    "[Monta Safety Guard Log] Blocked existing subscription renewal picking %s in state %s for SO %s — "
+                    "already in waiting/ready state and not explicitly forced.",
+                    self.name, self.state, self.sale_id.name,
+                )
+                return False
+
             # --- Safety feature: Only push the absolute newest renewal picking ---
             # To prevent pushing older unpushed renewals (e.g. from previous periods
             # that were blocked by route filter or failed), we ONLY allow pushing the single
@@ -415,4 +426,4 @@ class StockPicking(models.Model):
 
     def action_send_renewal_to_monta(self, sale_order=None):
         """Deprecated/Legacy method kept for status button compatibility if needed."""
-        return self.action_push_to_monta(sale_order=sale_order)
+        return self.with_context(monta_create_delivery=True).action_push_to_monta(sale_order=sale_order)
