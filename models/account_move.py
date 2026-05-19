@@ -45,31 +45,30 @@ class AccountMove(models.Model):
     )
 
     # -------------------------------------------------------------------------
-    # Override action_post - hook AFTER Odoo's default posting
+    # Override _post - hook AFTER Odoo's default posting
     # -------------------------------------------------------------------------
 
-    def action_post(self):
+    def _post(self, soft=True):
         """
-        Odoo's native invoice posting method - extended for Monta renewals.
+        Odoo's core invoice posting method - extended for Monta renewals.
+
+        Overriding _post instead of action_post ensures that all invoices,
+        including those posted automatically via background payment transactions,
+        e-commerce checkout, or cron jobs, trigger this hook.
 
         Order of execution:
-          1. super().action_post() runs first (100% of Odoo's default logic)
+          1. super()._post(soft=soft) runs first (100% of Odoo's default logic)
           2. Our code runs after, isolated in try/except
           3. Odoo's result is always returned regardless
-
-        For each posted renewal invoice on a subscription SO, we create a
-        new outgoing delivery and push it to Monta. No extra subscription
-        checks -- deliveries go through the same eligibility logic as regular
-        orders (route filter, BC check, etc.).
         """
         # Step 1: Odoo's full default posting runs first
-        res = super().action_post()
+        res = super()._post(soft=soft)
 
         # Step 2: Create renewal delivery for qualifying invoices.
         # Wrapped in try/except -- any bug here is logged silently and
         # NEVER propagates to affect Odoo's cron or invoice posting.
         try:
-            _logger.info("[Monta Invoice Hook] action_post triggered for %s invoices.", len(self))
+            _logger.info("[Monta Invoice Hook] _post triggered for %s invoices.", len(self))
             for move in self:
                 _logger.info(
                     "[Monta Invoice Hook] Evaluating invoice %s: state=%s, type=%s, origin=%s",
