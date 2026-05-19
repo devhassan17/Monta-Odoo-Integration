@@ -449,18 +449,38 @@ class MontaSubscriptionSync(models.Model):
         # Confirm triggers our stock_picking.action_confirm() hook → action_push_to_monta()
         picking.action_confirm()
 
-        product_details = []
-        for v in move_vals:
-            product_details.append(f"• {v['name']} (Qty: {v['product_uom_qty']})")
-        details_html = "<br/>".join(product_details)
-
-        # Post a chatter note on the SO for visibility
-        so.message_post(
-            body=(
-                f"📦 Subscription renewal delivery <b>{picking.name}</b> created automatically "
-                f"for invoice <b>{invoice_ref}</b>.<br/>"
-                f"<b>Items in delivery:</b><br/>{details_html}"
+        # If Route Filter is enabled but Skip Subscriptions is disabled, 
+        # cancel the renewal delivery immediately so it can never be pushed in the future.
+        cfg = self.env["monta.config"].sudo().get_for_company(so.company_id)
+        if cfg and cfg.enable_route_filter and not cfg.route_filter_skip_subscriptions:
+            _logger.info(
+                "[Monta Sub Sync] SO %s: Route Filter is enabled and Skip Subscriptions is disabled. "
+                "Cancelling renewal delivery %s immediately.",
+                so.name, picking.name,
             )
-        )
+            picking.action_cancel()
+            
+            # Post a chatter note on the SO for cancellation visibility
+            so.message_post(
+                body=(
+                    f"🚫 <b>Monta Integration:</b> Subscription renewal delivery <b>{picking.name}</b> "
+                    f"was cancelled automatically because <b>Route Filter: Skip Subscriptions?</b> "
+                    f"is disabled/blocking subscription renewals from being sent."
+                )
+            )
+        else:
+            product_details = []
+            for v in move_vals:
+                product_details.append(f"• {v['name']} (Qty: {v['product_uom_qty']})")
+            details_html = "<br/>".join(product_details)
+
+            # Post a chatter note on the SO for visibility
+            so.message_post(
+                body=(
+                    f"📦 Subscription renewal delivery <b>{picking.name}</b> created automatically "
+                    f"for invoice <b>{invoice_ref}</b>.<br/>"
+                    f"<b>Items in delivery:</b><br/>{details_html}"
+                )
+            )
 
         return picking
