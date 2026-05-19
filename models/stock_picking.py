@@ -57,6 +57,29 @@ class StockPicking(models.Model):
                     self.sale_id.name, self.name,
                 )
                 return False
+            
+            # --- Safety feature: Only push the most recent unpushed renewal ---
+            # To prevent pushing older unpushed renewals (e.g. from previous periods
+            # that were blocked by route filter or failed), we ONLY allow pushing the single
+            # most recent unpushed renewal picking.
+            unpushed_renewals = self.sale_id.picking_ids.filtered(
+                lambda p: p.picking_type_code == "outgoing"
+                and p.state not in ("cancel", "done")
+                and 'Subscription Renewal' in (p.origin or '')
+                and not p.monta_pushed
+            )
+            if unpushed_renewals:
+                latest_unpushed = unpushed_renewals.sorted(
+                    key=lambda p: (p.create_date or fields.Datetime.now(), p.id),
+                    reverse=True
+                )[0]
+                if self.id != latest_unpushed.id:
+                    _logger.info(
+                        "[Monta Eligible] Blocked older renewal picking %s for SO %s — "
+                        "only the single most recent unpushed subscription delivery (%s) can be pushed.",
+                        self.name, self.sale_id.name, latest_unpushed.name,
+                    )
+                    return False
 
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
