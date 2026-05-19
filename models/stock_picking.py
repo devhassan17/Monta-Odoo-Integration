@@ -67,18 +67,33 @@ class StockPicking(models.Model):
                 and p.state not in ("cancel", "done")
                 and 'Subscription Renewal' in (p.origin or '')
             )
+            _logger.info(
+                "[Monta Safety Guard Log] Evaluating picking %s (Origin: %s, State: %s, Pushed: %s) for SO %s. "
+                "Found renewals: %s",
+                self.name, self.origin, self.state, self.monta_pushed, self.sale_id.name,
+                [(r.name, r.origin, r.create_date) for r in all_renewals]
+            )
             if all_renewals:
                 latest_renewal = all_renewals.sorted(
                     key=lambda p: (p.create_date or fields.Datetime.now(), p.id),
                     reverse=True
                 )[0]
+                _logger.info(
+                    "[Monta Safety Guard Log] Latest renewal for SO %s is %s (Origin: %s). Current picking is %s.",
+                    self.sale_id.name, latest_renewal.name, latest_renewal.origin, self.name
+                )
                 if self.id != latest_renewal.id:
                     _logger.info(
-                        "[Monta Eligible] Blocked older renewal picking %s for SO %s — "
+                        "[Monta Safety Guard Log] Blocked older renewal picking %s for SO %s — "
                         "only the absolute most recent subscription delivery (%s) can be pushed.",
                         self.name, self.sale_id.name, latest_renewal.name,
                     )
                     return False
+                else:
+                    _logger.info(
+                        "[Monta Safety Guard Log] Allowed newest renewal picking %s for SO %s.",
+                        self.name, self.sale_id.name
+                    )
 
         # Route Filter (Delivery Product Route)
         if cfg.enable_route_filter:
