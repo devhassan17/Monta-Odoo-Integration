@@ -182,6 +182,8 @@ class AccountMove(models.Model):
         Returns None if not a qualifying subscription.
         """
         so = move.invoice_line_ids.mapped("sale_line_ids.order_id")[:1]
+        if not so and move.invoice_origin:
+            so = self.env["sale.order"].sudo().search([("name", "=", move.invoice_origin)], limit=1)
         if not so:
             return None
 
