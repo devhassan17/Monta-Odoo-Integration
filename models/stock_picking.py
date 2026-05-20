@@ -20,9 +20,9 @@ class StockPicking(models.Model):
     monta_delivery_date = fields.Date(string="Monta Delivery Date", copy=False)
 
     def _monta_log_not_sent_reason(self, reason):
-        """Helper to post HTML chatter logs on picking and Sales Order when skipped/blocked."""
+        """Helper to post plain text chatter logs on picking and Sales Order when skipped/blocked."""
         self.ensure_one()
-        msg = f"⚠️ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is not sent to Monta due to: {reason}"
+        msg = f"⚠️ Monta Integration: Subscription delivery {self.name} is not sent to Monta due to: {reason}"
         self.message_post(body=msg)
         if self.sale_id:
             self.sale_id.message_post(body=msg)
@@ -67,7 +67,7 @@ class StockPicking(models.Model):
                         "subscription state is %s, not strictly '3_progress' (In Progress).",
                         self.name, self.sale_id.name, sub_state,
                     )
-                    self._monta_log_not_sent_reason(f"Subscription state is <b>{sub_state}</b>, not strictly '3_progress' (In Progress).")
+                    self._monta_log_not_sent_reason(f"Subscription state is {sub_state}, not strictly '3_progress' (In Progress).")
                     return False
 
             _is_renewal_picking = 'Subscription Renewal' in (self.origin or '')
@@ -89,7 +89,7 @@ class StockPicking(models.Model):
                     "already in waiting/ready state and not explicitly forced.",
                     self.name, self.state, self.sale_id.name,
                 )
-                self._monta_log_not_sent_reason(f"Delivery is in state <b>{self.state}</b> and not explicitly authorized for creation/sync.")
+                self._monta_log_not_sent_reason(f"Delivery is in state {self.state} and not explicitly authorized for creation/sync.")
                 return False
 
             # --- Safety feature: Only push the absolute newest renewal picking ---
@@ -122,7 +122,7 @@ class StockPicking(models.Model):
                         "only the absolute most recent subscription delivery (%s) can be pushed.",
                         self.name, self.sale_id.name, latest_renewal.name,
                     )
-                    self._monta_log_not_sent_reason(f"Only the absolute most recent subscription delivery (<b>{latest_renewal.name}</b>) can be pushed.")
+                    self._monta_log_not_sent_reason(f"Only the absolute most recent subscription delivery ({latest_renewal.name}) can be pushed.")
                     return False
                 else:
                     _logger.info(
@@ -393,7 +393,7 @@ class StockPicking(models.Model):
             
             # Post success chatter log
             msg_success = (
-                f"✅ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is sent to Monta."
+                f"✅ Monta Integration: Subscription delivery {self.name} is sent to Monta."
             )
             self.message_post(body=msg_success)
             if sale_order:
@@ -419,7 +419,7 @@ class StockPicking(models.Model):
 
         # Post API failure chatter log
         msg_err_post = (
-            f"❌ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is not sent to Monta "
+            f"❌ Monta Integration: Subscription delivery {self.name} is not sent to Monta "
             f"due to API error: Status {status} (Reason: {json.dumps(body or {})})"
         )
         self.message_post(body=msg_err_post)

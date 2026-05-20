@@ -463,8 +463,8 @@ class MontaSubscriptionSync(models.Model):
             # Post a chatter note on the SO for cancellation visibility
             so.message_post(
                 body=(
-                    f"🚫 <b>Monta Integration:</b> Subscription renewal delivery <b>{picking.name}</b> "
-                    f"was cancelled automatically because <b>Route Filter: Skip Subscriptions?</b> "
+                    f"🚫 Monta Integration: Subscription renewal delivery {picking.name} "
+                    f"was cancelled automatically because Route Filter: Skip Subscriptions? "
                     f"is disabled/blocking subscription renewals from being sent."
                 )
             )
@@ -472,14 +472,14 @@ class MontaSubscriptionSync(models.Model):
             product_details = []
             for v in move_vals:
                 product_details.append(f"• {v['name']} (Qty: {v['product_uom_qty']})")
-            details_html = "<br/>".join(product_details)
+            details_text = "\n".join(product_details)
 
             # Post a chatter note on the SO for visibility
             so.message_post(
                 body=(
-                    f"📦 Subscription renewal delivery <b>{picking.name}</b> created automatically "
-                    f"for invoice <b>{invoice_ref}</b>.<br/>"
-                    f"<b>Items in delivery:</b><br/>{details_html}"
+                    f"📦 Subscription renewal delivery {picking.name} created automatically "
+                    f"for invoice {invoice_ref}.\n"
+                    f"Items in delivery:\n{details_text}"
                 )
             )
 
