@@ -113,22 +113,14 @@ class AccountMove(models.Model):
                             "Mollie mandate invalid, no delivery created.",
                             so.name, move.name,
                         )
-                        # Post detailed chatter logs
-                        msg_fail = (
-                            f"⚠️ <b>Monta Integration:</b> Mollie mandate validation failed. "
-                            f"No delivery created for subscription SO <b>{so.name}</b>."
-                        )
-                        move.message_post(body=msg_fail)
-                        so.message_post(body=msg_fail)
                         continue
 
                 # Skip if an invoice-driven delivery already exists for this specific invoice
                 if self._monta_renewal_delivery_exists(move, so):
-                    msg_dup = (
-                        f"ℹ️ <b>Monta Integration:</b> A delivery for invoice <b>{move.name}</b> "
-                        f"already exists. Skipping duplicate delivery creation."
+                    _logger.info(
+                        "[Monta Invoice Hook] Delivery already exists for invoice %s on SO %s — skipping.",
+                        move.name, so.name,
                     )
-                    move.message_post(body=msg_dup)
                     continue
 
                 # Create the renewal delivery
@@ -139,45 +131,22 @@ class AccountMove(models.Model):
                             "[Monta Invoice Hook] Renewal/Invoice delivery %s created for SO %s.",
                             picking.name, so.name,
                         )
-                        product_details = []
-                        for move_line in picking.move_ids:
-                            product_details.append(f"• {move_line.product_id.name} (Qty: {move_line.product_uom_qty})")
-                        details_html = "<br/>".join(product_details)
-                        
-                        msg_success = (
-                            f"📦 <b>Monta Integration:</b> Delivery <b>{picking.name}</b> has been created successfully "
-                            f"from this invoice's items:<br/>{details_html}<br/>and queued for Monta."
-                        )
-                        move.message_post(body=msg_success)
                     else:
                         _logger.warning(
                             "[Monta Invoice Hook] No delivery returned for SO %s invoice %s.",
                             so.name, move.name,
                         )
-                        msg_none = (
-                            f"⚠️ <b>Monta Integration:</b> Delivery generation returned empty/no products. "
-                            f"No Monta picking was created."
-                        )
-                        move.message_post(body=msg_none)
                 except Exception as e:
                     _logger.exception(
-                        "[Monta Invoice Hook] Error creating renewal delivery for SO %s (invoice %s).",
-                        so.name, move.name,
+                        "[Monta Invoice Hook] Error creating renewal delivery for SO %s (invoice %s): %s",
+                        so.name, move.name, e,
                     )
-                    msg_err = (
-                        f"❌ <b>Monta Integration:</b> Error during delivery generation: {str(e)}"
-                    )
-                    move.message_post(body=msg_err)
 
-        except Exception as e:
-            # Safety net -- our code must never crash Odoo's invoice posting
+        except Exception:
+            # Safety net — our code must never crash Odoo's invoice posting
             _logger.exception(
-                "[Monta Invoice Hook] Unexpected error -- Odoo invoice posting was NOT affected."
+                "[Monta Invoice Hook] Unexpected error — Odoo invoice posting was NOT affected."
             )
-            try:
-                self.message_post(body=f"❌ <b>Monta Integration:</b> Unexpected hook error: {str(e)}")
-            except Exception:
-                pass
 
         # Step 3: Always return Odoo's result
         return res

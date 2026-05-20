@@ -469,18 +469,9 @@ class MontaSubscriptionSync(models.Model):
                 )
             )
         else:
-            product_details = []
-            for v in move_vals:
-                product_details.append(f"• {v['name']} (Qty: {v['product_uom_qty']})")
-            details_text = "\n".join(product_details)
-
-            # Post a chatter note on the SO for visibility
-            so.message_post(
-                body=(
-                    f"📦 Subscription renewal delivery {picking.name} created automatically "
-                    f"for invoice {invoice_ref}.\n"
-                    f"Items in delivery:\n{details_text}"
-                )
+            _logger.info(
+                "[Monta Sub Sync] SO %s: Renewal delivery %s created for invoice %s.",
+                so.name, picking.name, invoice_ref,
             )
 
         return picking

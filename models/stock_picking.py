@@ -448,9 +448,11 @@ class StockPicking(models.Model):
 
     def action_confirm(self):
         res = super(StockPicking, self).action_confirm()
+        ctx = self.env.context
         for picking in self:
-            if picking._is_monta_push_eligible() and not picking.monta_pushed:
-                picking.action_push_to_monta()
+            picking_ctx = picking.with_context(ctx)
+            if picking_ctx._is_monta_push_eligible() and not picking.monta_pushed:
+                picking_ctx.action_push_to_monta()
         return res
 
     def action_cancel(self):
