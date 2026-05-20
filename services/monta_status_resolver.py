@@ -105,7 +105,8 @@ class MontaStatusResolver:
 
         best = (0, "")
         for f in self._MATCH_FIELDS:
-            s = self._lower(rec.get(f))
+            val = self._pick(rec, f)
+            s = self._lower(val)
             if not s:
                 continue
 
@@ -119,7 +120,7 @@ class MontaStatusResolver:
                 sc = 0
 
             if sc > best[0]:
-                best = (sc, rec.get(f) or "")
+                best = (sc, val or "")
                 if sc >= 100:
                     break
 
@@ -187,46 +188,44 @@ class MontaStatusResolver:
         if not isinstance(o, dict):
             return None
 
-        if o.get("IsBlocked"):
-            msg = o.get("BlockedMessage")
+        is_blocked = MontaStatusResolver._pick(o, "IsBlocked", "isBlocked", "blocked")
+        if is_blocked:
+            msg = MontaStatusResolver._pick(o, "BlockedMessage", "blockedMessage", "message")
             return "Blocked" + (f" — {msg}" if msg else "")
 
-        if (
-            o.get("IsBackorder")
-            or o.get("IsBackOrder")
-            or str(o.get("Backorder", "")).lower() in ("1", "true", "yes")
-        ):
+        is_backorder = MontaStatusResolver._pick(o, "IsBackorder", "IsBackOrder", "isBackorder", "isBackOrder", "backorder")
+        if is_backorder or str(MontaStatusResolver._pick(o, "Backorder") or "").lower() in ("1", "true", "yes"):
             return "Backorder"
 
-        if o.get("IsShipped") or o.get("ShippedDate"):
+        is_shipped = MontaStatusResolver._pick(o, "IsShipped", "isShipped", "shipped")
+        shipped_date = MontaStatusResolver._pick(o, "ShippedDate", "shippedDate", "shipped_date")
+        if is_shipped or shipped_date:
             st = "Shipped"
-            if o.get("TrackAndTraceCode"):
-                st += f" (T&T: {o['TrackAndTraceCode']})"
-            if o.get("ShippedDate"):
-                st += f" on {o['ShippedDate']}"
+            tt_code = MontaStatusResolver._pick(o, "TrackAndTraceCode", "trackAndTraceCode", "track_and_trace_code", "TrackAndTraceLink", "trackAndTraceLink")
+            if tt_code:
+                st += f" (T&T: {tt_code})"
+            if shipped_date:
+                st += f" on {shipped_date}"
             return st
 
-        if o.get("Picked"):
+        if MontaStatusResolver._pick(o, "Picked", "picked"):
             return "Picked"
-        if o.get("IsPicking"):
+        if MontaStatusResolver._pick(o, "IsPicking", "isPicking", "picking"):
             return "Picking in progress"
-        if o.get("ReadyToPick") and o.get("ReadyToPick") != "NotReady":
+        ready = MontaStatusResolver._pick(o, "ReadyToPick", "readyToPick", "ready_to_pick")
+        if ready and ready != "NotReady":
             return "Ready to pick"
 
-        for k in ("EstimatedDeliveryTo", "EstimatedDeliveryFrom", "LatestDeliveryDate"):
-            if o.get(k):
-                return f"In progress — ETA {o[k]}"
+        for k in ("EstimatedDeliveryTo", "EstimatedDeliveryFrom", "LatestDeliveryDate", "estimatedDeliveryTo", "estimatedDeliveryFrom", "latestDeliveryDate"):
+            v = MontaStatusResolver._pick(o, k)
+            if v:
+                return f"In progress — ETA {v}"
 
         return None
 
     @staticmethod
     def _status_from_text(o):
-        txt = ""
-        for k in ("DeliveryStatusDescription", "Status", "CurrentStatus"):
-            if isinstance(o, dict) and o.get(k):
-                txt = str(o[k])
-                break
-
+        txt = MontaStatusResolver._pick(o, "DeliveryStatusDescription", "deliveryStatusDescription", "Status", "status", "CurrentStatus", "currentStatus")
         low = (txt or "").lower()
         if "blocked" in low:
             return "Blocked"
@@ -238,15 +237,15 @@ class MontaStatusResolver:
     def _is_blocked_header(o):
         if not isinstance(o, dict):
             return False
-        if o.get("IsBlocked"):
+        if MontaStatusResolver._pick(o, "IsBlocked", "isBlocked", "blocked"):
             return True
 
-        blocked_msg = MontaStatusResolver._lower(o.get("BlockedMessage") or "")
+        blocked_msg = MontaStatusResolver._lower(MontaStatusResolver._pick(o, "BlockedMessage", "blockedMessage", "message") or "")
         if "blocked" in blocked_msg:
             return True
 
         status_text = MontaStatusResolver._lower(
-            o.get("DeliveryStatusDescription") or o.get("Status") or o.get("CurrentStatus") or ""
+            MontaStatusResolver._pick(o, "DeliveryStatusDescription", "deliveryStatusDescription", "Status", "status", "CurrentStatus", "currentStatus") or ""
         )
         return "blocked" in status_text
 
@@ -254,15 +253,12 @@ class MontaStatusResolver:
     def _is_backorder_header(o):
         if not isinstance(o, dict):
             return False
-        if (
-            o.get("IsBackorder")
-            or o.get("IsBackOrder")
-            or str(o.get("Backorder", "")).lower() in ("1", "true", "yes")
-        ):
+        is_backorder = MontaStatusResolver._pick(o, "IsBackorder", "IsBackOrder", "isBackorder", "isBackOrder", "backorder")
+        if is_backorder or str(MontaStatusResolver._pick(o, "Backorder") or "").lower() in ("1", "true", "yes"):
             return True
 
         status_text = MontaStatusResolver._lower(
-            o.get("DeliveryStatusDescription") or o.get("Status") or o.get("CurrentStatus") or ""
+            MontaStatusResolver._pick(o, "DeliveryStatusDescription", "deliveryStatusDescription", "Status", "status", "CurrentStatus", "currentStatus") or ""
         )
         return ("backorder" in status_text) or ("back order" in status_text)
 
@@ -306,18 +302,19 @@ class MontaStatusResolver:
             return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
 
         # fetch full order by Id if available
-        if isinstance(cand, dict) and cand.get("Id"):
-            scid, full = self._get(f"order/{cand['Id']}")
+        cand_id = self._pick(cand, "Id", "id")
+        if isinstance(cand, dict) and cand_id:
+            scid, full = self._get(f"order/{cand_id}")
             if 200 <= scid < 300 and isinstance(full, dict) and full:
                 cand = full
 
         refs = {
-            "orderId": cand.get("Id") if isinstance(cand, dict) else None,
-            "orderNumber": (cand.get("OrderNumber") if isinstance(cand, dict) else None) or order_ref,
-            "orderReference": (cand.get("Reference") if isinstance(cand, dict) else None) or order_ref,
-            "clientReference": (cand.get("ClientReference") if isinstance(cand, dict) else None) or order_ref,
-            "orderGuid": (cand.get("EorderGUID") if isinstance(cand, dict) else None) or (cand.get("EorderGuid") if isinstance(cand, dict) else None),
-            "webshopOrderId": (cand.get("WebshopOrderId") if isinstance(cand, dict) else None) or (cand.get("InternalWebshopOrderId") if isinstance(cand, dict) else None),
+            "orderId": self._pick(cand, "Id", "id", "orderId"),
+            "orderNumber": self._pick(cand, "OrderNumber", "orderNumber") or order_ref,
+            "orderReference": self._pick(cand, "Reference", "reference", "orderReference") or order_ref,
+            "clientReference": self._pick(cand, "ClientReference", "clientReference") or order_ref,
+            "orderGuid": self._pick(cand, "EorderGUID", "EorderGuid", "eorderGuid", "orderGuid"),
+            "webshopOrderId": self._pick(cand, "WebshopOrderId", "webshopOrderId", "InternalWebshopOrderId", "internalWebshopOrderId"),
         }
 
         # ---------------------------
