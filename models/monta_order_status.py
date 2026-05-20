@@ -239,3 +239,28 @@ class MontaOrderStatus(models.Model):
                 sale_order.message_post(body=f"❌ Failed to send to Monta manually: {e}")
 
         return True
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        records = super(MontaOrderStatus, self).create(vals_list)
+        for rec in records:
+            rec._trigger_picking_recompute()
+        return records
+
+    def write(self, vals):
+        res = super(MontaOrderStatus, self).write(vals)
+        for rec in self:
+            rec._trigger_picking_recompute()
+        return res
+
+    def _trigger_picking_recompute(self):
+        self.ensure_one()
+        try:
+            if self.picking_id:
+                self.picking_id.modified(["monta_status", "monta_status_code", "monta_track_trace", "monta_delivery_date"])
+            elif self.sale_order_id:
+                pickings = self.sale_order_id.picking_ids.filtered(lambda p: p.picking_type_code == "outgoing")
+                if pickings:
+                    pickings.modified(["monta_status", "monta_status_code", "monta_track_trace", "monta_delivery_date"])
+        except Exception:
+            pass

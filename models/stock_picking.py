@@ -18,6 +18,7 @@ class StockPicking(models.Model):
         string="Monta Status", 
         compute="_compute_monta_fields_from_status",
         inverse="_inverse_monta_status",
+        store=True,
         copy=False, 
         index=True
     )
@@ -25,24 +26,34 @@ class StockPicking(models.Model):
         string="Monta Status Code", 
         compute="_compute_monta_fields_from_status",
         inverse="_inverse_monta_status_code",
+        store=True,
         copy=False
     )
     monta_track_trace = fields.Char(
         string="Monta Track & Trace", 
         compute="_compute_monta_fields_from_status",
         inverse="_inverse_monta_track_trace",
+        store=True,
         copy=False
     )
     monta_delivery_date = fields.Date(
         string="Monta Delivery Date", 
         compute="_compute_monta_fields_from_status",
         inverse="_inverse_monta_delivery_date",
+        store=True,
         copy=False
     )
 
-    @api.depends("monta_webshop_order_id")
+    @api.depends("monta_webshop_order_id", "monta_pushed")
     def _compute_monta_fields_from_status(self):
         for picking in self:
+            if not picking.monta_pushed:
+                picking.monta_status = "Not Pushed"
+                picking.monta_status_code = False
+                picking.monta_track_trace = False
+                picking.monta_delivery_date = False
+                continue
+
             ref = picking.monta_webshop_order_id
             if not ref:
                 picking.monta_status = "Sent to Monta"
