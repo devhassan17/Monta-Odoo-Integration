@@ -254,13 +254,33 @@ class MontaOrderStatus(models.Model):
         return res
 
     def _trigger_picking_recompute(self):
-        self.ensure_one()
-        try:
-            if self.picking_id:
-                self.picking_id.modified(["monta_status", "monta_status_code", "monta_track_trace", "monta_delivery_date"])
-            elif self.sale_order_id:
-                pickings = self.sale_order_id.picking_ids.filtered(lambda p: p.picking_type_code == "outgoing")
+        self._trigger_picking_recompute_batch()
+
+    def _trigger_picking_recompute_batch(self):
+        for rec in self:
+            try:
+                pickings = self.env["stock.picking"]
+                if rec.picking_id:
+                    pickings = rec.picking_id
+                elif rec.sale_order_id:
+                    pickings = rec.sale_order_id.picking_ids.filtered(
+                        lambda p: p.picking_type_code == "outgoing" 
+                        and (p.monta_webshop_order_id == rec.order_name or p.name == rec.order_name or not p.monta_webshop_order_id)
+                    )
                 if pickings:
-                    pickings.modified(["monta_status", "monta_status_code", "monta_track_trace", "monta_delivery_date"])
+                    vals = {
+                        "monta_status": rec.status or "Sent to Monta",
+                        "monta_status_code": str(rec.status_code) if rec.status_code else False,
+                        "monta_track_trace": rec.track_trace,
+                        "monta_delivery_date": rec.delivery_date,
+                    }
+                    pickings.write(vals)
+            except Exception:
+                pass
+
+    def _register_hook(self):
+        super(MontaOrderStatus, self)._register_hook()
+        try:
+            self.search([])._trigger_picking_recompute_batch()
         except Exception:
             pass
