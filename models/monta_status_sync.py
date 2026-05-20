@@ -142,8 +142,30 @@ class SaleOrder(models.Model):
 
             try:
                 so.write(vals_so)
+                # Propagation: Update related pickings so delivery forms reflect exact status
+                pickings = so.picking_ids.filtered(
+                    lambda p: p.picking_type_code == "outgoing"
+                    and (p.monta_pushed or p.monta_webshop_order_id)
+                )
+                if pickings:
+                    vals_pick = {
+                        "monta_status": status,
+                        "monta_status_code": meta.get("status_code"),
+                        "monta_track_trace": meta.get("track_trace"),
+                        "monta_delivery_date": meta.get("delivery_date"),
+                    }
+                    pickings.write(vals_pick)
+                    
+                    # Auto-validate picking if status is Shipped
+                    for picking in pickings:
+                        if status == "Shipped" and picking.state not in ("done", "cancel"):
+                            _logger.info("[Monta propagation] Auto-validating picking %s because it is Shipped in Monta", picking.name)
+                            for move in picking.move_ids:
+                                if move.state not in ("done", "cancel"):
+                                    move.quantity = move.product_uom_qty
+                            picking.with_context(skip_backorder=True, picking_label_report=False).button_validate()
             except Exception as e:
-                _logger.exception("[Monta] %s (%s) -> write failed: %s", so.name, ref, e)
+                _logger.exception("[Monta] SO status propagation to pickings failed for %s: %s", so.name, e)
 
             # Snapshot for history/audit
             try:
@@ -242,6 +264,19 @@ class StockPicking(models.Model):
             }
             try:
                 picking.write(vals)
+                # Propagation back to Sales Order to keep Sales Order status in sync
+                if picking.sale_id:
+                    vals_so = {
+                        "monta_status": status,
+                        "monta_status_code": meta.get("status_code"),
+                        "monta_track_trace": meta.get("track_trace"),
+                        "monta_last_sync": now,
+                    }
+                    if "monta_delivery_date" in picking.sale_id._fields:
+                        vals_so["monta_delivery_date"] = meta.get("delivery_date")
+                    if "monta_delivery_message" in picking.sale_id._fields:
+                        vals_so["monta_delivery_message"] = meta.get("delivery_message")
+                    picking.sale_id.write(vals_so)
                 
                 # Auto-validate if shipped
                 if status == "Shipped" and picking.state not in ("done", "cancel"):
