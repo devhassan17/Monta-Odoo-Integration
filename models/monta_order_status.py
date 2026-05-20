@@ -293,15 +293,17 @@ class MontaOrderStatus(models.Model):
             try:
                 pickings = self.env["stock.picking"]
                 if rec.picking_id:
+                    # Direct link — most accurate
                     pickings = rec.picking_id
-                elif rec.sale_order_id:
+                elif rec.sale_order_id and rec.order_name:
+                    # Match only pickings whose webshop ID or name exactly matches the snapshot ref
                     pickings = rec.sale_order_id.picking_ids.filtered(
-                        lambda p: p.picking_type_code == "outgoing" 
-                        and (p.monta_webshop_order_id == rec.order_name or p.name == rec.order_name or not p.monta_webshop_order_id)
+                        lambda p: p.picking_type_code == "outgoing"
+                        and (p.monta_webshop_order_id == rec.order_name or p.name == rec.order_name)
                     )
-                if pickings:
+                if pickings and rec.status:
                     vals = {
-                        "monta_status": rec.status or "Sent to Monta",
+                        "monta_status": rec.status,
                         "monta_status_code": str(rec.status_code) if rec.status_code else False,
                         "monta_track_trace": rec.track_trace,
                         "monta_delivery_date": rec.delivery_date,

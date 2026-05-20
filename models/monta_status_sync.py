@@ -169,9 +169,6 @@ class SaleOrder(models.Model):
 
             # Snapshot for history/audit
             try:
-                # If it's a renewal (name starts with SO...PICK...), we should use upsert_for_renewal if possible, 
-                # but upsert_for_order might be fine if we pass the right identifiers.
-                # Actually, SaleOrder model here usually handles the 'sale' kind.
                 Snapshot.upsert_for_order(
                     so,
                     monta_order_ref=meta.get("monta_order_ref") or so.name,
@@ -184,6 +181,31 @@ class SaleOrder(models.Model):
                 )
             except Exception as e:
                 _logger.exception("[Monta] Snapshot upsert failed for %s: %s", so.name, e)
+
+            # Also update renewal snapshots linked to each renewal picking so the
+            # Monta Order Status page and the delivery form stay in sync.
+            try:
+                renewal_pickings = so.picking_ids.filtered(
+                    lambda p: p.picking_type_code == "outgoing"
+                    and p.monta_pushed
+                    and p.monta_webshop_order_id
+                    and p.monta_webshop_order_id != so.name  # skip the base picking
+                )
+                for rp in renewal_pickings:
+                    Snapshot.upsert_for_renewal(
+                        so,
+                        rp,
+                        rp.monta_webshop_order_id,
+                        monta_order_ref=meta.get("monta_order_ref") or rp.monta_webshop_order_id,
+                        status=status,
+                        delivery_message=meta.get("delivery_message"),
+                        track_trace=meta.get("track_trace"),
+                        delivery_date=meta.get("delivery_date"),
+                        status_raw=meta.get("status_raw"),
+                        last_sync=now,
+                    )
+            except Exception as e:
+                _logger.exception("[Monta] Renewal snapshot propagation failed for %s: %s", so.name, e)
 
 
 class StockPicking(models.Model):
