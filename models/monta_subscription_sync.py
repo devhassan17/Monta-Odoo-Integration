@@ -75,15 +75,9 @@ class MontaSubscriptionSync(models.Model):
         _logger.info("[Monta Sub Sync] Found %d in-progress subscription(s) to evaluate.", len(orders))
 
         created = 0
-        skipped_mollie = 0
 
         for so in orders:
             try:
-                # ── Guard: Mollie mandate must be valid ──────────────────────
-                if not self._monta_has_valid_mollie_mandate(so):
-                    skipped_mollie += 1
-                    continue
-
                 # ── Find renewal invoices with no delivery yet ───────────────
                 pending_invoices = self._monta_get_unprocessed_renewal_invoices(so)
 
@@ -102,8 +96,8 @@ class MontaSubscriptionSync(models.Model):
                 )
 
         _logger.info(
-            "[Monta Sub Sync] ─── Done: %d delivery(ies) created | %d skipped (Mollie) ───",
-            created, skipped_mollie,
+            "[Monta Sub Sync] ─── Done: %d delivery(ies) created ───",
+            created,
         )
 
     # ------------------------------------------------------------------
