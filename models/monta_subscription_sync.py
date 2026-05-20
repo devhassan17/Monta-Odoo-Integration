@@ -75,11 +75,10 @@ class MontaSubscriptionSync(models.Model):
         _logger.info("[Monta Sub Sync] Found %d in-progress subscription(s) to evaluate.", len(orders))
 
         created = 0
-        retried = 0
 
         for so in orders:
             try:
-                # ── Step A: Create deliveries for invoices that have none yet ─
+                # Find renewal invoices with no delivery yet and create them
                 pending_invoices = self._monta_get_unprocessed_renewal_invoices(so)
 
                 for invoice in pending_invoices:
@@ -91,40 +90,14 @@ class MontaSubscriptionSync(models.Model):
                             picking.name, so.name, invoice.name,
                         )
 
-                # ── Step B: Retry any renewal deliveries that exist but weren't pushed ─
-                # This handles the case where the picking was created but action_push_to_monta
-                # failed silently — the cron would otherwise mark the invoice as "processed"
-                # and never retry the push, causing alternating delivery patterns.
-                unpushed_renewals = so.picking_ids.filtered(
-                    lambda p: (
-                        p.picking_type_code == "outgoing"
-                        and p.state not in ("cancel", "done")
-                        and "Subscription Renewal" in (p.origin or "")
-                        and not p.monta_pushed
-                    )
-                )
-                for picking in unpushed_renewals:
-                    try:
-                        _logger.info(
-                            "[Monta Sub Sync] 🔁 Retrying push for unpushed renewal delivery %s (SO %s)",
-                            picking.name, so.name,
-                        )
-                        picking.with_context(monta_create_delivery=True).action_push_to_monta()
-                        retried += 1
-                    except Exception:
-                        _logger.exception(
-                            "[Monta Sub Sync] ❌ Retry push failed for delivery %s (SO %s)",
-                            picking.name, so.name,
-                        )
-
             except Exception:
                 _logger.exception(
                     "[Monta Sub Sync] ❌ Unexpected error processing SO %s", so.name
                 )
 
         _logger.info(
-            "[Monta Sub Sync] ─── Done: %d created | %d push retried ───",
-            created, retried,
+            "[Monta Sub Sync] ─── Done: %d delivery(ies) created ───",
+            created,
         )
 
     # ------------------------------------------------------------------
