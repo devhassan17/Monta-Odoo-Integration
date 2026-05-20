@@ -100,14 +100,21 @@ class AccountMove(models.Model):
                     )
                     continue
 
-                # Create the renewal delivery
+                # Create the delivery and ensure it is pushed to Monta
                 try:
                     picking = so._monta_create_subscription_delivery(invoice=move)
                     if picking:
                         _logger.info(
-                            "[Monta Invoice Hook] Renewal/Invoice delivery %s created for SO %s.",
-                            picking.name, so.name,
+                            "[Monta Invoice Hook] Delivery %s created for SO %s (invoice %s).",
+                            picking.name, so.name, move.name,
                         )
+                        # If delivery was created but push didn't happen, force it now
+                        if not picking.monta_pushed:
+                            _logger.info(
+                                "[Monta Invoice Hook] Delivery %s not yet pushed — pushing now.",
+                                picking.name,
+                            )
+                            picking.with_context(monta_create_delivery=True).action_push_to_monta()
                     else:
                         _logger.warning(
                             "[Monta Invoice Hook] No delivery returned for SO %s invoice %s.",

@@ -75,10 +75,11 @@ class MontaSubscriptionSync(models.Model):
         _logger.info("[Monta Sub Sync] Found %d in-progress subscription(s) to evaluate.", len(orders))
 
         created = 0
+        retried = 0
 
         for so in orders:
             try:
-                # ── Find renewal invoices with no delivery yet ───────────────
+                # ── Step A: Create deliveries for invoices that have none yet ─
                 pending_invoices = self._monta_get_unprocessed_renewal_invoices(so)
 
                 for invoice in pending_invoices:
@@ -86,8 +87,34 @@ class MontaSubscriptionSync(models.Model):
                     if picking:
                         created += 1
                         _logger.info(
-                            "[Monta Sub Sync] ✅ Created delivery %s for SO %s (renewal invoice: %s)",
+                            "[Monta Sub Sync] ✅ Created delivery %s for SO %s (invoice: %s)",
                             picking.name, so.name, invoice.name,
+                        )
+
+                # ── Step B: Retry any renewal deliveries that exist but weren't pushed ─
+                # This handles the case where the picking was created but action_push_to_monta
+                # failed silently — the cron would otherwise mark the invoice as "processed"
+                # and never retry the push, causing alternating delivery patterns.
+                unpushed_renewals = so.picking_ids.filtered(
+                    lambda p: (
+                        p.picking_type_code == "outgoing"
+                        and p.state not in ("cancel", "done")
+                        and "Subscription Renewal" in (p.origin or "")
+                        and not p.monta_pushed
+                    )
+                )
+                for picking in unpushed_renewals:
+                    try:
+                        _logger.info(
+                            "[Monta Sub Sync] 🔁 Retrying push for unpushed renewal delivery %s (SO %s)",
+                            picking.name, so.name,
+                        )
+                        picking.with_context(monta_create_delivery=True).action_push_to_monta()
+                        retried += 1
+                    except Exception:
+                        _logger.exception(
+                            "[Monta Sub Sync] ❌ Retry push failed for delivery %s (SO %s)",
+                            picking.name, so.name,
                         )
 
             except Exception:
@@ -96,8 +123,8 @@ class MontaSubscriptionSync(models.Model):
                 )
 
         _logger.info(
-            "[Monta Sub Sync] ─── Done: %d delivery(ies) created ───",
-            created,
+            "[Monta Sub Sync] ─── Done: %d created | %d push retried ───",
+            created, retried,
         )
 
     # ------------------------------------------------------------------
@@ -349,6 +376,23 @@ class MontaSubscriptionSync(models.Model):
                      (used only for logging/chatter context).
         """
 
+        # ── Hard idempotency guard: one delivery per invoice ──────────────────
+        # Checked here so both the _post hook and the cron are protected,
+        # regardless of which code path calls this method.
+        invoice_ref = invoice.name if invoice else None
+        if invoice_ref:
+            existing = self.env["stock.picking"].sudo().search([
+                ("sale_id", "=", so.id),
+                ("picking_type_code", "=", "outgoing"),
+                ("state", "!=", "cancel"),
+                ("origin", "like", invoice_ref),
+            ], limit=1)
+            if existing:
+                _logger.info(
+                    "[Monta Sub Sync] SO %s: delivery %s already exists for invoice %s — skipping duplicate.",
+                    so.name, existing.name, invoice_ref,
+                )
+                return existing  # Return existing rather than None so callers can log it
 
         # ── Locate outgoing picking type ──────────────────────────────────────
         warehouse = so.warehouse_id or self.env["stock.warehouse"].sudo().search(
