@@ -306,23 +306,22 @@ class MontaSubscriptionSync(models.Model):
                 )
                 continue
 
-            # ── Check: is there a Monta delivery created after this invoice? ─
-            # We use a 1-hour buffer so deliveries created *slightly before*
-            # the invoice (due to clock/transaction timing) are still counted.
-            invoice_threshold = inv_created - timedelta(hours=1)
+            # ── Check: is there a delivery whose origin references this invoice? ─
+            # Match by invoice name in the picking origin to avoid false positives
+            # from the first checkout delivery being matched to all renewal invoices.
             has_matching_delivery = any(
-                d.create_date and d.create_date >= invoice_threshold
+                d.origin and invoice.name and invoice.name in d.origin
                 for d in all_outgoing_deliveries
             )
 
             if has_matching_delivery:
                 _logger.debug(
-                    "[Monta Sub Sync] SO %s: invoice %s already has a matching Monta delivery — skip.",
+                    "[Monta Sub Sync] SO %s: invoice %s already has a matching delivery — skip.",
                     so.name, invoice.name,
                 )
             else:
                 _logger.info(
-                    "[Monta Sub Sync] SO %s: invoice %s (posted %s) has no Monta delivery yet — queuing.",
+                    "[Monta Sub Sync] SO %s: invoice %s (posted %s) has no delivery yet — queuing.",
                     so.name, invoice.name, inv_created,
                 )
                 unprocessed.append(invoice)
