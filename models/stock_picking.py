@@ -58,6 +58,10 @@ class StockPicking(models.Model):
                 domain.append(("monta_account_key", "=", account_key))
 
             snapshot = Snapshot.search(domain, limit=1)
+            if not snapshot:
+                # Fallback: search by order name alone to survive any account key/credentials mismatch
+                snapshot = Snapshot.search([("order_name", "=", ref)], limit=1)
+
             if snapshot:
                 picking.monta_status = snapshot.status or "Sent to Monta"
                 picking.monta_status_code = str(snapshot.status_code) if snapshot.status_code else False
@@ -81,6 +85,9 @@ class StockPicking(models.Model):
                 domain.append(("monta_account_key", "=", account_key))
 
             rec = Snapshot.search(domain, limit=1)
+            if not rec:
+                rec = Snapshot.search([("order_name", "=", ref)], limit=1)
+
             if rec:
                 rec.write({field_name: value, "last_sync": fields.Datetime.now()})
             else:
