@@ -46,7 +46,7 @@ class SaleOrderLine(models.Model):
             _logger.error("[Monta Sync] touch after unlink failed: %s", e, exc_info=True)
         return res
 
-    def _action_launch_stock_rule(self, keep_association=False):
+    def _action_launch_stock_rule(self, *args, **kwargs):
         """Bypass stock rules (prevent picking generation) for subscription orders."""
         sub_lines = self.env['sale.order.line']
         normal_lines = self.env['sale.order.line']
@@ -71,6 +71,6 @@ class SaleOrderLine(models.Model):
             )
             
         if normal_lines:
-            return super(SaleOrderLine, normal_lines)._action_launch_stock_rule(keep_association=keep_association)
+            return super(SaleOrderLine, normal_lines)._action_launch_stock_rule(*args, **kwargs)
             
         return True

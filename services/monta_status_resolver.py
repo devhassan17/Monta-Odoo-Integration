@@ -307,7 +307,7 @@ class MontaStatusResolver:
 
         # fetch full order by Id if available
         if isinstance(cand, dict) and cand.get("Id"):
-            scid, full = self._get(f"orders/{cand['Id']}")
+            scid, full = self._get(f"order/{cand['Id']}")
             if 200 <= scid < 300 and isinstance(full, dict) and full:
                 cand = full
 
