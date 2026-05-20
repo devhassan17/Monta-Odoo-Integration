@@ -253,6 +253,47 @@ class SaleOrder(models.Model):
             except Exception as e:
                 _logger.exception("[Monta] Snapshot upsert failed for %s: %s", so.name, e)
 
+            # Propagate status to all monta-pushed outgoing pickings (delivery forms)
+            try:
+                pickings = so.picking_ids.filtered(
+                    lambda p: p.picking_type_code == "outgoing"
+                    and (p.monta_pushed or p.monta_webshop_order_id)
+                )
+                if pickings:
+                    vals_pick = {
+                        "monta_status": status,
+                        "monta_status_code": meta.get("status_code"),
+                        "monta_track_trace": meta.get("track_trace"),
+                        "monta_delivery_date": meta.get("delivery_date"),
+                    }
+                    pickings.write(vals_pick)
+            except Exception as e:
+                _logger.exception("[Monta] Picking propagation failed for %s: %s", so.name, e)
+
+            # Upsert renewal snapshots so Monta Order Status page stays in sync
+            try:
+                renewal_pickings = so.picking_ids.filtered(
+                    lambda p: p.picking_type_code == "outgoing"
+                    and p.monta_pushed
+                    and p.monta_webshop_order_id
+                    and p.monta_webshop_order_id != so.name
+                )
+                for rp in renewal_pickings:
+                    Snapshot.upsert_for_renewal(
+                        so,
+                        rp,
+                        rp.monta_webshop_order_id,
+                        monta_order_ref=meta.get("monta_order_ref") or rp.monta_webshop_order_id,
+                        status=status,
+                        delivery_message=meta.get("delivery_message"),
+                        track_trace=meta.get("track_trace"),
+                        delivery_date=meta.get("delivery_date"),
+                        status_raw=meta.get("status_raw"),
+                        last_sync=now,
+                    )
+            except Exception as e:
+                _logger.exception("[Monta] Renewal snapshot propagation failed for %s: %s", so.name, e)
+
             # ---------------------------
             # Auto-validate pickings on delivered
             # ---------------------------
