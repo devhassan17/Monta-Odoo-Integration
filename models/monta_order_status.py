@@ -240,6 +240,38 @@ class MontaOrderStatus(models.Model):
 
         return True
 
+    def action_manual_sync_status(self):
+        """Manually query WMS API to sync status for this specific snapshot record."""
+        self.ensure_one()
+        try:
+            from ..services.monta_status_resolver import MontaStatusResolver
+            company = (self.sale_order_id and self.sale_order_id.company_id) or self.env.company
+            resolver = MontaStatusResolver(self.env, company=company)
+            order_ref = self.order_name
+            status, meta = resolver.resolve(order_ref)
+            if status:
+                meta = meta or {}
+                self.write({
+                    "status": status,
+                    "status_code": meta.get("status_code"),
+                    "track_trace": meta.get("track_trace"),
+                    "delivery_date": meta.get("delivery_date"),
+                    "delivery_message": meta.get("delivery_message"),
+                    "monta_order_ref": meta.get("monta_order_ref") or order_ref,
+                    "last_sync": fields.Datetime.now(),
+                })
+                # Propagate to linked picking
+                if self.picking_id:
+                    self.picking_id.write({
+                        "monta_status": status,
+                        "monta_status_code": str(meta.get("status_code") or "") or False,
+                        "monta_track_trace": meta.get("track_trace"),
+                        "monta_delivery_date": meta.get("delivery_date"),
+                    })
+        except Exception:
+            pass
+        return True
+
     @api.model_create_multi
     def create(self, vals_list):
         records = super(MontaOrderStatus, self).create(vals_list)

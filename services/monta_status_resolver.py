@@ -299,6 +299,13 @@ class MontaStatusResolver:
         tried = []
         cand = self._find_order(order_ref, tried)
         if not cand:
+            # Fallback: strip renewal suffix like -PICK19378 and try the base order ID
+            import re
+            base_ref = re.sub(r'-PICK\d+$', '', order_ref, flags=re.IGNORECASE)
+            if base_ref and base_ref != order_ref:
+                _logger.info("[Monta] %s not found directly, retrying with base ref %s", order_ref, base_ref)
+                cand = self._find_order(base_ref, tried)
+        if not cand:
             return None, {"reason": "Order not found or not matching searched reference", "tried": tried}
 
         # fetch full order by Id if available

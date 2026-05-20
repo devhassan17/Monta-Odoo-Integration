@@ -191,7 +191,10 @@ class StockPicking(models.Model):
 
     def _monta_candidate_reference(self):
         self.ensure_one()
-        return self.monta_webshop_order_id or False
+        webshop_id = self.monta_webshop_order_id
+        if webshop_id:
+            return webshop_id
+        return False
 
     def action_monta_sync_status(self):
         _logger.info("[Monta] Manual sync for %d pickings", len(self))
@@ -203,8 +206,7 @@ class StockPicking(models.Model):
         domain = [
             ("picking_type_code", "=", "outgoing"),
             ("monta_pushed", "=", True),
-            ("monta_status", "!=", "Shipped"),
-            ("monta_track_trace", "=", False)
+            ("monta_status", "not in", ["Shipped", "Delivered"]),
         ]
         pickings = self.search(domain, limit=batch_limit, order="write_date desc")
         _logger.info("[Monta] Picking Cron sync starting for %d pickings", len(pickings))

@@ -34,6 +34,11 @@
                     string="Send to Monta"
                     class="btn-primary"
                     invisible="on_monta == True"/>
+            <button name="action_manual_sync_status"
+                    type="object"
+                    string="Sync Status from Monta"
+                    class="btn-secondary"
+                    invisible="on_monta == False"/>
           </header>
 
           <sheet>
