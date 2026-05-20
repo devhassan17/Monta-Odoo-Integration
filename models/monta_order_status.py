@@ -312,9 +312,3 @@ class MontaOrderStatus(models.Model):
             except Exception:
                 pass
 
-    def _register_hook(self):
-        super(MontaOrderStatus, self)._register_hook()
-        try:
-            self.search([])._trigger_picking_recompute_batch()
-        except Exception:
-            pass
