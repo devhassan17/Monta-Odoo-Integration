@@ -19,6 +19,14 @@ class StockPicking(models.Model):
     monta_track_trace = fields.Char(string="Monta Track & Trace", copy=False)
     monta_delivery_date = fields.Date(string="Monta Delivery Date", copy=False)
 
+    def _monta_log_not_sent_reason(self, reason):
+        """Helper to post HTML chatter logs on picking and Sales Order when skipped/blocked."""
+        self.ensure_one()
+        msg = f"⚠️ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is not sent to Monta due to: {reason}"
+        self.message_post(body=msg)
+        if self.sale_id:
+            self.sale_id.message_post(body=msg)
+
     def _is_monta_push_eligible(self):
         """Check if this picking should be pushed to Monta."""
         self.ensure_one()
@@ -49,6 +57,19 @@ class StockPicking(models.Model):
             or ('plan_id' in _sf and bool(self.sale_id.plan_id))
         )
         if _is_sub_so:
+            # Strict state check: Subscription state must be strictly '3_progress' (In Progress)
+            # to allow pushing, unless this is a newly created delivery explicitly authorized by context.
+            if 'subscription_state' in _sf:
+                sub_state = getattr(self.sale_id, 'subscription_state', '')
+                if sub_state != '3_progress' and not self.env.context.get('monta_create_delivery'):
+                    _logger.info(
+                        "[Monta Safety Guard Log] Blocked picking %s for SO %s — "
+                        "subscription state is %s, not strictly '3_progress' (In Progress).",
+                        self.name, self.sale_id.name, sub_state,
+                    )
+                    self._monta_log_not_sent_reason(f"Subscription state is <b>{sub_state}</b>, not strictly '3_progress' (In Progress).")
+                    return False
+
             _is_renewal_picking = 'Subscription Renewal' in (self.origin or '')
             if not _is_renewal_picking:
                 _logger.info(
@@ -56,6 +77,7 @@ class StockPicking(models.Model):
                     "subscriptions only push invoice-driven deliveries.",
                     self.sale_id.name, self.name,
                 )
+                self._monta_log_not_sent_reason("Subscriptions only push invoice-driven deliveries (blocking Odoo's native delivery).")
                 return False
             
             # --- Safety feature: Block existing waiting/ready pickings ---
@@ -67,6 +89,7 @@ class StockPicking(models.Model):
                     "already in waiting/ready state and not explicitly forced.",
                     self.name, self.state, self.sale_id.name,
                 )
+                self._monta_log_not_sent_reason(f"Delivery is in state <b>{self.state}</b> and not explicitly authorized for creation/sync.")
                 return False
 
             # --- Safety feature: Only push the absolute newest renewal picking ---
@@ -99,6 +122,7 @@ class StockPicking(models.Model):
                         "only the absolute most recent subscription delivery (%s) can be pushed.",
                         self.name, self.sale_id.name, latest_renewal.name,
                     )
+                    self._monta_log_not_sent_reason(f"Only the absolute most recent subscription delivery (<b>{latest_renewal.name}</b>) can be pushed.")
                     return False
                 else:
                     _logger.info(
@@ -130,6 +154,7 @@ class StockPicking(models.Model):
                 # If enabled but no routes are selected in config, block everything (per user request)
                 if not cfg.monta_route_ids:
                     _logger.info("[Monta Skip] Picking %s skipped because Route Filter is enabled but no routes are selected in Monta Configuration.", self.name)
+                    self._monta_log_not_sent_reason("Route Filter is enabled but no routes are configured in Monta settings.")
                     return False
 
                 carrier = getattr(self.sale_id, 'carrier_id', False)
@@ -182,6 +207,7 @@ class StockPicking(models.Model):
                         debug_checked_routes,
                         cfg.monta_route_ids.ids
                     )
+                    self._monta_log_not_sent_reason("Route Filter is enabled but no products or delivery method matched the configured Monta Routes.")
                     return False
 
         _logger.info(
@@ -365,6 +391,14 @@ class StockPicking(models.Model):
                 "monta_status": "Sent to Monta",  # Will be updated by status sync cron
             })
             
+            # Post success chatter log
+            msg_success = (
+                f"✅ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is sent to Monta."
+            )
+            self.message_post(body=msg_success)
+            if sale_order:
+                sale_order.message_post(body=msg_success)
+
             # Immediately validate in Odoo so user doesn't have to click it
             self._monta_auto_validate_immediately()
             
@@ -382,6 +416,16 @@ class StockPicking(models.Model):
             Status.upsert_for_renewal(sale_order, self, webshop_order_id, **vals_err)
         else:
             Status.upsert_for_order(sale_order, **vals_err)
+
+        # Post API failure chatter log
+        msg_err_post = (
+            f"❌ <b>Monta Integration:</b> Subscription delivery <b>{self.name}</b> is not sent to Monta "
+            f"due to API error: Status {status} (Reason: {json.dumps(body or {})})"
+        )
+        self.message_post(body=msg_err_post)
+        if sale_order:
+            sale_order.message_post(body=msg_err_post)
+
         return False
 
     def _monta_is_duplicate_exists_error(self, status, body):

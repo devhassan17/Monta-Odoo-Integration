@@ -364,6 +364,37 @@ class SaleOrder(models.Model):
     # ---------------------------------------------------------
     def action_confirm(self):
         res = super().action_confirm()
+        for order in self:
+            f = order._fields
+            is_sub = (
+                ('is_subscription' in f and order.is_subscription)
+                or ('plan_id' in f and bool(order.plan_id))
+                or ('subscription_state' in f and getattr(order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+            )
+            if is_sub:
+                # Find Odoo's default/native picking(s) created by the SO confirmation
+                # (outgoing pickings that do not have 'Subscription Renewal' in their origin)
+                native_pickings = order.picking_ids.filtered(
+                    lambda p: p.picking_type_code == 'outgoing'
+                    and p.state not in ('cancel', 'done')
+                    and 'Subscription Renewal' not in (p.origin or '')
+                )
+                if native_pickings:
+                    _logger.info(
+                        "[Monta SO Hook] SO %s is a subscription. Cancelling %d native/normal delivery picking(s) %s.",
+                        order.name, len(native_pickings), native_pickings.mapped('name'),
+                    )
+                    for picking in native_pickings:
+                        picking.action_cancel()
+                        # Add a clean chatter log
+                        picking.message_post(
+                            body="🚫 <b>Monta Integration:</b> This native stock delivery has been cancelled automatically "
+                                 "because subscription orders only use invoice-driven deliveries."
+                        )
+                        order.message_post(
+                            body=f"🚫 <b>Monta Integration:</b> Native stock delivery <b>{picking.name}</b> cancelled automatically "
+                                 f"because subscriptions only use invoice-driven deliveries."
+                        )
         return res
 
     def write(self, vals):
