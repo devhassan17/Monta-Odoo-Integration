@@ -88,34 +88,11 @@ class AccountMove(models.Model):
                     continue
 
                 _logger.info(
-                    "[Monta Invoice Hook] Invoice %s posted for SO %s -- evaluating renewal delivery.",
+                    "[Monta Invoice Hook] Invoice %s posted for SO %s -- creating delivery.",
                     move.name, so.name,
                 )
 
-                # Detect if this is the first posted invoice for this subscription
-                all_posted = so.invoice_ids.filtered(
-                    lambda inv: inv.move_type == "out_invoice" and inv.state == "posted"
-                ).sorted(lambda inv: inv.create_date or inv.invoice_date)
-
-                is_first_invoice = bool(all_posted and all_posted[0].id == move.id)
-
-                if is_first_invoice:
-                    _logger.info(
-                        "[Monta Invoice Hook] SO %s: First invoice %s -- "
-                        "Mollie mandate check bypassed.",
-                        so.name, move.name,
-                    )
-                else:
-                    # Renewal invoice (2nd+) requires valid Mollie mandate
-                    if not self._monta_has_valid_mollie_mandate(so):
-                        _logger.info(
-                            "[Monta Invoice Hook] SO %s: renewal invoice %s -- "
-                            "Mollie mandate invalid, no delivery created.",
-                            so.name, move.name,
-                        )
-                        continue
-
-                # Skip if an invoice-driven delivery already exists for this specific invoice
+                # Skip if a delivery already exists for this specific invoice (idempotency guard)
                 if self._monta_renewal_delivery_exists(move, so):
                     _logger.info(
                         "[Monta Invoice Hook] Delivery already exists for invoice %s on SO %s — skipping.",
@@ -177,33 +154,20 @@ class AccountMove(models.Model):
             _logger.info("[Monta Invoice Hook] No Sale Order found for invoice %s.", move.name)
             return None
 
-        # 3. Check if it's a subscription
-        f = so._fields
-        is_sub = (
-            ('is_subscription' in f and so.is_subscription)
-            or ('plan_id' in f and bool(so.plan_id))
-            or ('subscription_state' in f and getattr(so, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused', 'draft', 'sent', 'sale'))
-        )
-        _logger.info(
-            "[Monta Invoice Hook] SO %s subscription check: is_subscription=%s, plan_id=%s, subscription_state=%s -> qualified=%s",
-            so.name,
-            getattr(so, 'is_subscription', 'N/A'),
-            getattr(so, 'plan_id', 'N/A'),
-            getattr(so, 'subscription_state', 'N/A'),
-            is_sub
-        )
-        if not is_sub:
-            return None
-
         # Skip BC orders
         if so.name and so.name.startswith("BC"):
             _logger.info("[Monta Invoice Hook] SO %s: Skipping BC order.", so.name)
             return None
 
+        # SO must be confirmed (sale or done)
+        if so.state not in ("sale", "done"):
+            _logger.info("[Monta Invoice Hook] SO %s: state=%s, not confirmed — skipping.", so.name, so.state)
+            return None
+
         # Monta must be configured for this company
         cfg = self.env["monta.config"].sudo().get_for_company(so.company_id)
         if not cfg:
-            _logger.info("[Monta Invoice Hook] SO %s: No Monta config found for company %s.", so.name, so.company_id.name)
+            _logger.info("[Monta Invoice Hook] SO %s: No Monta config for company %s — skipping.", so.name, so.company_id.name)
             return None
 
         return so
