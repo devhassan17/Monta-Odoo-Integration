@@ -161,6 +161,24 @@ class AccountMove(models.Model):
             _logger.info("[Monta Invoice Hook] No Sale Order found for invoice %s.", move.name)
             return None
 
+        # Must be a subscription SO — regular orders already get Odoo-native delivery at SO confirmation.
+        # plan_id is the most reliable indicator; fall back to is_subscription / subscription_state.
+        f = so._fields
+        is_sub = (
+            ('plan_id' in f and bool(so.plan_id))
+            or ('is_subscription' in f and so.is_subscription)
+            or ('subscription_state' in f and getattr(so, 'subscription_state', '') in (
+                '1_draft', '2_renewal', '3_progress', '4_paused',
+            ))
+        )
+        if not is_sub:
+            _logger.info(
+                "[Monta Invoice Hook] SO %s: not a subscription — skipping "
+                "(Odoo native delivery already handles regular orders).",
+                so.name,
+            )
+            return None
+
         # Skip BC orders
         if so.name and so.name.startswith("BC"):
             _logger.info("[Monta Invoice Hook] SO %s: Skipping BC order.", so.name)
