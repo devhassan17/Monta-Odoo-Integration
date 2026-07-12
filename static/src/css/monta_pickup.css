@@ -1,0 +1,105 @@
+/* Monta WMS Pickup Point Styling */
+
+.monta-pickup-container {
+    transition: all 0.3s ease-in-out;
+}
+
+.monta-pickup-selector input[type="checkbox"]:checked {
+    background-color: #E5007D;
+    border-color: #E5007D;
+}
+
+.monta-pickup-selector input[type="checkbox"]:focus {
+    border-color: #E5007D;
+    box-shadow: 0 0 0 0.25rem rgba(229, 0, 125, 0.25);
+}
+
+.monta-pickup-search-group input:focus,
+.monta-pickup-search-group select:focus {
+    border-color: #E5007D !important;
+    box-shadow: 0 0 0 0.25rem rgba(229, 0, 125, 0.25) !important;
+}
+
+/* Pickup Point Cards */
+.monta-pickup-card {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 12px 15px;
+    background-color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+}
+
+.monta-pickup-card:hover {
+    border-color: #E5007D;
+    box-shadow: 0 4px 8px rgba(229, 0, 125, 0.08);
+    transform: translateY(-1px);
+}
+
+.monta-pickup-card.active {
+    border: 2px solid #E5007D;
+    background-color: #FFF5F9;
+    box-shadow: 0 4px 12px rgba(229, 0, 125, 0.12);
+}
+
+.monta-pickup-card-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #212529;
+    margin-bottom: 4px;
+}
+
+.monta-pickup-card-address {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.monta-pickup-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8125rem;
+    border-top: 1px solid #f1f3f5;
+    padding-top: 8px;
+}
+
+.monta-pickup-card-distance {
+    color: #495057;
+    font-weight: 500;
+}
+
+.monta-pickup-card-carrier {
+    background-color: #e9ecef;
+    color: #495057;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.monta-pickup-card-price {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #E5007D;
+}
+
+/* Custom scrollbar for pickup results */
+.monta-pickup-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.monta-pickup-list::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.monta-pickup-list::-webkit-scrollbar-thumb {
+    background: #ced4da;
+    border-radius: 4px;
+}
+
+.monta-pickup-list::-webkit-scrollbar-thumb:hover {
+    background: #a1a8ae;
+}

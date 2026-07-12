@@ -22,6 +22,7 @@ between Odoo and Monta WMS via Monta's API.
         "purchase",
         "sale_subscription",
         "stock",
+        "website_sale",
     ],
     "data": [
         "security/ir.model.access.csv",
@@ -32,7 +33,14 @@ between Odoo and Monta WMS via Monta's API.
         "views/sale_order_monta_sync_button.xml",
         "views/stock_picking_views.xml",
         "views/monta_config_views.xml",
+        "views/website_sale_templates.xml",
     ],
+    "assets": {
+        "web.assets_frontend": [
+            "Monta-Odoo-Integration/static/src/css/monta_pickup.css",
+            "Monta-Odoo-Integration/static/src/js/monta_pickup.js",
+        ],
+    },
     "installable": True,
     "application": True,
     "auto_install": False,

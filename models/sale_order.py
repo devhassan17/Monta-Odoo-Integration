@@ -172,37 +172,59 @@ class SaleOrder(models.Model):
         if not cfg:
             raise ValidationError("Monta Configuration missing or company not allowed.")
 
-        partner = self.partner_id
-        street, house_number, house_suffix = self._split_street(partner.street or "", partner.street2 or "")
+        # Delivery Address
+        partner_shipping = self.partner_shipping_id or self.partner_id
+        ship_street, ship_hn, ship_hs = self._split_street(partner_shipping.street or "", partner_shipping.street2 or "")
+        ship_full_name = partner_shipping.name or ""
+        ship_first_name = ship_full_name.split(" ")[0] if ship_full_name else ""
+        ship_last_name = " ".join(ship_full_name.split(" ")[1:]) if len(ship_full_name.split(" ")) > 1 else ""
+
+        addr_delivery = {
+            "Company": partner_shipping.company_name or partner_shipping.name or "",
+            "FirstName": ship_first_name,
+            "LastName": ship_last_name,
+            "Street": ship_street,
+            "HouseNumber": ship_hn or "1",
+            "HouseNumberAddition": ship_hs or "",
+            "PostalCode": partner_shipping.zip or "0000AA",
+            "City": partner_shipping.city or "TestCity",
+            "CountryCode": partner_shipping.country_id.code if partner_shipping.country_id else "NL",
+            "PhoneNumber": partner_shipping.phone or self.partner_id.phone or "0000000000",
+            "EmailAddress": partner_shipping.email or self.partner_id.email or "test@example.com",
+        }
+
+        # Invoice Address
+        partner_invoice = self.partner_invoice_id or self.partner_id
+        inv_street, inv_hn, inv_hs = self._split_street(partner_invoice.street or "", partner_invoice.street2 or "")
+        inv_full_name = partner_invoice.name or ""
+        inv_first_name = inv_full_name.split(" ")[0] if inv_full_name else ""
+        inv_last_name = " ".join(inv_full_name.split(" ")[1:]) if len(inv_full_name.split(" ")) > 1 else ""
+
+        addr_invoice = {
+            "Company": partner_invoice.company_name or partner_invoice.name or "",
+            "FirstName": inv_first_name,
+            "LastName": inv_last_name,
+            "Street": inv_street,
+            "HouseNumber": inv_hn or "1",
+            "HouseNumberAddition": inv_hs or "",
+            "PostalCode": partner_invoice.zip or "0000AA",
+            "City": partner_invoice.city or "TestCity",
+            "CountryCode": partner_invoice.country_id.code if partner_invoice.country_id else "NL",
+            "PhoneNumber": partner_invoice.phone or self.partner_id.phone or "0000000000",
+            "EmailAddress": partner_invoice.email or self.partner_id.email or "test@example.com",
+        }
+
         lines = self._prepare_monta_lines()
 
         invoice_id_digits = re.sub(r"\D", "", self.name or "")
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
 
-        full_name = partner.name or ""
-        first_name = full_name.split(" ")[0] if full_name else ""
-        last_name = " ".join(full_name.split(" ")[1:]) if len(full_name.split(" ")) > 1 else ""
-
-        addr_common = {
-            "Company": partner.company_name or partner.name or "",
-            "FirstName": first_name,
-            "LastName": last_name,
-            "Street": street,
-            "HouseNumber": house_number or "1",
-            "HouseNumberAddition": house_suffix or "",
-            "PostalCode": partner.zip or "0000AA",
-            "City": partner.city or "TestCity",
-            "CountryCode": partner.country_id.code if partner.country_id else "NL",
-            "PhoneNumber": partner.phone or "0000000000",
-            "EmailAddress": partner.email or "test@example.com",
-        }
-
         payload = {
             "WebshopOrderId": self.name,
             "Reference": self.client_order_ref or "",
             "ConsumerDetails": {
-                "DeliveryAddress": dict(addr_common),
-                "InvoiceAddress": dict(addr_common),
+                "DeliveryAddress": addr_delivery,
+                "InvoiceAddress": addr_invoice,
             },
             "Lines": lines,
             "Invoice": {
@@ -214,10 +236,19 @@ class SaleOrder(models.Model):
             },
         }
 
+        if self.monta_shipper_code:
+            payload["ShipperCodes"] = [self.monta_shipper_code]
+            if self.monta_shipper_options:
+                try:
+                    payload["ShipperOptions"] = json.loads(self.monta_shipper_options)
+                except Exception:
+                    pass
+
         if (cfg.origin or "").strip():
             payload["Origin"] = cfg.origin.strip()
 
         return payload
+
 
 
     # ---------------------------------------------------------

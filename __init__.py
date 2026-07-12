@@ -4,3 +4,4 @@ from . import services
 from . import utils
 from .hooks import post_init_hook, uninstall_hook 
 from . import views
+from . import controllers

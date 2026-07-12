@@ -32,3 +32,15 @@ class SaleOrder(models.Model):
         index=True,
         help="Checked if this order is known in Monta (monta_order_ref exists).",
     )
+
+    monta_shipper_code = fields.Char(
+        string="Monta Shipper Code",
+        copy=False,
+        help="The shipper code selected for pickup point delivery.",
+    )
+    monta_shipper_options = fields.Text(
+        string="Monta Shipper Options (JSON)",
+        copy=False,
+        help="JSON string representing the shipper options for pickup point delivery.",
+    )
+

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Pickup Point Widget Injection">
+        <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="before">
+            <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
+                <div class="monta-pickup-container mt-3 mb-4 p-3 border rounded bg-white shadow-sm">
+                    <div class="form-check monta-pickup-selector">
+                        <input type="checkbox" class="form-check-input" id="monta_use_pickup" name="monta_use_pickup" t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"/>
+                        <label class="form-check-label fw-bold text-uppercase" for="monta_use_pickup" style="color: #E5007D; cursor: pointer; letter-spacing: 0.5px;">
+                            Or send to a delivery point
+                        </label>
+                    </div>
+                    
+                    <div id="monta-pickup-box" class="collapse mt-3 pt-3 border-top" t-att-class="'show' if website_sale_order.monta_shipper_code else ''">
+                        <div class="monta-pickup-search-group d-flex gap-2 mb-3">
+                            <div class="flex-grow-1">
+                                <input type="text" id="monta_pickup_zip" class="form-control border-secondary" placeholder="Enter Zip/Postal Code (e.g. 1014AR)" t-att-value="website_sale_order.partner_shipping_id.zip or website_sale_order.partner_id.zip or ''"/>
+                            </div>
+                            <div>
+                                <select id="monta_pickup_country" class="form-select border-secondary">
+                                    <option value="NL" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code or 'NL') == 'NL' else None">Netherlands</option>
+                                    <option value="BE" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code) == 'BE' else None">Belgium</option>
+                                    <option value="DE" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code) == 'DE' else None">Germany</option>
+                                    <option value="GB" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code) == 'GB' else None">United Kingdom</option>
+                                </select>
+                            </div>
+                            <button type="button" id="btn_search_monta_pickup" class="btn text-white px-4" style="background-color: #E5007D; border-color: #E5007D;">Search</button>
+                        </div>
+                        
+                        <div id="monta_pickup_loading" class="text-center d-none my-4">
+                            <div class="spinner-border" role="status" style="color: #E5007D;">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="monta_pickup_error" class="alert alert-danger d-none py-2 px-3 small" role="alert">
+                        </div>
+                        
+                        <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2" style="max-height: 380px; overflow-y: auto;">
+                            <!-- Dynamically loaded cards -->
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </xpath>
+    </template>
+</odoo>
