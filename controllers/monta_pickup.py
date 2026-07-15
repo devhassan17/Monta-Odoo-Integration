@@ -130,7 +130,6 @@ class MontaPickupController(http.Controller):
                         order._set_delivery_line(carrier, 0.0)
                     elif hasattr(order, 'set_delivery_line'):
                         order.set_delivery_line(carrier, 0.0)
-                order._amount_all()
                 return {'status': 'success', 'cleared': True}
 
             # 1. Find or create delivery partner
@@ -212,7 +211,7 @@ class MontaPickupController(http.Controller):
                         })
 
             # Trigger totals recomputation
-            order._amount_all()
+            # (Odoo automatically recomputes order amounts when delivery lines change)
 
             # Format selected address for return
             delivery_display = "%s\n%s %s\n%s %s" % (name, street, house_number or '', zip, city)
