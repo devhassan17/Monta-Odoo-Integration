@@ -17,8 +17,13 @@ class MontaPickupController(http.Controller):
             return {'status': 'error', 'message': 'No active sales order.'}
 
         # Check if the order has monta config
-        if not hasattr(order, '_monta_config') or not order._monta_config():
+        cfg = order._monta_config() if hasattr(order, '_monta_config') else None
+        if not cfg:
             return {'status': 'error', 'message': 'Monta integration is not configured or disabled.'}
+
+        if not cfg.origin:
+            _logger.warning("Monta Origin is not set in the configuration.")
+            return {'status': 'error', 'message': 'Monta Origin is not configured. Please set the Origin in Monta Configuration.'}
 
         # Compile products for accurate size/weight constraints in Monta
         products = []
@@ -29,7 +34,13 @@ class MontaPickupController(http.Controller):
                     "Quantity": int(line.product_uom_qty)
                 })
 
+        lang = request.env.context.get('lang') or order.partner_id.lang or 'en_US'
+        lang_code = lang.replace('_', '-') if lang else 'nl-NL'
+
         payload = {
+            "Origin": cfg.origin.strip(),
+            "Currency": order.currency_id.name or "EUR",
+            "Language": lang_code,
             "Address": {
                 "PostalCode": zip_code.strip().replace(" ", "").upper(),
                 "CountryCode": country_code or 'NL',
