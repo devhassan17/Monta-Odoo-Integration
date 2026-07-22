@@ -262,10 +262,10 @@ class MontaPickupController(http.Controller):
                     'partner_shipping_id': order.partner_id.id,
                 })
 
-            if delivery_type == 'next_day':
+            if delivery_type in ('next_day', 'one_day'):
                 vals['monta_requested_delivery_date'] = now + timedelta(days=1)
             elif delivery_type == 'two_day':
-                vals['monta_requested_delivery_date'] = now + timedelta(days=1)
+                vals['monta_requested_delivery_date'] = now + timedelta(days=2)
             else:
                 vals['monta_requested_delivery_date'] = False
 

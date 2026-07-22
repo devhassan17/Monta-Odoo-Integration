@@ -47,7 +47,8 @@ class SaleOrder(models.Model):
         selection=[
             ("standard", "Standard Delivery"),
             ("next_day", "Next Day Delivery"),
-            ("two_day", "1-Day Delivery"),
+            ("one_day", "1-Day Delivery"),
+            ("two_day", "2-Day Delivery"),
             ("pickup", "Delivery Point (Pickup)"),
         ],
         string="Monta Delivery Type",
