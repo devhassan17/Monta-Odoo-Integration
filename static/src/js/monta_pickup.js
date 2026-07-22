@@ -220,7 +220,7 @@ function initMontaPickup() {
             // Handle card selection
             card.addEventListener('click', async () => {
                 // Disable all cards and radios to prevent double selection
-                container.querySelectorAll('.monta-pickup-card').forEach(c => c.classList.remove('active'));
+                document.querySelectorAll('.monta-pickup-card').forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
                 deliveryTypeRadios.forEach(r => r.disabled = true);
                 showLoading(true);
