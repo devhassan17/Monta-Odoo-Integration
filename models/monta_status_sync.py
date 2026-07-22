@@ -118,8 +118,11 @@ class SaleOrder(models.Model):
                 _logger.warning("[Monta] %s (%s) -> no status returned (%s)", so.name, ref, meta)
                 continue
 
+            # Use raw Monta status for display accuracy
+            raw_status = meta.get("monta_raw_status") or status
+
             vals_so = {
-                "monta_status": status,
+                "monta_status": raw_status,
                 "monta_status_code": meta.get("status_code"),
                 "monta_status_source": meta.get("source") or "orders",
                 "monta_track_trace": meta.get("track_trace"),
@@ -142,23 +145,28 @@ class SaleOrder(models.Model):
 
             try:
                 so.write(vals_so)
-                # Propagation: Update related pickings so delivery forms reflect exact status
-                pickings = so.picking_ids.filtered(
+
+                # FIX: Only update the BASE picking (webshop_order_id == SO name),
+                # NOT renewal pickings. Renewal pickings have their own Monta order
+                # references and must be synced independently below.
+                base_pickings = so.picking_ids.filtered(
                     lambda p: p.picking_type_code == "outgoing"
                     and (p.monta_pushed or p.monta_webshop_order_id)
+                    and (p.monta_webshop_order_id == so.name or not p.monta_webshop_order_id)
                 )
-                if pickings:
+                if base_pickings:
                     vals_pick = {
-                        "monta_status": status,
+                        "monta_status": raw_status,
                         "monta_status_code": meta.get("status_code"),
                         "monta_track_trace": meta.get("track_trace"),
                         "monta_delivery_date": meta.get("delivery_date"),
                     }
-                    pickings.write(vals_pick)
-                    
-                    # Auto-validate picking if status is Shipped
-                    for picking in pickings:
-                        if status == "Shipped" and picking.state not in ("done", "cancel"):
+                    base_pickings.write(vals_pick)
+
+                    # Auto-validate picking if status indicates shipped
+                    shipped_lower = (raw_status or "").lower()
+                    for picking in base_pickings:
+                        if "shipped" in shipped_lower and picking.state not in ("done", "cancel"):
                             _logger.info("[Monta propagation] Auto-validating picking %s because it is Shipped in Monta", picking.name)
                             for move in picking.move_ids:
                                 if move.state not in ("done", "cancel"):
@@ -172,6 +180,7 @@ class SaleOrder(models.Model):
                 Snapshot.upsert_for_order(
                     so,
                     monta_order_ref=meta.get("monta_order_ref") or so.name,
+                    monta_raw_status=raw_status,
                     order_status=status,
                     delivery_message=meta.get("delivery_message"),
                     track_trace_url=meta.get("track_trace"),
@@ -182,8 +191,8 @@ class SaleOrder(models.Model):
             except Exception as e:
                 _logger.exception("[Monta] Snapshot upsert failed for %s: %s", so.name, e)
 
-            # Also update renewal snapshots linked to each renewal picking so the
-            # Monta Order Status page and the delivery form stay in sync.
+            # FIX: Resolve each renewal picking INDEPENDENTLY against Monta
+            # so each gets its own accurate status instead of inheriting the SO's.
             try:
                 renewal_pickings = so.picking_ids.filtered(
                     lambda p: p.picking_type_code == "outgoing"
@@ -192,18 +201,61 @@ class SaleOrder(models.Model):
                     and p.monta_webshop_order_id != so.name  # skip the base picking
                 )
                 for rp in renewal_pickings:
-                    Snapshot.upsert_for_renewal(
-                        so,
-                        rp,
-                        rp.monta_webshop_order_id,
-                        monta_order_ref=meta.get("monta_order_ref") or rp.monta_webshop_order_id,
-                        status=status,
-                        delivery_message=meta.get("delivery_message"),
-                        track_trace=meta.get("track_trace"),
-                        delivery_date=meta.get("delivery_date"),
-                        status_raw=meta.get("status_raw"),
-                        last_sync=now,
-                    )
+                    try:
+                        rp_status, rp_meta = resolver.resolve(rp.monta_webshop_order_id)
+                        rp_meta = rp_meta or {}
+                        rp_raw = rp_meta.get("monta_raw_status") or rp_status or raw_status
+                        rp_display = rp_raw or raw_status
+
+                        # Update the picking itself with its own status
+                        rp.write({
+                            "monta_status": rp_display,
+                            "monta_status_code": rp_meta.get("status_code") or meta.get("status_code"),
+                            "monta_track_trace": rp_meta.get("track_trace") or meta.get("track_trace"),
+                            "monta_delivery_date": rp_meta.get("delivery_date") or meta.get("delivery_date"),
+                        })
+
+                        # Auto-validate if shipped
+                        rp_lower = (rp_display or "").lower()
+                        if "shipped" in rp_lower and rp.state not in ("done", "cancel"):
+                            _logger.info("[Monta] Auto-validating renewal picking %s because it is Shipped in Monta", rp.name)
+                            for move in rp.move_ids:
+                                if move.state not in ("done", "cancel"):
+                                    move.quantity = move.product_uom_qty
+                            rp.with_context(skip_backorder=True, picking_label_report=False).button_validate()
+
+                        Snapshot.upsert_for_renewal(
+                            so,
+                            rp,
+                            rp.monta_webshop_order_id,
+                            monta_order_ref=rp_meta.get("monta_order_ref") or rp.monta_webshop_order_id,
+                            monta_raw_status=rp_display,
+                            status=rp_status or status,
+                            delivery_message=rp_meta.get("delivery_message") or meta.get("delivery_message"),
+                            track_trace=rp_meta.get("track_trace") or meta.get("track_trace"),
+                            delivery_date=rp_meta.get("delivery_date") or meta.get("delivery_date"),
+                            status_raw=rp_meta.get("status_raw") or meta.get("status_raw"),
+                            last_sync=now,
+                        )
+                    except Exception as e:
+                        _logger.warning(
+                            "[Monta] Could not resolve renewal picking %s independently, "
+                            "falling back to SO status: %s", rp.name, e
+                        )
+                        # Fallback: use SO-level status
+                        Snapshot.upsert_for_renewal(
+                            so,
+                            rp,
+                            rp.monta_webshop_order_id,
+                            monta_order_ref=meta.get("monta_order_ref") or rp.monta_webshop_order_id,
+                            monta_raw_status=raw_status,
+                            status=status,
+                            delivery_message=meta.get("delivery_message"),
+                            track_trace=meta.get("track_trace"),
+                            delivery_date=meta.get("delivery_date"),
+                            status_raw=meta.get("status_raw"),
+                            last_sync=now,
+                        )
             except Exception as e:
                 _logger.exception("[Monta] Renewal snapshot propagation failed for %s: %s", so.name, e)
 
@@ -280,18 +332,28 @@ class StockPicking(models.Model):
                     _logger.exception("[Monta] Snapshot upsert failed for picking %s", picking.name)
                 continue
 
+            # Use raw Monta status for display accuracy
+            raw_status = meta.get("monta_raw_status") or status
+
             vals = {
-                "monta_status": status,
+                "monta_status": raw_status,
                 "monta_status_code": meta.get("status_code"),
                 "monta_track_trace": meta.get("track_trace"),
                 "monta_delivery_date": meta.get("delivery_date"),
             }
             try:
                 picking.write(vals)
-                # Propagation back to Sales Order to keep Sales Order status in sync
-                if picking.sale_id:
+
+                # FIX: Only propagate to SO if this is the BASE delivery (not a renewal).
+                # Renewal pickings should NOT overwrite the SO-level status, because
+                # the SO status should reflect the SO's own Monta order, not a renewal's.
+                is_base_picking = (
+                    picking.sale_id
+                    and (picking.monta_webshop_order_id == picking.sale_id.name or not picking.monta_webshop_order_id)
+                )
+                if picking.sale_id and is_base_picking:
                     vals_so = {
-                        "monta_status": status,
+                        "monta_status": raw_status,
                         "monta_status_code": meta.get("status_code"),
                         "monta_track_trace": meta.get("track_trace"),
                         "monta_last_sync": now,
@@ -303,7 +365,8 @@ class StockPicking(models.Model):
                     picking.sale_id.write(vals_so)
                 
                 # Auto-validate if shipped
-                if status == "Shipped" and picking.state not in ("done", "cancel"):
+                shipped_lower = (raw_status or "").lower()
+                if "shipped" in shipped_lower and picking.state not in ("done", "cancel"):
                     _logger.info("[Monta] Auto-validating picking %s because it is Shipped in Monta", picking.name)
                     # For Odoo 18, we set quantities on move lines first to avoid backorder prompt
                     for move in picking.move_ids:
@@ -319,6 +382,7 @@ class StockPicking(models.Model):
                     picking,
                     ref,
                     monta_order_ref=meta.get("monta_order_ref") or ref,
+                    monta_raw_status=raw_status,
                     status=status,
                     delivery_message=meta.get("delivery_message"),
                     track_trace=meta.get("track_trace"),

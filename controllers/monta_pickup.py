@@ -10,7 +10,7 @@ _logger = logging.getLogger(__name__)
 class MontaPickupController(http.Controller):
 
     @http.route('/shop/monta/get_pickup_points', type='json', auth='public', website=True)
-    def get_pickup_points(self, zip_code, country_code='NL', **kwargs):
+    def get_pickup_points(self, zip_code=None, country_code='NL', street=None, house_number=None, city=None, postal_code=None, **kwargs):
         """Fetch pickup points from Monta WMS REST API v6 using /shippingoptions."""
         order = request.website.sale_get_order()
         if not order:
@@ -25,6 +25,14 @@ class MontaPickupController(http.Controller):
             _logger.warning("Monta Origin is not set in the configuration.")
             return {'status': 'error', 'message': 'Monta Origin is not configured. Please set the Origin in Monta Configuration.'}
 
+        # Fallback to order address if not explicitly passed
+        partner = order.partner_shipping_id or order.partner_id
+        zip_val = (zip_code or postal_code or partner.zip or "").strip().replace(" ", "").upper()
+        country_val = country_code or (partner.country_id.code if partner.country_id else 'NL')
+        street_val = (street or partner.street or "").strip()
+        city_val = (city or partner.city or "").strip()
+        house_num_val = (house_number or partner.street2 or "").strip()
+
         # Compile products for accurate size/weight constraints in Monta
         products = []
         for line in order.order_line:
@@ -37,14 +45,22 @@ class MontaPickupController(http.Controller):
         lang = request.env.context.get('lang') or order.partner_id.lang or 'en_US'
         lang_code = lang.replace('_', '-') if lang else 'nl-NL'
 
+        addr_dict = {
+            "PostalCode": zip_val,
+            "CountryCode": country_val,
+        }
+        if street_val:
+            addr_dict["Street"] = street_val
+        if house_num_val:
+            addr_dict["HouseNumber"] = house_num_val
+        if city_val:
+            addr_dict["City"] = city_val
+
         payload = {
             "Origin": cfg.origin.strip(),
             "Currency": order.currency_id.name or "EUR",
             "Language": lang_code,
-            "Address": {
-                "PostalCode": zip_code.strip().replace(" ", "").upper(),
-                "CountryCode": country_code or 'NL',
-            },
+            "Address": addr_dict,
             "MaxNumberOfPickupPoints": 10,
             "OnlyPickupPoints": True
         }
@@ -121,7 +137,8 @@ class MontaPickupController(http.Controller):
                 order.write({
                     'partner_shipping_id': order.partner_id.id,
                     'monta_shipper_code': False,
-                    'monta_shipper_options': False
+                    'monta_shipper_options': False,
+                    'monta_delivery_type': 'standard',
                 })
                 # Re-evaluate delivery carrier
                 carrier = order.carrier_id or request.env['delivery.carrier'].sudo().search([], limit=1)
@@ -136,15 +153,15 @@ class MontaPickupController(http.Controller):
             partner_vals = {
                 'parent_id': order.partner_id.id,
                 'type': 'delivery',
-                'name': order.partner_id.name or "Consumer",
+                'name': order.partner_id.name or order.partner_invoice_id.name or "Consumer",
                 'company_name': name,
                 'street': street,
                 'street2': house_number or '',
                 'zip': zip,
                 'city': city,
                 'country_id': request.env['res.country'].sudo().search([('code', '=', country_code)], limit=1).id,
-                'email': order.partner_id.email,
-                'phone': order.partner_id.phone,
+                'email': order.partner_id.email or order.partner_invoice_id.email,
+                'phone': order.partner_id.phone or order.partner_invoice_id.phone,
             }
             
             domain = [
@@ -170,11 +187,11 @@ class MontaPickupController(http.Controller):
             order.write({
                 'partner_shipping_id': shipping_partner.id,
                 'monta_shipper_code': shipper_code,
-                'monta_shipper_options': json.dumps(shipper_options)
+                'monta_shipper_options': json.dumps(shipper_options),
+                'monta_delivery_type': 'pickup',
             })
 
             # 3. Update delivery carrier and price
-            # Find an Odoo delivery carrier matching this shipper code or name
             carrier = request.env['delivery.carrier'].sudo().search([
                 '|', 
                 ('name', 'ilike', shipper_code),
@@ -192,7 +209,6 @@ class MontaPickupController(http.Controller):
                 elif hasattr(order, 'set_delivery_line'):
                     order.set_delivery_line(carrier, price)
                 else:
-                    # Fallback manually find/update the delivery line
                     delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
                     if delivery_line:
                         delivery_line[0].write({
@@ -210,10 +226,6 @@ class MontaPickupController(http.Controller):
                             'is_delivery': True,
                         })
 
-            # Trigger totals recomputation
-            # (Odoo automatically recomputes order amounts when delivery lines change)
-
-            # Format selected address for return
             delivery_display = "%s\n%s %s\n%s %s" % (name, street, house_number or '', zip, city)
 
             return {
@@ -224,4 +236,47 @@ class MontaPickupController(http.Controller):
 
         except Exception as e:
             _logger.exception("Error selecting Monta pickup point: %s", str(e))
+            return {'status': 'error', 'message': str(e)}
+
+    @http.route('/shop/monta/select_delivery_type', type='json', auth='public', website=True)
+    def select_delivery_type(self, delivery_type='standard', **kwargs):
+        """Update checkout order delivery speed: standard, next_day, or two_day."""
+        order = request.website.sale_get_order()
+        if not order:
+            return {'status': 'error', 'message': 'No active sales order.'}
+
+        try:
+            from datetime import timedelta
+            from odoo import fields
+
+            now = fields.Datetime.now()
+            vals = {
+                'monta_delivery_type': delivery_type,
+            }
+
+            # Clear pickup options if switching away from pickup
+            if delivery_type != 'pickup':
+                vals.update({
+                    'monta_shipper_code': False,
+                    'monta_shipper_options': False,
+                    'partner_shipping_id': order.partner_id.id,
+                })
+
+            if delivery_type == 'next_day':
+                vals['monta_requested_delivery_date'] = now + timedelta(days=1)
+            elif delivery_type == 'two_day':
+                vals['monta_requested_delivery_date'] = now + timedelta(days=2)
+            else:
+                vals['monta_requested_delivery_date'] = False
+
+            order.write(vals)
+
+            return {
+                'status': 'success',
+                'delivery_type': delivery_type,
+                'requested_date': fields.Datetime.to_string(vals.get('monta_requested_delivery_date')) if vals.get('monta_requested_delivery_date') else None,
+            }
+
+        except Exception as e:
+            _logger.exception("Error updating delivery type: %s", str(e))
             return {'status': 'error', 'message': str(e)}

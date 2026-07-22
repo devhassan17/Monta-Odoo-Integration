@@ -78,7 +78,53 @@ class AccountMove(models.Model):
                     _logger.info("[Monta Invoice Hook] Invoice %s is not posted. Skipping.", move.name)
                     continue
                 if move.move_type != "out_invoice":
-                    _logger.info("[Monta Invoice Hook] Invoice %s is not out_invoice. Skipping.", move.name)
+                    _logger.info("[Monta Invoice Hook] Invoice %s is not out_invoice (type=%s). Skipping.", move.name, move.move_type)
+                    continue
+
+                # ── Refund / reversal guards ──────────────────────────────────
+                # When someone creates a refund (credit note), Odoo may also
+                # generate a replacement out_invoice in the same flow.  We must
+                # NOT treat these replacement invoices as subscription renewals.
+
+                # Guard 1: This invoice is itself a reversal of another invoice
+                if hasattr(move, 'reversed_entry_id') and move.reversed_entry_id:
+                    _logger.info(
+                        "[Monta Invoice Hook] Invoice %s is a reversal of %s. Skipping.",
+                        move.name, move.reversed_entry_id.name,
+                    )
+                    continue
+
+                # Guard 2: This invoice was created by reversing another invoice
+                # (replacement invoice in a "cancel and re-create" refund flow)
+                if hasattr(move, 'reversal_move_id') and move.reversal_move_id:
+                    _logger.info(
+                        "[Monta Invoice Hook] Invoice %s has reversal_move_id (linked to reversal). Skipping.",
+                        move.name,
+                    )
+                    continue
+
+                # Guard 3: Invoice has a debit origin (debit note / correction)
+                if hasattr(move, 'debit_origin_id') and move.debit_origin_id:
+                    _logger.info(
+                        "[Monta Invoice Hook] Invoice %s has debit_origin_id %s. Skipping.",
+                        move.name, move.debit_origin_id.name,
+                    )
+                    continue
+
+                # Guard 4: Zero or negative total amount (likely a credit/adjustment)
+                if move.amount_total <= 0:
+                    _logger.info(
+                        "[Monta Invoice Hook] Invoice %s has amount_total=%.2f (≤ 0). Skipping.",
+                        move.name, move.amount_total,
+                    )
+                    continue
+
+                # Guard 5: Context-based — check if this was triggered from a refund wizard
+                if self.env.context.get('active_model') == 'account.move.reversal':
+                    _logger.info(
+                        "[Monta Invoice Hook] Invoice %s created from refund wizard context. Skipping.",
+                        move.name,
+                    )
                     continue
 
                 # Resolve the linked in-progress subscription SO

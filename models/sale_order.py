@@ -172,36 +172,15 @@ class SaleOrder(models.Model):
         if not cfg:
             raise ValidationError("Monta Configuration missing or company not allowed.")
 
-        # Delivery Address
-        partner_shipping = self.partner_shipping_id or self.partner_id
-        ship_street, ship_hn, ship_hs = self._split_street(partner_shipping.street or "", partner_shipping.street2 or "")
-        ship_full_name = partner_shipping.name or ""
-        ship_first_name = ship_full_name.split(" ")[0] if ship_full_name else ""
-        ship_last_name = " ".join(ship_full_name.split(" ")[1:]) if len(ship_full_name.split(" ")) > 1 else ""
-
-        addr_delivery = {
-            "Company": partner_shipping.company_name or partner_shipping.name or "",
-            "FirstName": ship_first_name,
-            "LastName": ship_last_name,
-            "Street": ship_street,
-            "HouseNumber": ship_hn or "1",
-            "HouseNumberAddition": ship_hs or "",
-            "PostalCode": partner_shipping.zip or "0000AA",
-            "City": partner_shipping.city or "TestCity",
-            "CountryCode": partner_shipping.country_id.code if partner_shipping.country_id else "NL",
-            "PhoneNumber": partner_shipping.phone or self.partner_id.phone or "0000000000",
-            "EmailAddress": partner_shipping.email or self.partner_id.email or "test@example.com",
-        }
-
-        # Invoice Address
+        # Invoice Address (Consumer's own address)
         partner_invoice = self.partner_invoice_id or self.partner_id
         inv_street, inv_hn, inv_hs = self._split_street(partner_invoice.street or "", partner_invoice.street2 or "")
-        inv_full_name = partner_invoice.name or ""
+        inv_full_name = partner_invoice.name or self.partner_id.name or ""
         inv_first_name = inv_full_name.split(" ")[0] if inv_full_name else ""
         inv_last_name = " ".join(inv_full_name.split(" ")[1:]) if len(inv_full_name.split(" ")) > 1 else ""
 
         addr_invoice = {
-            "Company": partner_invoice.company_name or partner_invoice.name or "",
+            "Company": partner_invoice.company_name or "",
             "FirstName": inv_first_name,
             "LastName": inv_last_name,
             "Street": inv_street,
@@ -212,6 +191,37 @@ class SaleOrder(models.Model):
             "CountryCode": partner_invoice.country_id.code if partner_invoice.country_id else "NL",
             "PhoneNumber": partner_invoice.phone or self.partner_id.phone or "0000000000",
             "EmailAddress": partner_invoice.email or self.partner_id.email or "test@example.com",
+        }
+
+        # Delivery Address
+        # For pickup points: Company = Pickup Point Name, Address = Pickup Point Address,
+        # but First & Last Name = Consumer's Name, Email & Phone = Consumer's Email & Phone.
+        partner_shipping = self.partner_shipping_id or self.partner_id
+        ship_street, ship_hn, ship_hs = self._split_street(partner_shipping.street or "", partner_shipping.street2 or "")
+        
+        if self.monta_shipper_code:
+            # Pickup Point delivery — Name must be Consumer's name, Company = Pickup Point Name
+            cust_first_name = inv_first_name
+            cust_last_name = inv_last_name
+            pickup_company = partner_shipping.company_name or partner_shipping.name or ""
+        else:
+            ship_full_name = partner_shipping.name or ""
+            cust_first_name = ship_full_name.split(" ")[0] if ship_full_name else ""
+            cust_last_name = " ".join(ship_full_name.split(" ")[1:]) if len(ship_full_name.split(" ")) > 1 else ""
+            pickup_company = partner_shipping.company_name or ""
+
+        addr_delivery = {
+            "Company": pickup_company,
+            "FirstName": cust_first_name,
+            "LastName": cust_last_name,
+            "Street": ship_street,
+            "HouseNumber": ship_hn or "1",
+            "HouseNumberAddition": ship_hs or "",
+            "PostalCode": partner_shipping.zip or "0000AA",
+            "City": partner_shipping.city or "TestCity",
+            "CountryCode": partner_shipping.country_id.code if partner_shipping.country_id else "NL",
+            "PhoneNumber": partner_invoice.phone or self.partner_id.phone or partner_shipping.phone or "0000000000",
+            "EmailAddress": partner_invoice.email or self.partner_id.email or partner_shipping.email or "test@example.com",
         }
 
         lines = self._prepare_monta_lines()
@@ -243,6 +253,17 @@ class SaleOrder(models.Model):
                     payload["ShipperOptions"] = json.loads(self.monta_shipper_options)
                 except Exception:
                     pass
+
+        # Next Day Delivery & 2-Day Delivery Options
+        from datetime import timedelta
+        if self.monta_delivery_type == "next_day":
+            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=1))
+            payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
+            payload["DeliveryOptions"] = [{"Code": "nextday", "Value": "true"}]
+        elif self.monta_delivery_type == "two_day":
+            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=2))
+            payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
+            payload["DeliveryOptions"] = [{"Code": "twoday", "Value": "true"}]
 
         if (cfg.origin or "").strip():
             payload["Origin"] = cfg.origin.strip()

@@ -14,6 +14,7 @@ class MontaOrderStatus(models.Model):
         mapping = {
             "monta_order_ref": ("monta_order_ref",),
             "status": ("status", "order_status"),
+            "monta_raw_status": ("monta_raw_status",),
             "status_code": ("status_code", "monta_status_code"),
             "source": ("source", "monta_status_source"),
             "delivery_message": ("delivery_message",),

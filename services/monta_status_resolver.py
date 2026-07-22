@@ -328,18 +328,22 @@ class MontaStatusResolver:
         # Shipments (first priority)
         # ---------------------------
         ship_status = ship_tt = ship_date = ship_msg = None
+        ship_raw_status = None
         ship_src = None
 
         for p, lbl in self._iter_lookup_params(refs, "shipments"):
             scS, ships = self._get("shipments", p)
             for sh in self._as_list(ships):
+                # Capture the raw status description exactly as Monta returns it
+                raw_desc = self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
                 st = (
-                    self._pick(sh, "DeliveryStatusDescription", "ShipmentStatus", "Status", "CurrentStatus")
+                    raw_desc
                     or ("Shipped" if (isinstance(sh, dict) and (sh.get("IsShipped") or sh.get("ShippedDate"))) else None)
                     or str((sh or {}).get("ShipmentStatus") or "")
                 )
                 if st:
                     ship_status = st
+                    ship_raw_status = raw_desc or st
                     ship_tt = ship_tt or self._pick(sh, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
                     ship_date = ship_date or self._pick(sh, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
                     ship_msg = ship_msg or self._pick(sh, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
@@ -352,6 +356,7 @@ class MontaStatusResolver:
         # Order events (second priority)
         # ---------------------------
         event_status = event_msg = event_tt = event_date = None
+        event_raw_status = None
         event_src = None
 
         if not ship_status:
@@ -362,11 +367,14 @@ class MontaStatusResolver:
                     continue
 
                 e = lst[0]
+                # Capture the raw status description exactly as Monta returns it
+                raw_desc = self._pick(e, "DeliveryStatusDescription", "Status", "CurrentStatus", "ActionCode")
                 event_status = (
-                    self._pick(e, "DeliveryStatusDescription", "Status", "CurrentStatus", "ActionCode")
+                    raw_desc
                     or self._pick((e or {}).get("Order") or {}, "Status", "CurrentStatus")
                     or self._pick((e or {}).get("Shipment") or {}, "ShipmentStatus", "Status", "CurrentStatus")
                 )
+                event_raw_status = raw_desc or event_status
                 event_msg = self._pick(e, "BlockedMessage", "DeliveryMessage", "Message", "Reason")
                 event_tt = self._pick((e or {}).get("Shipment") or {}, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
                 event_date = self._pick((e or {}).get("Shipment") or {}, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
@@ -380,7 +388,13 @@ class MontaStatusResolver:
         # ---------------------------
         header_flag = self._status_from_flags(cand)
         header_txt = self._status_from_text(cand)
-        header_status = header_flag or header_txt or "Received / Pending workflow"
+        # Use Monta's raw text status as the primary display value;
+        # only fall back to flag-derived status if no text description exists
+        header_raw_status = self._pick(
+            cand, "DeliveryStatusDescription", "deliveryStatusDescription",
+            "Status", "status", "CurrentStatus", "currentStatus",
+        )
+        header_status = header_raw_status or header_flag or header_txt or "Received / Pending workflow"
 
         header_tt = self._pick(cand, "TrackAndTraceLink", "TrackAndTraceUrl", "TrackAndTrace", "TrackingUrl")
         header_date = self._pick(cand, "DeliveryDate", "ShippedDate", "EstimatedDeliveryTo", "LatestDeliveryDate")
@@ -391,6 +405,9 @@ class MontaStatusResolver:
         tt = ship_tt or event_tt or header_tt
         dd = ship_date or event_date or header_date
         dm = ship_msg or event_msg or header_msg
+
+        # Raw status = the exact status text from Monta's API (no enrichment)
+        raw_status = ship_raw_status or event_raw_status or header_raw_status or status_txt
 
         header_blocked = self._is_blocked_header(cand)
         header_backord = self._is_backorder_header(cand)
@@ -421,6 +438,7 @@ class MontaStatusResolver:
             "delivery_date": dd,
             "delivery_message": dm,
             "monta_order_ref": stable_ref,
+            "monta_raw_status": raw_status,
             "status_raw": json.dumps(
                 {
                     "order": cand,
@@ -430,6 +448,7 @@ class MontaStatusResolver:
                     "header_blocked": header_blocked,
                     "header_backorder": header_backord,
                     "final_status": status_txt,
+                    "raw_status": raw_status,
                 },
                 ensure_ascii=False,
             ),

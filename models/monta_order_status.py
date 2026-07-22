@@ -56,6 +56,10 @@ class MontaOrderStatus(models.Model):
     monta_order_ref = fields.Char(string="Monta Order Ref", index=True)
 
     status = fields.Char(string="Order Status")
+    monta_raw_status = fields.Char(
+        string="Monta Raw Status",
+        help="The exact status text from Monta's API (DeliveryStatusDescription).",
+    )
     status_code = fields.Integer(string="Status Code")
 
     source = fields.Selection(
@@ -153,6 +157,7 @@ class MontaOrderStatus(models.Model):
 
         for k in (
             "status",
+            "monta_raw_status",
             "status_code",
             "source",
             "delivery_message",
@@ -194,6 +199,7 @@ class MontaOrderStatus(models.Model):
 
         for k in (
             "status",
+            "monta_raw_status",
             "status_code",
             "source",
             "delivery_message",
@@ -251,8 +257,10 @@ class MontaOrderStatus(models.Model):
             status, meta = resolver.resolve(order_ref)
             if status:
                 meta = meta or {}
+                raw_status = meta.get("monta_raw_status") or status
                 self.write({
                     "status": status,
+                    "monta_raw_status": raw_status,
                     "status_code": meta.get("status_code"),
                     "track_trace": meta.get("track_trace"),
                     "delivery_date": meta.get("delivery_date"),
@@ -260,10 +268,10 @@ class MontaOrderStatus(models.Model):
                     "monta_order_ref": meta.get("monta_order_ref") or order_ref,
                     "last_sync": fields.Datetime.now(),
                 })
-                # Propagate to linked picking
+                # Propagate to linked picking — use raw status for display
                 if self.picking_id:
                     self.picking_id.write({
-                        "monta_status": status,
+                        "monta_status": raw_status,
                         "monta_status_code": str(meta.get("status_code") or "") or False,
                         "monta_track_trace": meta.get("track_trace"),
                         "monta_delivery_date": meta.get("delivery_date"),
@@ -302,8 +310,10 @@ class MontaOrderStatus(models.Model):
                         and (p.monta_webshop_order_id == rec.order_name or p.name == rec.order_name)
                     )
                 if pickings and rec.status:
+                    # Prefer raw Monta status for display accuracy
+                    display_status = rec.monta_raw_status or rec.status
                     vals = {
-                        "monta_status": rec.status,
+                        "monta_status": display_status,
                         "monta_status_code": str(rec.status_code) if rec.status_code else False,
                         "monta_track_trace": rec.track_trace,
                         "monta_delivery_date": rec.delivery_date,

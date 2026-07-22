@@ -18,84 +18,118 @@ async function rpc(route, params) {
 }
 
 function initMontaPickup() {
-    const container = document.querySelector('.monta-pickup-container');
+    const container = document.querySelector('.monta-delivery-container') || document.querySelector('.monta-pickup-container');
     if (!container) return;
 
     // Prevent Odoo click card listener bubbling inside container
     container.addEventListener('click', (e) => e.stopPropagation());
 
-    const toggle = container.querySelector('#monta_use_pickup');
+    const deliveryTypeRadios = container.querySelectorAll('input[name="monta_delivery_type"]');
     const box = container.querySelector('#monta-pickup-box');
     const btnSearch = container.querySelector('#btn_search_monta_pickup');
+    const streetInput = container.querySelector('#monta_pickup_street');
+    const houseInput = container.querySelector('#monta_pickup_house');
     const zipInput = container.querySelector('#monta_pickup_zip');
+    const cityInput = container.querySelector('#monta_pickup_city');
     const countrySelect = container.querySelector('#monta_pickup_country');
     const loading = container.querySelector('#monta_pickup_loading');
     const errorDiv = container.querySelector('#monta_pickup_error');
     const resultsDiv = container.querySelector('#monta_pickup_results');
 
-    if (!toggle || !box) return;
+    // Helper: auto-detect user's address from checkout DOM form inputs if available
+    function autoDetectUserAddress() {
+        const domStreet = document.querySelector('input[name="street"], #street');
+        const domHouse = document.querySelector('input[name="street2"], #street2');
+        const domZip = document.querySelector('input[name="zip"], #zip');
+        const domCity = document.querySelector('input[name="city"], #city');
 
-    // Show/hide box when toggle changes
-    toggle.addEventListener('change', async () => {
-        if (toggle.checked) {
-            box.classList.add('show');
-            // If results are empty, search automatically
-            if (resultsDiv.children.length === 0) {
-                await performSearch();
-            }
-        } else {
-            box.classList.remove('show');
-            // Clear selected pickup point on the server
-            try {
-                toggle.disabled = true;
-                const res = await rpc('/shop/monta/select_pickup_point', {
-                    shipper_code: false
-                });
-                if (res && res.status === 'success') {
-                    // Reload checkout page to restore standard address/delivery line
-                    window.location.reload();
-                }
-            } catch (e) {
-                console.error("Failed to clear pickup point:", e);
-            } finally {
-                toggle.disabled = false;
-            }
+        if (streetInput && domStreet && domStreet.value && !streetInput.value) {
+            streetInput.value = domStreet.value.trim();
         }
+        if (houseInput && domHouse && domHouse.value && !houseInput.value) {
+            houseInput.value = domHouse.value.trim();
+        }
+        if (zipInput && domZip && domZip.value && !zipInput.value) {
+            zipInput.value = domZip.value.trim();
+        }
+        if (cityInput && domCity && domCity.value && !cityInput.value) {
+            cityInput.value = domCity.value.trim();
+        }
+    }
+
+    autoDetectUserAddress();
+
+    // Handle delivery speed option selection (Standard, Next Day, 2-Day, Pickup)
+    deliveryTypeRadios.forEach(radio => {
+        radio.addEventListener('change', async () => {
+            // Highlight selected option card UI
+            container.querySelectorAll('.monta-delivery-option-card').forEach(card => card.classList.remove('active'));
+            const parentLabel = radio.closest('.monta-delivery-option-card');
+            if (parentLabel) parentLabel.classList.add('active');
+
+            const selectedType = radio.value;
+
+            if (selectedType === 'pickup') {
+                if (box) box.classList.add('show');
+                autoDetectUserAddress();
+                if (resultsDiv && resultsDiv.children.length === 0) {
+                    await performSearch();
+                }
+            } else {
+                if (box) box.classList.remove('show');
+                try {
+                    const res = await rpc('/shop/monta/select_delivery_type', {
+                        delivery_type: selectedType
+                    });
+                    if (res && res.status === 'success') {
+                        // Success update
+                    }
+                } catch (e) {
+                    console.error("Failed to set delivery type:", e);
+                }
+            }
+        });
     });
 
-    // Trigger search on click
-    btnSearch.addEventListener('click', performSearch);
+    if (btnSearch) {
+        btnSearch.addEventListener('click', performSearch);
+    }
 
-    // Trigger search on Enter key
-    zipInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            performSearch();
+    // Trigger search on Enter key inside zip, street, or city inputs
+    [streetInput, houseInput, zipInput, cityInput].forEach(input => {
+        if (input) {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    performSearch();
+                }
+            });
         }
     });
 
     async function performSearch() {
-        const zip = zipInput.value.trim();
-        const country = countrySelect.value;
+        autoDetectUserAddress();
+        const street = streetInput ? streetInput.value.trim() : '';
+        const houseNumber = houseInput ? houseInput.value.trim() : '';
+        const zip = zipInput ? zipInput.value.trim() : '';
+        const city = cityInput ? cityInput.value.trim() : '';
+        const country = countrySelect ? countrySelect.value : 'NL';
 
-        if (!zip) {
-            showError("Please enter a zip/postal code.");
-            return;
-        }
-
-        // Basic validation depending on country
-        if (country === 'NL' && !/^\d{4}\s?[A-Za-z]{2}$/.test(zip.replace(/\s/g, ''))) {
-            showError("Invalid Dutch postal code (e.g. 1014AR).");
+        if (!zip && !street && !city) {
+            showError("Please enter an address or zip/postal code.");
             return;
         }
 
         hideError();
         showLoading(true);
-        resultsDiv.innerHTML = '';
+        if (resultsDiv) resultsDiv.innerHTML = '';
 
         try {
             const res = await rpc('/shop/monta/get_pickup_points', {
+                street: street,
+                house_number: houseNumber,
                 zip_code: zip,
+                city: city,
                 country_code: country
             });
 
@@ -104,7 +138,7 @@ function initMontaPickup() {
             if (res && res.status === 'success') {
                 const points = res.pickup_points || [];
                 if (points.length === 0) {
-                    showError("No pickup points found near this postcode.");
+                    showError("No pickup points found near this location.");
                     return;
                 }
                 renderPickupPoints(points);

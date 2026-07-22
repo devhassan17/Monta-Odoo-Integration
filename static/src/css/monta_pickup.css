@@ -1,23 +1,33 @@
-/* Monta WMS Pickup Point Styling */
+/* Monta WMS Delivery Options & Pickup Point Styling */
 
+.monta-delivery-container,
 .monta-pickup-container {
     transition: all 0.3s ease-in-out;
 }
 
-.monta-pickup-selector input[type="checkbox"]:checked {
-    background-color: #E5007D;
-    border-color: #E5007D;
+.monta-delivery-option-card {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    background-color: #f8f9fa;
+    transition: all 0.2s ease-in-out;
+    user-select: none;
+    min-width: 110px;
 }
 
-.monta-pickup-selector input[type="checkbox"]:focus {
+.monta-delivery-option-card:hover {
     border-color: #E5007D;
-    box-shadow: 0 0 0 0.25rem rgba(229, 0, 125, 0.25);
+    background-color: #ffffff;
+    box-shadow: 0 3px 8px rgba(229, 0, 125, 0.1);
 }
 
-.monta-pickup-search-group input:focus,
-.monta-pickup-search-group select:focus {
-    border-color: #E5007D !important;
-    box-shadow: 0 0 0 0.25rem rgba(229, 0, 125, 0.25) !important;
+.monta-delivery-option-card.active {
+    border: 2px solid #E5007D !important;
+    background-color: #FFF5F9 !important;
+    box-shadow: 0 4px 10px rgba(229, 0, 125, 0.15) !important;
+}
+
+.extra-small {
+    font-size: 0.72rem;
 }
 
 /* Pickup Point Cards */
