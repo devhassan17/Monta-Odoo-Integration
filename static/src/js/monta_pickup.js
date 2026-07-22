@@ -62,27 +62,11 @@ function initMontaPickup() {
 
     autoDetectUserAddress();
 
-    // Section 1: Handle Delivery Speed Cards (Standard, Next Day, 2-Day)
-    const optionCards = document.querySelectorAll('.monta-delivery-option-card');
-    optionCards.forEach(card => {
-        card.addEventListener('click', (e) => {
-            const radio = card.querySelector('input[name="monta_delivery_type"]');
-            if (radio && !radio.checked) {
-                radio.checked = true;
-                radio.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-    });
-
-    deliveryTypeRadios.forEach(radio => {
-        radio.addEventListener('change', async () => {
-            optionCards.forEach(card => card.classList.remove('active'));
-            const parentLabel = radio.closest('.monta-delivery-option-card');
-            if (parentLabel) parentLabel.classList.add('active');
-
-            const selectedType = radio.value;
-
-            // If pickup point checkbox was checked, uncheck it when selecting delivery speed
+    // Section 1: Handle Delivery Speed Select Dropdown
+    const speedSelect = document.querySelector('#monta_delivery_speed_select');
+    if (speedSelect) {
+        speedSelect.addEventListener('change', async () => {
+            const selectedType = speedSelect.value;
             if (togglePickup && togglePickup.checked) {
                 togglePickup.checked = false;
                 if (box) box.classList.remove('show');
@@ -103,7 +87,7 @@ function initMontaPickup() {
                 console.error("Failed to set delivery type:", e);
             }
         });
-    });
+    }
 
     // Section 2: Handle Pickup Point Toggle Checkbox
     if (togglePickup) {

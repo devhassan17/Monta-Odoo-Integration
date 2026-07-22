@@ -5,25 +5,23 @@
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
                 <!-- Section 1: Delivery Speed Options -->
                 <div class="monta-delivery-speed-container mt-3 mb-3 p-3 border rounded bg-white shadow-sm">
-                    <h6 class="fw-bold mb-3" style="color: #E5007D;">
-                        <i class="fa fa-truck me-1"/> Select Delivery Speed
-                    </h6>
-                    <div class="monta-delivery-type-options d-flex flex-wrap gap-2">
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' and not website_sale_order.monta_shipper_code else ''">
-                            <input type="radio" name="monta_delivery_type" value="standard" class="d-none" t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' and not website_sale_order.monta_shipper_code else None"/>
-                            <div class="fw-bold small text-dark"><i class="fa fa-box me-1"/> Standard</div>
-                            <div class="text-muted extra-small">Regular fulfillment</div>
-                        </label>
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''">
-                            <input type="radio" name="monta_delivery_type" value="next_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"/>
-                            <div class="fw-bold small text-dark"><i class="fa fa-bolt me-1 text-warning"/> Next Day</div>
-                            <div class="text-muted extra-small">Delivered tomorrow</div>
-                        </label>
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'two_day' and not website_sale_order.monta_shipper_code else ''">
-                            <input type="radio" name="monta_delivery_type" value="two_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'two_day' and not website_sale_order.monta_shipper_code else None"/>
-                            <div class="fw-bold small text-dark"><i class="fa fa-calendar me-1 text-info"/> 2-Day</div>
-                            <div class="text-muted extra-small">Delivered in 2 days</div>
-                        </label>
+                    <label for="monta_delivery_speed_select" class="fw-bold mb-2 d-flex align-items-center gap-2" style="color: #E5007D; font-size: 1rem;">
+                        <i class="fa fa-truck"/> Select Delivery Speed:
+                    </label>
+                    <select id="monta_delivery_speed_select" name="monta_delivery_speed_select" class="form-select border-secondary form-select-md fw-bold">
+                        <option value="standard" t-att-selected="'selected' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' and not website_sale_order.monta_shipper_code else None">
+                            📦 Standard Delivery (Regular fulfillment)
+                        </option>
+                        <option value="next_day" t-att-selected="'selected' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None">
+                            ⚡ Next Day Delivery (Delivered tomorrow)
+                        </option>
+                        <option value="two_day" t-att-selected="'selected' if website_sale_order.monta_delivery_type == 'two_day' and not website_sale_order.monta_shipper_code else None">
+                            📅 2-Day Delivery (Delivered in 2 days)
+                        </option>
+                    </select>
+                    <div class="mt-2 text-muted small">
+                        <i class="fa fa-check-circle text-success me-1"/> Active Selection: 
+                        <span class="fw-bold text-dark" t-out="'Standard Delivery (Regular)' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' else ('Next Day Delivery (Tomorrow)' if website_sale_order.monta_delivery_type == 'next_day' else '2-Day Delivery (in 2 days)')"/>
                     </div>
                 </div>
 
