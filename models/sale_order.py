@@ -261,9 +261,9 @@ class SaleOrder(models.Model):
             payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
             payload["DeliveryOptions"] = [{"Code": "nextday", "Value": "true"}]
         elif self.monta_delivery_type == "two_day":
-            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=2))
+            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=1))
             payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
-            payload["DeliveryOptions"] = [{"Code": "twoday", "Value": "true"}]
+            payload["DeliveryOptions"] = [{"Code": "oneday", "Value": "true"}]
 
         if (cfg.origin or "").strip():
             payload["Origin"] = cfg.origin.strip()

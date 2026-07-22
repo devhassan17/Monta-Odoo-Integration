@@ -21,6 +21,23 @@
             </div>
           </button>
         </xpath>
+        <xpath expr="//notebook" position="inside">
+          <page string="Monta Shipping Options" name="monta_shipping_options">
+            <group>
+              <group string="Delivery Speed &amp; Options">
+                <field name="monta_delivery_type" widget="radio"/>
+                <field name="monta_requested_delivery_date"/>
+                <field name="monta_shipper_code" readonly="1"/>
+              </group>
+              <group string="Monta Status &amp; Tracking">
+                <field name="monta_status" readonly="1"/>
+                <field name="monta_delivery_status" readonly="1"/>
+                <field name="monta_status_code" readonly="1"/>
+                <field name="monta_track_trace" widget="url" readonly="1"/>
+              </group>
+            </group>
+          </page>
+        </xpath>
       </field>
     </record>
   </data>

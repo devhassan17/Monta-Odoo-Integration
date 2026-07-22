@@ -191,10 +191,10 @@ function initMontaPickup() {
 
             // Handle card selection
             card.addEventListener('click', async () => {
-                // Disable all cards and toggle to prevent double selection
+                // Disable all cards and radios to prevent double selection
                 container.querySelectorAll('.monta-pickup-card').forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
-                toggle.disabled = true;
+                deliveryTypeRadios.forEach(r => r.disabled = true);
                 showLoading(true);
 
                 try {
@@ -216,12 +216,12 @@ function initMontaPickup() {
                         window.location.reload();
                     } else {
                         showLoading(false);
-                        toggle.disabled = false;
+                        deliveryTypeRadios.forEach(r => r.disabled = false);
                         showError((res && res.message) || "Failed to select pickup point.");
                     }
                 } catch (e) {
                     showLoading(false);
-                    toggle.disabled = false;
+                    deliveryTypeRadios.forEach(r => r.disabled = false);
                     showError("An error occurred while selecting the pickup point.");
                     console.error(e);
                 }

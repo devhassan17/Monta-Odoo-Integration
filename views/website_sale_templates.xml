@@ -22,8 +22,8 @@
                         </label>
                         <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'two_day' else ''">
                             <input type="radio" name="monta_delivery_type" value="two_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'two_day' else None"/>
-                            <div class="fw-bold small text-dark"><i class="fa fa-calendar me-1 text-info"/> 2-Day</div>
-                            <div class="text-muted extra-small">Delivered in 2 days</div>
+                            <div class="fw-bold small text-dark"><i class="fa fa-calendar me-1 text-info"/> 1-Day</div>
+                            <div class="text-muted extra-small">Delivered in 1 day</div>
                         </label>
                         <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if (website_sale_order.monta_delivery_type == 'pickup' or website_sale_order.monta_shipper_code) else ''">
                             <input type="radio" name="monta_delivery_type" value="pickup" id="monta_use_pickup" class="d-none" t-att-checked="'checked' if (website_sale_order.monta_delivery_type == 'pickup' or website_sale_order.monta_shipper_code) else None"/>
