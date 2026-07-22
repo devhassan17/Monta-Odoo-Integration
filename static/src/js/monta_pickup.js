@@ -18,23 +18,26 @@ async function rpc(route, params) {
 }
 
 function initMontaPickup() {
-    const container = document.querySelector('.monta-delivery-container') || document.querySelector('.monta-pickup-container');
-    if (!container) return;
+    const speedContainer = document.querySelector('.monta-delivery-speed-container');
+    const pickupContainer = document.querySelector('.monta-pickup-container');
+    if (!speedContainer && !pickupContainer) return;
 
-    // Prevent Odoo click card listener bubbling inside container
-    container.addEventListener('click', (e) => e.stopPropagation());
+    // Prevent Odoo click card listener bubbling inside containers
+    if (speedContainer) speedContainer.addEventListener('click', (e) => e.stopPropagation());
+    if (pickupContainer) pickupContainer.addEventListener('click', (e) => e.stopPropagation());
 
-    const deliveryTypeRadios = container.querySelectorAll('input[name="monta_delivery_type"]');
-    const box = container.querySelector('#monta-pickup-box');
-    const btnSearch = container.querySelector('#btn_search_monta_pickup');
-    const streetInput = container.querySelector('#monta_pickup_street');
-    const houseInput = container.querySelector('#monta_pickup_house');
-    const zipInput = container.querySelector('#monta_pickup_zip');
-    const cityInput = container.querySelector('#monta_pickup_city');
-    const countrySelect = container.querySelector('#monta_pickup_country');
-    const loading = container.querySelector('#monta_pickup_loading');
-    const errorDiv = container.querySelector('#monta_pickup_error');
-    const resultsDiv = container.querySelector('#monta_pickup_results');
+    const deliveryTypeRadios = document.querySelectorAll('input[name="monta_delivery_type"]');
+    const togglePickup = document.querySelector('#monta_use_pickup');
+    const box = document.querySelector('#monta-pickup-box');
+    const btnSearch = document.querySelector('#btn_search_monta_pickup');
+    const streetInput = document.querySelector('#monta_pickup_street');
+    const houseInput = document.querySelector('#monta_pickup_house');
+    const zipInput = document.querySelector('#monta_pickup_zip');
+    const cityInput = document.querySelector('#monta_pickup_city');
+    const countrySelect = document.querySelector('#monta_pickup_country');
+    const loading = document.querySelector('#monta_pickup_loading');
+    const errorDiv = document.querySelector('#monta_pickup_error');
+    const resultsDiv = document.querySelector('#monta_pickup_results');
 
     // Helper: auto-detect user's address from checkout DOM form inputs if available
     function autoDetectUserAddress() {
@@ -59,8 +62,8 @@ function initMontaPickup() {
 
     autoDetectUserAddress();
 
-    // Handle delivery speed option selection (Standard, Next Day, 2-Day, Pickup)
-    const optionCards = container.querySelectorAll('.monta-delivery-option-card');
+    // Section 1: Handle Delivery Speed Cards (Standard, Next Day, 2-Day)
+    const optionCards = document.querySelectorAll('.monta-delivery-option-card');
     optionCards.forEach(card => {
         card.addEventListener('click', (e) => {
             const radio = card.querySelector('input[name="monta_delivery_type"]');
@@ -73,14 +76,39 @@ function initMontaPickup() {
 
     deliveryTypeRadios.forEach(radio => {
         radio.addEventListener('change', async () => {
-            // Highlight selected option card UI
             optionCards.forEach(card => card.classList.remove('active'));
             const parentLabel = radio.closest('.monta-delivery-option-card');
             if (parentLabel) parentLabel.classList.add('active');
 
             const selectedType = radio.value;
 
-            if (selectedType === 'pickup') {
+            // If pickup point checkbox was checked, uncheck it when selecting delivery speed
+            if (togglePickup && togglePickup.checked) {
+                togglePickup.checked = false;
+                if (box) box.classList.remove('show');
+            }
+
+            showLoading(true);
+            try {
+                const res = await rpc('/shop/monta/select_delivery_type', {
+                    delivery_type: selectedType
+                });
+                if (res && res.status === 'success') {
+                    window.location.reload();
+                } else {
+                    showLoading(false);
+                }
+            } catch (e) {
+                showLoading(false);
+                console.error("Failed to set delivery type:", e);
+            }
+        });
+    });
+
+    // Section 2: Handle Pickup Point Toggle Checkbox
+    if (togglePickup) {
+        togglePickup.addEventListener('change', async () => {
+            if (togglePickup.checked) {
                 if (box) box.classList.add('show');
                 autoDetectUserAddress();
                 if (resultsDiv && resultsDiv.children.length === 0) {
@@ -88,24 +116,24 @@ function initMontaPickup() {
                 }
             } else {
                 if (box) box.classList.remove('show');
-                showLoading(true);
                 try {
-                    const res = await rpc('/shop/monta/select_delivery_type', {
-                        delivery_type: selectedType
+                    togglePickup.disabled = true;
+                    showLoading(true);
+                    const res = await rpc('/shop/monta/select_pickup_point', {
+                        shipper_code: false
                     });
                     if (res && res.status === 'success') {
-                        // Reload checkout page to apply delivery type and summary
                         window.location.reload();
-                    } else {
-                        showLoading(false);
                     }
                 } catch (e) {
+                    console.error("Failed to clear pickup point:", e);
+                } finally {
+                    togglePickup.disabled = false;
                     showLoading(false);
-                    console.error("Failed to set delivery type:", e);
                 }
             }
         });
-    });
+    }
 
     if (btnSearch) {
         btnSearch.addEventListener('click', performSearch);

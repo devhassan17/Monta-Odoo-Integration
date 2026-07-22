@@ -3,37 +3,40 @@
     <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Delivery Options &amp; Pickup Point Injection">
         <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="before">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
-                <div class="monta-delivery-container mt-3 mb-4 p-3 border rounded bg-white shadow-sm">
+                <!-- Section 1: Delivery Speed Options -->
+                <div class="monta-delivery-speed-container mt-3 mb-3 p-3 border rounded bg-white shadow-sm">
                     <h6 class="fw-bold mb-3" style="color: #E5007D;">
-                        <i class="fa fa-truck me-1"/> Select Delivery Speed &amp; Options
+                        <i class="fa fa-truck me-1"/> Select Delivery Speed
                     </h6>
-                    
-                    <!-- Delivery Method / Speed Selectors -->
-                    <div class="monta-delivery-type-options d-flex flex-wrap gap-2 mb-3">
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' else ''">
-                            <input type="radio" name="monta_delivery_type" value="standard" class="d-none" t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' else None"/>
+                    <div class="monta-delivery-type-options d-flex flex-wrap gap-2">
+                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' and not website_sale_order.monta_shipper_code else ''">
+                            <input type="radio" name="monta_delivery_type" value="standard" class="d-none" t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'standard') == 'standard' and not website_sale_order.monta_shipper_code else None"/>
                             <div class="fw-bold small text-dark"><i class="fa fa-box me-1"/> Standard</div>
                             <div class="text-muted extra-small">Regular fulfillment</div>
                         </label>
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'next_day' else ''">
-                            <input type="radio" name="monta_delivery_type" value="next_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' else None"/>
+                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''">
+                            <input type="radio" name="monta_delivery_type" value="next_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"/>
                             <div class="fw-bold small text-dark"><i class="fa fa-bolt me-1 text-warning"/> Next Day</div>
                             <div class="text-muted extra-small">Delivered tomorrow</div>
                         </label>
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'two_day' else ''">
-                            <input type="radio" name="monta_delivery_type" value="two_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'two_day' else None"/>
+                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if website_sale_order.monta_delivery_type == 'two_day' and not website_sale_order.monta_shipper_code else ''">
+                            <input type="radio" name="monta_delivery_type" value="two_day" class="d-none" t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'two_day' and not website_sale_order.monta_shipper_code else None"/>
                             <div class="fw-bold small text-dark"><i class="fa fa-calendar me-1 text-info"/> 2-Day</div>
                             <div class="text-muted extra-small">Delivered in 2 days</div>
                         </label>
-                        <label class="monta-delivery-option-card flex-fill p-2 border rounded text-center cursor-pointer" t-att-class="'active' if (website_sale_order.monta_delivery_type == 'pickup' or website_sale_order.monta_shipper_code) else ''">
-                            <input type="radio" name="monta_delivery_type" value="pickup" id="monta_use_pickup" class="d-none" t-att-checked="'checked' if (website_sale_order.monta_delivery_type == 'pickup' or website_sale_order.monta_shipper_code) else None"/>
-                            <div class="fw-bold small" style="color: #E5007D;"><i class="fa fa-map-marker me-1"/> Delivery Point</div>
-                            <div class="text-muted extra-small">Pickup location</div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Delivery Point / Pickup Point -->
+                <div class="monta-pickup-container mt-3 mb-4 p-3 border rounded bg-white shadow-sm">
+                    <div class="form-check monta-pickup-selector">
+                        <input type="checkbox" class="form-check-input" id="monta_use_pickup" name="monta_use_pickup" t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"/>
+                        <label class="form-check-label fw-bold text-uppercase" for="monta_use_pickup" style="color: #E5007D; cursor: pointer; letter-spacing: 0.5px;">
+                            <i class="fa fa-map-marker me-1"/> Or send to a delivery point
                         </label>
                     </div>
-
-                    <!-- Pickup Point Search Box -->
-                    <div id="monta-pickup-box" class="collapse mt-3 pt-3 border-top" t-att-class="'show' if (website_sale_order.monta_delivery_type == 'pickup' or website_sale_order.monta_shipper_code) else ''">
+                    
+                    <div id="monta-pickup-box" class="collapse mt-3 pt-3 border-top" t-att-class="'show' if website_sale_order.monta_shipper_code else ''">
                         <div class="text-muted small mb-2"><i class="fa fa-info-circle me-1"/> Search pickup points near your address:</div>
                         <div class="row g-2 mb-3">
                             <div class="col-md-5">
