@@ -23,7 +23,7 @@
                 </div>
 
                 <!-- Section 3: Choose your shipping packaging -->
-                <div class="monta-packaging-container mt-3 mb-3">
+                <div t-if="'monta_packaging_type' in website_sale_order._fields" class="monta-packaging-container mt-3 mb-3">
                     <h5 class="fw-bold mb-2 text-uppercase" style="color: #212529; font-size: 1.1rem; letter-spacing: 0.5px;">Choose your shipping packaging</h5>
                     <div class="border rounded bg-white shadow-sm overflow-hidden monta-packaging-list">
                         <!-- Option 1: Deposit packaging -->
