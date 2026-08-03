@@ -64,30 +64,50 @@ function initMontaPickup() {
 
     autoDetectUserAddress();
 
-    // Section 1: Handle Delivery Speed Select Dropdown
-    const speedSelect = document.querySelector('#monta_delivery_speed_select');
-    if (speedSelect) {
-        speedSelect.addEventListener('change', async () => {
-            const selectedType = speedSelect.value;
-            if (togglePickup && togglePickup.checked) {
-                togglePickup.checked = false;
-                if (box) box.classList.remove('show');
-            }
+    // Section 1: Handle Delivery Speed Card/Radio Selection
+    const deliverySpeedContainer = document.querySelector('.monta-delivery-speed-container');
+    if (deliverySpeedContainer) {
+        const deliveryItems = deliverySpeedContainer.querySelectorAll('.monta-packaging-item');
+        const deliveryRadios = deliverySpeedContainer.querySelectorAll('input.monta-delivery-radio');
 
-            showLoading(true);
-            try {
-                const res = await rpc('/shop/monta/select_delivery_type', {
-                    delivery_type: selectedType
-                });
-                if (res && res.status === 'success') {
-                    window.location.reload();
-                } else {
-                    showLoading(false);
+        // Clicking a card row selects the radio inside it
+        deliveryItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.classList.contains('monta-info-circle') || e.target.classList.contains('monta-delivery-radio')) {
+                    return;
                 }
-            } catch (e) {
-                showLoading(false);
-                console.error("Failed to set delivery type:", e);
-            }
+                const radio = item.querySelector('input.monta-delivery-radio');
+                if (radio && !radio.checked) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+
+        // On radio change, call the backend
+        deliveryRadios.forEach(radio => {
+            radio.addEventListener('change', async () => {
+                const selectedType = radio.value;
+                // Uncheck pickup if switching delivery type
+                if (togglePickup && togglePickup.checked) {
+                    togglePickup.checked = false;
+                    if (box) box.classList.remove('show');
+                }
+                showLoading(true);
+                try {
+                    const res = await rpc('/shop/monta/select_delivery_type', {
+                        delivery_type: selectedType
+                    });
+                    if (res && res.status === 'success') {
+                        window.location.reload();
+                    } else {
+                        showLoading(false);
+                    }
+                } catch (e) {
+                    showLoading(false);
+                    console.error("Failed to set delivery type:", e);
+                }
+            });
         });
     }
 
