@@ -36,7 +36,7 @@ class MontaPickupController(http.Controller):
         # Compile products for accurate size/weight constraints in Monta
         products = []
         for line in order.order_line:
-            if line.product_id and not line.is_delivery and not getattr(line, 'is_cs_packaging', False) and not getattr(line, 'is_cs_box', False):
+            if line.product_id and not line.is_delivery and not getattr(line, 'is_cs_packaging', False) and not getattr(line, 'is_cs_box', False) and not getattr(line, 'is_monta_surcharge', False):
                 products.append({
                     "Sku": line.product_id.default_code or line.product_id.barcode or "",
                     "Quantity": int(line.product_uom_qty)
@@ -138,7 +138,7 @@ class MontaPickupController(http.Controller):
                     'partner_shipping_id': order.partner_id.id,
                     'monta_shipper_code': False,
                     'monta_shipper_options': False,
-                    'monta_delivery_type': 'standard',
+                    'monta_delivery_type': 'two_day',
                 })
                 # Re-evaluate delivery carrier
                 carrier = order.carrier_id or request.env['delivery.carrier'].sudo().search([], limit=1)
@@ -239,8 +239,8 @@ class MontaPickupController(http.Controller):
             return {'status': 'error', 'message': str(e)}
 
     @http.route('/shop/monta/select_delivery_type', type='json', auth='public', website=True)
-    def select_delivery_type(self, delivery_type='standard', **kwargs):
-        """Update checkout order delivery speed: standard, next_day, or two_day."""
+    def select_delivery_type(self, delivery_type='two_day', **kwargs):
+        """Update checkout order delivery speed: next_day or two_day."""
         order = request.website.sale_get_order()
         if not order:
             return {'status': 'error', 'message': 'No active sales order.'}
@@ -271,6 +271,46 @@ class MontaPickupController(http.Controller):
 
             order.write(vals)
 
+            # Recalculate/apply delivery carrier line price
+            if delivery_type != 'pickup':
+                price = 1.0 if delivery_type == 'next_day' else 0.0
+                delivery_name = "Priority: Next day delivery" if delivery_type == 'next_day' else "Standard: 2-day delivery"
+
+                carrier = order.carrier_id
+                if not carrier:
+                    carrier = request.env['delivery.carrier'].sudo().search([('name', 'ilike', 'Standard')], limit=1)
+                if not carrier:
+                    carrier = request.env['delivery.carrier'].sudo().search([], limit=1)
+
+                if carrier:
+                    order.write({'carrier_id': carrier.id})
+                    if hasattr(order, '_set_delivery_line'):
+                        order._set_delivery_line(carrier, price)
+                    elif hasattr(order, 'set_delivery_line'):
+                        order.set_delivery_line(carrier, price)
+                    else:
+                        delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
+                        if delivery_line:
+                            delivery_line[0].write({
+                                'product_id': carrier.product_id.id,
+                                'price_unit': price,
+                                'name': delivery_name,
+                            })
+                        else:
+                            order.env['sale.order.line'].sudo().create({
+                                'order_id': order.id,
+                                'product_id': carrier.product_id.id,
+                                'name': delivery_name,
+                                'product_uom_qty': 1.0,
+                                'price_unit': price,
+                                'is_delivery': True,
+                            })
+
+                    # Update delivery line name explicitly to display selected speed info
+                    delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
+                    if delivery_line:
+                        delivery_line[0].write({'name': delivery_name})
+
             return {
                 'status': 'success',
                 'delivery_type': delivery_type,
@@ -279,4 +319,23 @@ class MontaPickupController(http.Controller):
 
         except Exception as e:
             _logger.exception("Error updating delivery type: %s", str(e))
+            return {'status': 'error', 'message': str(e)}
+
+    @http.route('/shop/monta/select_packaging_type', type='json', auth='public', website=True)
+    def select_packaging_type(self, packaging_type='deposit', **kwargs):
+        """Update checkout order packaging option: deposit or single_use."""
+        order = request.website.sale_get_order()
+        if not order:
+            return {'status': 'error', 'message': 'No active sales order.'}
+
+        try:
+            order.write({'monta_packaging_type': packaging_type})
+            order._update_monta_packaging_surcharge()
+
+            return {
+                'status': 'success',
+                'packaging_type': packaging_type,
+            }
+        except Exception as e:
+            _logger.exception("Error updating packaging type: %s", str(e))
             return {'status': 'error', 'message': str(e)}

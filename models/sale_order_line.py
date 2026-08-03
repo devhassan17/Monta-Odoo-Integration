@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
 import logging
 
-from odoo import models
+from odoo import fields, models
 
 _logger = logging.getLogger(__name__)
 
 
 class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"
+
+    is_monta_surcharge = fields.Boolean(
+        string="Is Monta Surcharge",
+        default=False,
+        copy=False,
+        help="Flag indicating this line represents a Monta packaging surcharge.",
+    )
 
     def _touch_parent_for_monta(self, orders=None):
         orders = orders if orders is not None else self.mapped("order_id")

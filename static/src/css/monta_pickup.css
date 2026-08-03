@@ -113,3 +113,47 @@
 .monta-pickup-list::-webkit-scrollbar-thumb:hover {
     background: #a1a8ae;
 }
+
+/* Choose your shipping packaging section styling */
+.monta-packaging-list {
+    border: 1px solid #dee2e6;
+    background-color: #ffffff;
+}
+
+.monta-packaging-item {
+    transition: background-color 0.2s ease-in-out;
+}
+
+.monta-packaging-item:hover {
+    background-color: #f8f9fa;
+}
+
+.monta-packaging-item.active {
+    background-color: #eef2f5 !important;
+}
+
+/* Custom info circle style */
+.monta-info-circle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid #007bff;
+    color: #007bff;
+    font-size: 10px;
+    font-weight: bold;
+    font-style: normal;
+    line-height: 1;
+    vertical-align: middle;
+    cursor: pointer;
+    text-align: center;
+}
+
+/* Styling radio button checks to match Monta pink style when active */
+.monta-packaging-radio:checked {
+    background-color: #E5007D !important;
+    border-color: #E5007D !important;
+}
+

@@ -56,6 +56,16 @@ class SaleOrder(models.Model):
         copy=False,
         help="The delivery speed/type selected for Monta fulfillment.",
     )
+    monta_packaging_type = fields.Selection(
+        selection=[
+            ("deposit", "Deposit packaging"),
+            ("single_use", "Single-use packaging"),
+        ],
+        string="Monta Packaging Type",
+        default="deposit",
+        copy=False,
+        help="The shipping packaging option chosen by the user.",
+    )
     monta_requested_delivery_date = fields.Datetime(
         string="Monta Requested Delivery Date",
         copy=False,

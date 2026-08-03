@@ -20,11 +20,13 @@ async function rpc(route, params) {
 function initMontaPickup() {
     const speedContainer = document.querySelector('.monta-delivery-speed-container');
     const pickupContainer = document.querySelector('.monta-pickup-container');
-    if (!speedContainer && !pickupContainer) return;
+    const packagingContainer = document.querySelector('.monta-packaging-container');
+    if (!speedContainer && !pickupContainer && !packagingContainer) return;
 
     // Prevent Odoo click card listener bubbling inside containers
     if (speedContainer) speedContainer.addEventListener('click', (e) => e.stopPropagation());
     if (pickupContainer) pickupContainer.addEventListener('click', (e) => e.stopPropagation());
+    if (packagingContainer) packagingContainer.addEventListener('click', (e) => e.stopPropagation());
 
     const deliveryTypeRadios = document.querySelectorAll('input[name="monta_delivery_type"]');
     const togglePickup = document.querySelector('#monta_use_pickup');
@@ -86,6 +88,46 @@ function initMontaPickup() {
                 showLoading(false);
                 console.error("Failed to set delivery type:", e);
             }
+        });
+    }
+
+    // Section 3: Handle Packaging Selection Click & Change
+    if (packagingContainer) {
+        const packagingItems = packagingContainer.querySelectorAll('.monta-packaging-item');
+        const packagingRadios = packagingContainer.querySelectorAll('input[name="monta_packaging_type"]');
+
+        packagingItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                // If they clicked the info icon or the radio itself, let standard browser behavior happen
+                if (e.target.classList.contains('monta-info-circle') || e.target.classList.contains('monta-packaging-radio')) {
+                    return;
+                }
+                const radio = item.querySelector('input[name="monta_packaging_type"]');
+                if (radio && !radio.checked) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+
+        packagingRadios.forEach(radio => {
+            radio.addEventListener('change', async () => {
+                const selectedVal = radio.value;
+                showLoading(true);
+                try {
+                    const res = await rpc('/shop/monta/select_packaging_type', {
+                        packaging_type: selectedVal
+                    });
+                    if (res && res.status === 'success') {
+                        window.location.reload();
+                    } else {
+                        showLoading(false);
+                    }
+                } catch (e) {
+                    showLoading(false);
+                    console.error("Failed to set packaging type:", e);
+                }
+            });
         });
     }
 

@@ -102,8 +102,46 @@ class SaleOrder(models.Model):
     # ---------------------------------------------------------
     # Payload prep
     # ---------------------------------------------------------
+    def _update_monta_packaging_surcharge(self):
+        self.ensure_one()
+        surcharge_lines = self.order_line.filtered(lambda l: l.is_monta_surcharge)
+        
+        if self.monta_packaging_type == 'single_use':
+            if not surcharge_lines:
+                # Add the surcharge line
+                Product = self.env['product.product'].sudo()
+                product = Product.search([('default_code', '=', 'monta_single_use_surcharge')], limit=1)
+                if not product:
+                    product = Product.create({
+                        'name': 'Single-use surcharge',
+                        'type': 'service',
+                        'default_code': 'monta_single_use_surcharge',
+                        'list_price': 0.25,
+                        'sale_ok': True,
+                        'purchase_ok': False,
+                    })
+                
+                self.env['sale.order.line'].sudo().create({
+                    'order_id': self.id,
+                    'product_id': product.id,
+                    'name': 'Single-use surcharge',
+                    'product_uom_qty': 1.0,
+                    'price_unit': 0.25,
+                    'is_monta_surcharge': True,
+                })
+        else:
+            # If deposit, remove the surcharge lines
+            if surcharge_lines:
+                surcharge_lines.sudo().unlink()
+
     def _prepare_monta_lines(self):
-        components = [(l.product_id, l.product_uom_qty) for l in self.order_line if l.product_id and l.product_uom_qty > 0]
+        components = [
+            (l.product_id, l.product_uom_qty) 
+            for l in self.order_line 
+            if l.product_id and l.product_uom_qty > 0 
+            and not l.is_delivery 
+            and not getattr(l, 'is_monta_surcharge', False)
+        ]
         return self._prepare_monta_lines_from_components(components)
 
     def _prepare_monta_lines_from_components(self, components):
