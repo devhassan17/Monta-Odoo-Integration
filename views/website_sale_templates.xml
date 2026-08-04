@@ -5,63 +5,62 @@
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
 
                 <!-- ══ Delivery Speed ══ -->
-                <div class="monta-section monta-delivery-speed-container mt-4 mb-4">
-                    <p class="monta-section-title">Choose your delivery speed</p>
-                    <div class="monta-option-list">
+                <div class="monta-delivery-speed-container mt-4 mb-4">
+                    <h6 class="fw-bold text-uppercase mb-2" style="font-size: 0.8rem; letter-spacing: 0.05em;">Choose your delivery speed</h6>
 
-                        <!-- Standard 2-day -->
-                        <div class="monta-option-row"
-                             t-att-class="'monta-option-row--active border-bottom' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else 'border-bottom'"
-                             data-delivery="two_day">
-                            <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
-                                   t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
-                                   class="monta-radio monta-delivery-radio"/>
-                            <div class="monta-option-body">
-                                <div class="monta-option-header">
-                                    <label class="monta-option-name" for="delivery_two_day">
-                                        Standard: 2-day delivery
-                                        <span class="monta-info-badge" title="Delivered within 2 business days at no extra cost">i</span>
-                                    </label>
-                                    <span class="monta-option-price">€ 0.00</span>
-                                </div>
-                                <div class="monta-option-desc">Delivered within 2 business days</div>
+                    <!-- Standard 2-day -->
+                    <div class="border rounded bg-white p-3 mb-2 d-flex align-items-center gap-3 monta-delivery-card"
+                         t-att-class="'monta-delivery-card--active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else ''"
+                         data-delivery="two_day">
+                        <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
+                               t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
+                               class="monta-radio monta-delivery-radio" style="flex-shrink: 0;"/>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label class="fw-bold mb-0" for="delivery_two_day" style="cursor: pointer;">
+                                    Standard: 2-day delivery
+                                    <span class="monta-info-badge ms-1" title="Delivered within 2 business days at no extra cost">i</span>
+                                </label>
+                                <span class="fw-bold ms-3 text-nowrap">€ 0.00</span>
                             </div>
+                            <div class="text-muted mt-1" style="font-size: 0.85rem;">Delivered within 2 business days</div>
                         </div>
+                    </div>
 
-                        <!-- Priority Next Day -->
-                        <div class="monta-option-row"
-                             t-att-class="'monta-option-row--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
-                             data-delivery="next_day">
-                            <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
-                                   t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
-                                   class="monta-radio monta-delivery-radio"/>
-                            <div class="monta-option-body">
-                                <div class="monta-option-header">
-                                    <label class="monta-option-name" for="delivery_next_day">
-                                        Priority: Next day delivery
-                                        <span class="monta-info-badge" title="Order before cut-off time for next business day delivery">i</span>
-                                    </label>
-                                    <span class="monta-option-price">+ € 1.00</span>
-                                </div>
-                                <div class="monta-option-desc">Next business day — surcharge applies for next day delivery</div>
+                    <!-- Priority Next Day -->
+                    <div class="border rounded bg-white p-3 mb-2 d-flex align-items-center gap-3 monta-delivery-card"
+                         t-att-class="'monta-delivery-card--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
+                         data-delivery="next_day">
+                        <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
+                               t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
+                               class="monta-radio monta-delivery-radio" style="flex-shrink: 0;"/>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <label class="fw-bold mb-0" for="delivery_next_day" style="cursor: pointer;">
+                                    Priority: Next day delivery
+                                    <span class="monta-info-badge ms-1" title="Order before cut-off time for next business day delivery">i</span>
+                                </label>
+                                <span class="fw-bold ms-3 text-nowrap">+ € 1.00</span>
                             </div>
+                            <div class="text-muted mt-1" style="font-size: 0.85rem;">Next business day — surcharge applies for next day delivery</div>
                         </div>
-
                     </div>
                 </div>
 
                 <!-- ══ Pickup Point ══ -->
-                <div class="monta-section monta-pickup-container mt-2 mb-4">
-                    <div class="monta-pickup-toggle-row">
+                <div class="monta-pickup-container mt-2 mb-4">
+                    <div class="d-flex align-items-center gap-2">
                         <input type="checkbox" class="monta-pickup-checkbox" id="monta_use_pickup" name="monta_use_pickup"
-                               t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"/>
-                        <label for="monta_use_pickup" class="monta-pickup-toggle-label">
+                               t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"
+                               style="width: 16px; height: 16px; cursor: pointer; accent-color: #E5007D; flex-shrink: 0;"/>
+                        <label for="monta_use_pickup" class="fw-bold text-uppercase mb-0"
+                               style="font-size: 0.75rem; letter-spacing: 0.05em; color: #E5007D; cursor: pointer;">
                             Or deliver to a pickup point
                         </label>
                     </div>
 
                     <div id="monta-pickup-box" class="monta-pickup-box" t-att-class="'show' if website_sale_order.monta_shipper_code else ''">
-                        <div class="monta-pickup-hint">Search pickup points near your address:</div>
+                        <div class="text-muted mb-2 mt-3" style="font-size: 0.85rem;">Search pickup points near your address:</div>
                         <div class="row g-2 mb-3">
                             <div class="col-md-5">
                                 <input type="text" id="monta_pickup_street" class="form-control form-control-sm" placeholder="Street name"
@@ -88,19 +87,20 @@
                                 </select>
                             </div>
                             <div class="col-md-3">
-                                <button type="button" id="btn_search_monta_pickup" class="btn btn-sm w-100 monta-search-btn">
+                                <button type="button" id="btn_search_monta_pickup" class="btn btn-sm w-100 text-white fw-bold"
+                                        style="background-color: #E5007D; border-color: #E5007D;">
                                     Search
                                 </button>
                             </div>
                         </div>
 
                         <div id="monta_pickup_loading" class="text-center d-none my-3">
-                            <div class="spinner-border spinner-border-sm text-secondary" role="status">
+                            <div class="spinner-border spinner-border-sm" role="status" style="color: #E5007D;">
                                 <span class="visually-hidden">Loading...</span>
                             </div>
                         </div>
                         <div id="monta_pickup_error" class="alert alert-danger d-none py-2 px-3 small" role="alert"></div>
-                        <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2" style="max-height: 380px; overflow-y: auto;"></div>
+                        <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2 mt-2" style="max-height: 380px; overflow-y: auto;"></div>
                     </div>
                 </div>
 

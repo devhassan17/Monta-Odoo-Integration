@@ -147,7 +147,55 @@ class SaleOrder(models.Model):
             if surcharge_lines:
                 surcharge_lines.sudo().unlink()
 
+    def _reapply_monta_delivery_price(self):
+        """
+        Force our custom Monta delivery price onto the delivery line.
+        - next_day  → € 1.00
+        - everything else (two_day / standard / pickup) → € 0.00
+        (For pickup points the price comes from the pickup selection itself.)
+        Called after any operation that might reset the delivery line price.
+        """
+        self.ensure_one()
+        if not hasattr(self, 'monta_delivery_type'):
+            return
+        delivery_type = self.monta_delivery_type
+        if delivery_type in (False, None, 'pickup'):
+            return  # let pickup handling manage the price
+
+        price = 1.0 if delivery_type == 'next_day' else 0.0
+        name = (
+            'Priority: Next day delivery'
+            if delivery_type == 'next_day'
+            else 'Standard: 2-day delivery'
+        )
+
+        delivery_lines = self.sudo().order_line.filtered(lambda l: l.is_delivery)
+        if delivery_lines:
+            delivery_lines[0].with_context(
+                skip_monta_write_hook=True
+            ).sudo().write({
+                'price_unit': price,
+                'name': name,
+            })
+
+    def _check_carrier_quotation(self, force_carrier_id=None, keep_old_carrier=False):
+        """
+        Override to preserve our custom Monta delivery price.
+        Odoo's website_sale calls this on checkout page load to re-rate the
+        carrier, which would overwrite our € 0 / € 1 price with the carrier's
+        configured rate (e.g. € 2 for Box).
+        """
+        res = super()._check_carrier_quotation(
+            force_carrier_id=force_carrier_id,
+            keep_old_carrier=keep_old_carrier,
+        )
+        # After Odoo re-rates, snap the price back to our custom value
+        for order in self:
+            order._reapply_monta_delivery_price()
+        return res
+
     def _prepare_monta_lines(self):
+
         components = [
             (l.product_id, l.product_uom_qty) 
             for l in self.order_line 
@@ -156,6 +204,7 @@ class SaleOrder(models.Model):
             and not getattr(l, 'is_monta_surcharge', False)
         ]
         return self._prepare_monta_lines_from_components(components)
+
 
     def _prepare_monta_lines_from_components(self, components):
         """
