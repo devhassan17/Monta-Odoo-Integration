@@ -104,33 +104,46 @@ class SaleOrder(models.Model):
     # ---------------------------------------------------------
     def _update_monta_packaging_surcharge(self):
         self.ensure_one()
-        surcharge_lines = self.order_line.filtered(lambda l: l.is_monta_surcharge)
-        
-        if self.monta_packaging_type == 'single_use':
+        sudo_self = self.sudo()
+        surcharge_lines = sudo_self.order_line.filtered(lambda l: l.is_monta_surcharge)
+
+        if sudo_self.monta_packaging_type == 'single_use':
             if not surcharge_lines:
-                # Add the surcharge line
+                # Find or create the surcharge product
                 Product = self.env['product.product'].sudo()
                 product = Product.search([('default_code', '=', 'monta_single_use_surcharge')], limit=1)
                 if not product:
+                    # Find the standard UoM (Units)
+                    uom = self.env['uom.uom'].sudo().search(
+                        [('category_id.name', '=', 'Unit'), ('name', 'in', ('Unit(s)', 'Units', 'Unit'))],
+                        limit=1
+                    )
                     product = Product.create({
-                        'name': 'Single-use surcharge',
+                        'name': 'Single-use packaging surcharge',
                         'type': 'service',
                         'default_code': 'monta_single_use_surcharge',
                         'list_price': 0.25,
                         'sale_ok': True,
                         'purchase_ok': False,
+                        'uom_id': uom.id if uom else False,
+                        'uom_po_id': uom.id if uom else False,
                     })
-                
-                self.env['sale.order.line'].sudo().create({
+
+                # Create the surcharge order line (skip monta sync hooks for draft orders)
+                line_vals = {
                     'order_id': self.id,
                     'product_id': product.id,
-                    'name': 'Single-use surcharge',
+                    'name': 'Single-use packaging surcharge',
                     'product_uom_qty': 1.0,
                     'price_unit': 0.25,
                     'is_monta_surcharge': True,
-                })
+                    'sequence': 999,
+                }
+                if product.uom_id:
+                    line_vals['product_uom'] = product.uom_id.id
+                self.with_context(skip_monta_write_hook=True).env['sale.order.line'].sudo().create(line_vals)
         else:
-            # If deposit, remove the surcharge lines
+            # Deposit selected — remove any existing surcharge lines
             if surcharge_lines:
                 surcharge_lines.sudo().unlink()
 

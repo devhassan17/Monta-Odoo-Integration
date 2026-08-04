@@ -3,124 +3,127 @@
     <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Delivery Options &amp; Pickup Point Injection">
         <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="before">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
-                <!-- Section 1: Delivery Speed Options -->
-                <div class="monta-delivery-speed-container mt-3 mb-4">
-                    <h5 class="fw-bold mb-3 text-uppercase text-dark" style="font-family: inherit; font-size: 1.15rem; letter-spacing: 0.5px;">Choose your delivery speed</h5>
-                    <div class="border rounded bg-white shadow-sm overflow-hidden monta-packaging-list" style="border-color: #dee2e6 !important;">
-                        <!-- Option 1: Standard 2-day -->
-                        <div class="p-3 border-bottom d-flex align-items-start gap-3 monta-packaging-item cursor-pointer"
-                             t-att-class="'active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else ''"
-                             data-delivery="two_day">
-                            <div class="pt-1">
-                                <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
-                                       t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
-                                       class="monta-packaging-radio monta-delivery-radio"/>
-                            </div>
-                            <div class="flex-grow-1" style="cursor: pointer;">
-                                <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="fw-bold m-0 p-0 text-dark" for="delivery_two_day" style="cursor: pointer; font-size: 0.95rem; font-family: inherit;">
-                                        Standard: 2-day delivery <span class="monta-info-circle ms-1" title="Delivered within 2 business days at no extra cost">i</span>
-                                    </label>
-                                    <span class="fw-bold text-dark font-monospace" style="font-size: 0.95rem;">€ 0.00</span>
-                                </div>
-                                <div class="text-muted small" style="font-size: 0.85rem;">Delivered within 2 business days</div>
-                            </div>
-                        </div>
 
-                        <!-- Option 2: Priority Next Day -->
-                        <div class="p-3 d-flex align-items-start gap-3 monta-packaging-item cursor-pointer"
-                             t-att-class="'active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
-                             data-delivery="next_day">
-                            <div class="pt-1">
-                                <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
-                                       t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
-                                       class="monta-packaging-radio monta-delivery-radio"/>
-                            </div>
-                            <div class="flex-grow-1" style="cursor: pointer;">
-                                <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="fw-bold m-0 p-0 text-dark" for="delivery_next_day" style="cursor: pointer; font-size: 0.95rem; font-family: inherit;">
-                                        Priority: Next day delivery <span class="monta-info-circle ms-1" title="Order before cut-off time for next business day delivery">i</span>
-                                    </label>
-                                    <span class="fw-bold text-dark font-monospace" style="font-size: 0.95rem;">+ € 1.00</span>
+                <!-- ══ Section 1: Delivery Speed ══ -->
+                <div class="monta-section monta-delivery-speed-container mt-4 mb-4">
+                    <p class="monta-section-title">Choose your delivery speed</p>
+                    <div class="monta-option-list">
+
+                        <!-- Standard 2-day -->
+                        <label class="monta-option-row border-bottom"
+                               t-att-class="'monta-option-row--active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else ''"
+                               for="delivery_two_day">
+                            <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
+                                   t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
+                                   class="monta-radio monta-delivery-radio"/>
+                            <div class="monta-option-body">
+                                <div class="monta-option-header">
+                                    <span class="monta-option-name">
+                                        Standard: 2-day delivery
+                                        <span class="monta-info-badge" title="Delivered within 2 business days at no extra cost">i</span>
+                                    </span>
+                                    <span class="monta-option-price">€ 0.00</span>
                                 </div>
-                                <div class="text-muted small" style="font-size: 0.85rem;">Next business day delivery — surcharge for next day delivery</div>
+                                <div class="monta-option-desc">Delivered within 2 business days</div>
                             </div>
-                        </div>
+                        </label>
+
+                        <!-- Priority Next Day -->
+                        <label class="monta-option-row"
+                               t-att-class="'monta-option-row--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
+                               for="delivery_next_day">
+                            <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
+                                   t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
+                                   class="monta-radio monta-delivery-radio"/>
+                            <div class="monta-option-body">
+                                <div class="monta-option-header">
+                                    <span class="monta-option-name">
+                                        Priority: Next day delivery
+                                        <span class="monta-info-badge" title="Order before cut-off time for next business day delivery">i</span>
+                                    </span>
+                                    <span class="monta-option-price">+ € 1.00</span>
+                                </div>
+                                <div class="monta-option-desc">Next business day — surcharge applies for next day delivery</div>
+                            </div>
+                        </label>
+
                     </div>
                 </div>
 
-                <!-- Section 3: Choose your shipping packaging -->
-                <div t-if="'monta_packaging_type' in website_sale_order._fields" class="monta-packaging-container mt-4 mb-4">
-                    <h5 class="fw-bold mb-3 text-uppercase text-dark" style="font-family: inherit; font-size: 1.15rem; letter-spacing: 0.5px;">Choose your shipping packaging</h5>
-                    <div class="border rounded bg-white shadow-sm overflow-hidden monta-packaging-list" style="border-color: #dee2e6 !important;">
-                        <!-- Option 1: Deposit packaging -->
-                        <div class="p-3 border-bottom d-flex align-items-start gap-3 monta-packaging-item cursor-pointer" 
-                             t-att-class="'active' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else ''"
-                             data-packaging="deposit">
-                            <div class="pt-1">
-                                <input type="radio" name="monta_packaging_type" id="pkg_deposit" value="deposit" 
-                                       t-att-checked="'checked' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else None"
-                                       class="monta-packaging-radio"/>
-                            </div>
-                            <div class="flex-grow-1" style="cursor: pointer;">
-                                <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="fw-bold m-0 p-0 text-dark" for="pkg_deposit" style="cursor: pointer; font-size: 0.95rem; font-family: inherit;">
-                                        Deposit packaging <span class="monta-info-circle ms-1" title="Your deposit is returned when packaging is collected">i</span>
-                                    </label>
-                                    <span class="fw-bold text-dark font-monospace" style="font-size: 0.95rem;">€ 0.00</span>
-                                </div>
-                                <div class="text-muted small" style="font-size: 0.85rem;">Your deposit is returned when packaging is collected</div>
-                            </div>
-                        </div>
+                <!-- ══ Section 2: Shipping Packaging ══ -->
+                <div t-if="'monta_packaging_type' in website_sale_order._fields" class="monta-section monta-packaging-container mt-2 mb-4">
+                    <p class="monta-section-title">Choose your shipping packaging</p>
+                    <div class="monta-option-list">
 
-                        <!-- Option 2: Single-use packaging -->
-                        <div class="p-3 d-flex align-items-start gap-3 monta-packaging-item cursor-pointer" 
-                             t-att-class="'active' if website_sale_order.monta_packaging_type == 'single_use' else ''"
-                             data-packaging="single_use">
-                            <div class="pt-1">
-                                <input type="radio" name="monta_packaging_type" id="pkg_single_use" value="single_use" 
-                                       t-att-checked="'checked' if website_sale_order.monta_packaging_type == 'single_use' else None"
-                                       class="monta-packaging-radio"/>
-                            </div>
-                            <div class="flex-grow-1" style="cursor: pointer;">
-                                <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label class="fw-bold m-0 p-0 text-dark" for="pkg_single_use" style="cursor: pointer; font-size: 0.95rem; font-family: inherit;">
-                                        Single-use packaging
-                                    </label>
-                                    <span class="fw-bold text-dark font-monospace" style="font-size: 0.95rem;">+ € 0.25</span>
+                        <!-- Deposit packaging -->
+                        <label class="monta-option-row border-bottom"
+                               t-att-class="'monta-option-row--active' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else ''"
+                               for="pkg_deposit">
+                            <input type="radio" name="monta_packaging_type" id="pkg_deposit" value="deposit"
+                                   t-att-checked="'checked' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else None"
+                                   class="monta-radio monta-packaging-radio"/>
+                            <div class="monta-option-body">
+                                <div class="monta-option-header">
+                                    <span class="monta-option-name">
+                                        Deposit packaging
+                                        <span class="monta-info-badge" title="Your deposit is returned when packaging is collected">i</span>
+                                    </span>
+                                    <span class="monta-option-price">€ 0.00</span>
                                 </div>
-                                <div class="text-muted small" style="font-size: 0.85rem;">Standard delivery packaging</div>
+                                <div class="monta-option-desc">Your deposit is returned when packaging is collected</div>
                             </div>
-                        </div>
+                        </label>
+
+                        <!-- Single-use packaging -->
+                        <label class="monta-option-row"
+                               t-att-class="'monta-option-row--active' if website_sale_order.monta_packaging_type == 'single_use' else ''"
+                               for="pkg_single_use">
+                            <input type="radio" name="monta_packaging_type" id="pkg_single_use" value="single_use"
+                                   t-att-checked="'checked' if website_sale_order.monta_packaging_type == 'single_use' else None"
+                                   class="monta-radio monta-packaging-radio"/>
+                            <div class="monta-option-body">
+                                <div class="monta-option-header">
+                                    <span class="monta-option-name">Single-use packaging</span>
+                                    <span class="monta-option-price">+ € 0.25</span>
+                                </div>
+                                <div class="monta-option-desc">Standard single-use delivery packaging</div>
+                            </div>
+                        </label>
+
                     </div>
                 </div>
 
-                <!-- Section 2: Delivery Point / Pickup Point -->
-                <div class="monta-pickup-container mt-3 mb-4 p-3 border rounded bg-white shadow-sm">
-                    <div class="form-check monta-pickup-selector">
-                        <input type="checkbox" class="form-check-input" id="monta_use_pickup" name="monta_use_pickup" t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"/>
-                        <label class="form-check-label fw-bold text-uppercase" for="monta_use_pickup" style="color: #E5007D; cursor: pointer; letter-spacing: 0.5px;">
-                            <i class="fa fa-map-marker me-1"/> Or send to a delivery point
+                <!-- ══ Section 3: Pickup Point ══ -->
+                <div class="monta-section monta-pickup-container mt-2 mb-4">
+                    <div class="monta-pickup-toggle-row">
+                        <input type="checkbox" class="monta-pickup-checkbox" id="monta_use_pickup" name="monta_use_pickup"
+                               t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"/>
+                        <label for="monta_use_pickup" class="monta-pickup-toggle-label">
+                            Or deliver to a pickup point
                         </label>
                     </div>
-                    
-                    <div id="monta-pickup-box" class="collapse mt-3 pt-3 border-top" t-att-class="'show' if website_sale_order.monta_shipper_code else ''">
-                        <div class="text-muted small mb-2"><i class="fa fa-info-circle me-1"/> Search pickup points near your address:</div>
+
+                    <div id="monta-pickup-box" class="monta-pickup-box" t-att-class="'show' if website_sale_order.monta_shipper_code else ''">
+                        <div class="monta-pickup-hint">Search pickup points near your address:</div>
                         <div class="row g-2 mb-3">
                             <div class="col-md-5">
-                                <input type="text" id="monta_pickup_street" class="form-control form-control-sm border-secondary" placeholder="Street Name" t-att-value="website_sale_order.partner_shipping_id.street or website_sale_order.partner_id.street or ''"/>
+                                <input type="text" id="monta_pickup_street" class="form-control form-control-sm" placeholder="Street name"
+                                       t-att-value="website_sale_order.partner_shipping_id.street or website_sale_order.partner_id.street or ''"/>
                             </div>
                             <div class="col-md-3">
-                                <input type="text" id="monta_pickup_house" class="form-control form-control-sm border-secondary" placeholder="House #" t-att-value="website_sale_order.partner_shipping_id.street2 or website_sale_order.partner_id.street2 or ''"/>
+                                <input type="text" id="monta_pickup_house" class="form-control form-control-sm" placeholder="House no."
+                                       t-att-value="website_sale_order.partner_shipping_id.street2 or website_sale_order.partner_id.street2 or ''"/>
                             </div>
                             <div class="col-md-4">
-                                <input type="text" id="monta_pickup_zip" class="form-control form-control-sm border-secondary" placeholder="Zip Code" t-att-value="website_sale_order.partner_shipping_id.zip or website_sale_order.partner_id.zip or ''"/>
+                                <input type="text" id="monta_pickup_zip" class="form-control form-control-sm" placeholder="Zip code"
+                                       t-att-value="website_sale_order.partner_shipping_id.zip or website_sale_order.partner_id.zip or ''"/>
                             </div>
                             <div class="col-md-5">
-                                <input type="text" id="monta_pickup_city" class="form-control form-control-sm border-secondary" placeholder="City" t-att-value="website_sale_order.partner_shipping_id.city or website_sale_order.partner_id.city or ''"/>
+                                <input type="text" id="monta_pickup_city" class="form-control form-control-sm" placeholder="City"
+                                       t-att-value="website_sale_order.partner_shipping_id.city or website_sale_order.partner_id.city or ''"/>
                             </div>
                             <div class="col-md-4">
-                                <select id="monta_pickup_country" class="form-select form-select-sm border-secondary">
+                                <select id="monta_pickup_country" class="form-select form-select-sm">
                                     <option value="NL" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code or 'NL') == 'NL' else None">Netherlands</option>
                                     <option value="BE" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code) == 'BE' else None">Belgium</option>
                                     <option value="DE" t-att-selected="'selected' if (website_sale_order.partner_shipping_id.country_id.code or website_sale_order.partner_id.country_id.code) == 'DE' else None">Germany</option>
@@ -128,26 +131,24 @@
                                 </select>
                             </div>
                             <div class="col-md-3">
-                                <button type="button" id="btn_search_monta_pickup" class="btn btn-sm w-100 text-white fw-bold" style="background-color: #E5007D; border-color: #E5007D;">
-                                    <i class="fa fa-search me-1"/> Search
+                                <button type="button" id="btn_search_monta_pickup" class="btn btn-sm w-100 monta-search-btn">
+                                    Search
                                 </button>
                             </div>
                         </div>
-                        
-                        <div id="monta_pickup_loading" class="text-center d-none my-4">
-                            <div class="spinner-border spinner-border-sm" role="status" style="color: #E5007D;">
+
+                        <div id="monta_pickup_loading" class="text-center d-none my-3">
+                            <div class="spinner-border spinner-border-sm text-secondary" role="status">
                                 <span class="visually-hidden">Loading...</span>
                             </div>
                         </div>
-                        
-                        <div id="monta_pickup_error" class="alert alert-danger d-none py-2 px-3 small" role="alert">
-                        </div>
-                        
-                        <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2" style="max-height: 380px; overflow-y: auto;">
-                            <!-- Dynamically loaded pickup point cards -->
-                        </div>
+
+                        <div id="monta_pickup_error" class="alert alert-danger d-none py-2 px-3 small" role="alert"></div>
+
+                        <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2" style="max-height: 380px; overflow-y: auto;"></div>
                     </div>
                 </div>
+
             </t>
         </xpath>
     </template>

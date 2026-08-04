@@ -23,12 +23,12 @@ function initMontaPickup() {
     const packagingContainer = document.querySelector('.monta-packaging-container');
     if (!speedContainer && !pickupContainer && !packagingContainer) return;
 
-    // Prevent Odoo click card listener bubbling inside containers
-    if (speedContainer) speedContainer.addEventListener('click', (e) => e.stopPropagation());
-    if (pickupContainer) pickupContainer.addEventListener('click', (e) => e.stopPropagation());
-    if (packagingContainer) packagingContainer.addEventListener('click', (e) => e.stopPropagation());
+    // Prevent Odoo checkout card-click bubbling inside our sections
+    [speedContainer, pickupContainer, packagingContainer].forEach(el => {
+        if (el) el.addEventListener('click', e => e.stopPropagation());
+    });
 
-    const deliveryTypeRadios = document.querySelectorAll('input[name="monta_delivery_type"]');
+    const deliveryTypeRadios = document.querySelectorAll('input.monta-delivery-radio, input.monta-packaging-radio');
     const togglePickup = document.querySelector('#monta_use_pickup');
     const box = document.querySelector('#monta-pickup-box');
     const btnSearch = document.querySelector('#btn_search_monta_pickup');
@@ -64,92 +64,67 @@ function initMontaPickup() {
 
     autoDetectUserAddress();
 
-    // Section 1: Handle Delivery Speed Card/Radio Selection
-    const deliverySpeedContainer = document.querySelector('.monta-delivery-speed-container');
-    if (deliverySpeedContainer) {
-        const deliveryItems = deliverySpeedContainer.querySelectorAll('.monta-packaging-item');
-        const deliveryRadios = deliverySpeedContainer.querySelectorAll('input.monta-delivery-radio');
+    // ── Delivery Speed: radio change handler ──
+    // Rows are <label> elements wrapping the radio — clicking is handled natively.
+    // We just listen for change to call the backend and sync active classes.
+    const deliveryRadios = document.querySelectorAll('input.monta-delivery-radio');
+    deliveryRadios.forEach(radio => {
+        radio.addEventListener('change', async () => {
+            if (!radio.checked) return;
+            const selectedType = radio.value;
 
-        // Clicking a card row selects the radio inside it
-        deliveryItems.forEach(item => {
-            item.addEventListener('click', (e) => {
-                if (e.target.classList.contains('monta-info-circle') || e.target.classList.contains('monta-delivery-radio')) {
-                    return;
-                }
-                const radio = item.querySelector('input.monta-delivery-radio');
-                if (radio && !radio.checked) {
-                    radio.checked = true;
-                    radio.dispatchEvent(new Event('change'));
-                }
+            // Sync active class on all delivery rows
+            document.querySelectorAll('.monta-delivery-speed-container .monta-option-row').forEach(row => {
+                row.classList.toggle('monta-option-row--active', row.querySelector('input.monta-delivery-radio') === radio);
             });
-        });
 
-        // On radio change, call the backend
-        deliveryRadios.forEach(radio => {
-            radio.addEventListener('change', async () => {
-                const selectedType = radio.value;
-                // Uncheck pickup if switching delivery type
-                if (togglePickup && togglePickup.checked) {
-                    togglePickup.checked = false;
-                    if (box) box.classList.remove('show');
-                }
-                showLoading(true);
-                try {
-                    const res = await rpc('/shop/monta/select_delivery_type', {
-                        delivery_type: selectedType
-                    });
-                    if (res && res.status === 'success') {
-                        window.location.reload();
-                    } else {
-                        showLoading(false);
-                    }
-                } catch (e) {
+            // Uncheck pickup if switching to a standard delivery type
+            if (togglePickup && togglePickup.checked) {
+                togglePickup.checked = false;
+                if (box) box.classList.remove('show');
+            }
+
+            showLoading(true);
+            try {
+                const res = await rpc('/shop/monta/select_delivery_type', { delivery_type: selectedType });
+                if (res && res.status === 'success') {
+                    window.location.reload();
+                } else {
                     showLoading(false);
-                    console.error("Failed to set delivery type:", e);
                 }
-            });
+            } catch (e) {
+                showLoading(false);
+                console.error('Failed to set delivery type:', e);
+            }
         });
-    }
+    });
 
-    // Section 3: Handle Packaging Selection Click & Change
-    if (packagingContainer) {
-        const packagingItems = packagingContainer.querySelectorAll('.monta-packaging-item');
-        const packagingRadios = packagingContainer.querySelectorAll('input[name="monta_packaging_type"]');
+    // ── Packaging: radio change handler ──
+    const packagingRadios = document.querySelectorAll('input.monta-packaging-radio');
+    packagingRadios.forEach(radio => {
+        radio.addEventListener('change', async () => {
+            if (!radio.checked) return;
+            const selectedVal = radio.value;
 
-        packagingItems.forEach(item => {
-            item.addEventListener('click', (e) => {
-                // If they clicked the info icon or the radio itself, let standard browser behavior happen
-                if (e.target.classList.contains('monta-info-circle') || e.target.classList.contains('monta-packaging-radio')) {
-                    return;
-                }
-                const radio = item.querySelector('input[name="monta_packaging_type"]');
-                if (radio && !radio.checked) {
-                    radio.checked = true;
-                    radio.dispatchEvent(new Event('change'));
-                }
+            // Sync active class on all packaging rows
+            document.querySelectorAll('.monta-packaging-container .monta-option-row').forEach(row => {
+                row.classList.toggle('monta-option-row--active', row.querySelector('input.monta-packaging-radio') === radio);
             });
-        });
 
-        packagingRadios.forEach(radio => {
-            radio.addEventListener('change', async () => {
-                const selectedVal = radio.value;
-                showLoading(true);
-                try {
-                    const res = await rpc('/shop/monta/select_packaging_type', {
-                        packaging_type: selectedVal
-                    });
-                    if (res && res.status === 'success') {
-                        window.location.reload();
-                    } else {
-                        showLoading(false);
-                    }
-                } catch (e) {
+            showLoading(true);
+            try {
+                const res = await rpc('/shop/monta/select_packaging_type', { packaging_type: selectedVal });
+                if (res && res.status === 'success') {
+                    window.location.reload();
+                } else {
                     showLoading(false);
-                    console.error("Failed to set packaging type:", e);
                 }
-            });
+            } catch (e) {
+                showLoading(false);
+                console.error('Failed to set packaging type:', e);
+            }
         });
-    }
+    });
 
     // Section 2: Handle Pickup Point Toggle Checkbox
     if (togglePickup) {
