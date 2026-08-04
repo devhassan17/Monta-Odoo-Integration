@@ -332,3 +332,46 @@ if (document.readyState === 'loading') {
 } else {
     initMontaPickup();
 }
+
+/**
+ * CRITICAL FIX: Our custom radio/checkbox inputs sit inside Odoo's checkout
+ * <form>. When the user clicks "Confirm", those field names (monta_delivery_speed,
+ * monta_packaging_type, monta_use_pickup) are included in the POST and Odoo's
+ * checkout controller rejects the request, blocking order confirmation.
+ *
+ * Fix: intercept the form submit and clear the `name` attribute from all our
+ * custom inputs so they are excluded from the POST body.
+ */
+(function preventMontaFieldsFromBeingSubmitted() {
+    const MONTA_SELECTORS = [
+        'input.monta-delivery-radio',
+        'input.monta-packaging-radio',
+        '#monta_use_pickup',
+    ];
+
+    function disableMontaInputsForSubmit(form) {
+        MONTA_SELECTORS.forEach(sel => {
+            form.querySelectorAll(sel).forEach(el => {
+                el.removeAttribute('name');
+            });
+        });
+    }
+
+    function attachToForms() {
+        // Odoo's checkout form typically has id="o_website_sale_checkout_main_form"
+        // or class "js_website_submit_form". We catch any form on the page.
+        document.querySelectorAll('form').forEach(form => {
+            if (form._montaSubmitBound) return;   // attach only once
+            form._montaSubmitBound = true;
+            form.addEventListener('submit', () => {
+                disableMontaInputsForSubmit(form);
+            }, true);   // capture phase — fires before other submit handlers
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachToForms);
+    } else {
+        attachToForms();
+    }
+})();

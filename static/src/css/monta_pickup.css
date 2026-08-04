@@ -23,11 +23,14 @@
     border-radius: 6px;
     background: #fff;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;   /* stack rows vertically */
 }
 
-/* ── Single option row — now a <label> for perfect click targeting ── */
+/* ── Single option row — <label> wraps radio + content ── */
 .monta-option-row {
-    display: flex;
+    display: flex !important;        /* override inline label default */
+    flex-direction: row !important;  /* radio | content in a row */
     align-items: center;
     gap: 12px;
     padding: 14px 16px;
