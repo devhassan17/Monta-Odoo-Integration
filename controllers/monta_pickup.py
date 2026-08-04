@@ -284,32 +284,37 @@ class MontaPickupController(http.Controller):
 
                 if carrier:
                     order.write({'carrier_id': carrier.id})
-                    if hasattr(order, '_set_delivery_line'):
-                        order._set_delivery_line(carrier, price)
-                    elif hasattr(order, 'set_delivery_line'):
-                        order.set_delivery_line(carrier, price)
-                    else:
-                        delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
-                        if delivery_line:
-                            delivery_line[0].write({
-                                'product_id': carrier.product_id.id,
-                                'price_unit': price,
-                                'name': delivery_name,
-                            })
-                        else:
-                            order.env['sale.order.line'].sudo().create({
-                                'order_id': order.id,
-                                'product_id': carrier.product_id.id,
-                                'name': delivery_name,
-                                'product_uom_qty': 1.0,
-                                'price_unit': price,
-                                'is_delivery': True,
-                            })
+                    # Try Odoo's built-in setter first (creates the delivery line if missing)
+                    try:
+                        if hasattr(order, '_set_delivery_line'):
+                            order._set_delivery_line(carrier, price)
+                        elif hasattr(order, 'set_delivery_line'):
+                            order.set_delivery_line(carrier, price)
+                    except Exception as e:
+                        _logger.warning("_set_delivery_line failed, will create manually: %s", e)
 
-                    # Update delivery line name explicitly to display selected speed info
-                    delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
-                    if delivery_line:
-                        delivery_line[0].write({'name': delivery_name})
+                # *** KEY FIX: _set_delivery_line re-rates using the carrier's
+                # configured price and IGNORES the price we pass. We must
+                # force-write our custom price + name AFTER the call. ***
+                delivery_line = order.order_line.filtered(lambda l: l.is_delivery)
+                if delivery_line:
+                    delivery_line[0].sudo().write({
+                        'price_unit': price,
+                        'name': delivery_name,
+                    })
+                elif carrier:
+                    # No delivery line exists yet — create one manually
+                    line_vals = {
+                        'order_id': order.id,
+                        'product_id': carrier.product_id.id,
+                        'name': delivery_name,
+                        'product_uom_qty': 1.0,
+                        'price_unit': price,
+                        'is_delivery': True,
+                    }
+                    if carrier.product_id and carrier.product_id.uom_id:
+                        line_vals['product_uom'] = carrier.product_id.uom_id.id
+                    order.env['sale.order.line'].sudo().create(line_vals)
 
             return {
                 'status': 'success',

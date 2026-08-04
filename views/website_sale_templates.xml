@@ -4,96 +4,53 @@
         <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="before">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields">
 
-                <!-- ══ Section 1: Delivery Speed ══ -->
+                <!-- ══ Delivery Speed ══ -->
                 <div class="monta-section monta-delivery-speed-container mt-4 mb-4">
                     <p class="monta-section-title">Choose your delivery speed</p>
                     <div class="monta-option-list">
 
                         <!-- Standard 2-day -->
-                        <label class="monta-option-row border-bottom"
-                               t-att-class="'monta-option-row--active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else ''"
-                               for="delivery_two_day">
+                        <div class="monta-option-row"
+                             t-att-class="'monta-option-row--active border-bottom' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else 'border-bottom'"
+                             data-delivery="two_day">
                             <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
                                    t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
                                    class="monta-radio monta-delivery-radio"/>
                             <div class="monta-option-body">
                                 <div class="monta-option-header">
-                                    <span class="monta-option-name">
+                                    <label class="monta-option-name" for="delivery_two_day">
                                         Standard: 2-day delivery
                                         <span class="monta-info-badge" title="Delivered within 2 business days at no extra cost">i</span>
-                                    </span>
+                                    </label>
                                     <span class="monta-option-price">€ 0.00</span>
                                 </div>
                                 <div class="monta-option-desc">Delivered within 2 business days</div>
                             </div>
-                        </label>
+                        </div>
 
                         <!-- Priority Next Day -->
-                        <label class="monta-option-row"
-                               t-att-class="'monta-option-row--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
-                               for="delivery_next_day">
+                        <div class="monta-option-row"
+                             t-att-class="'monta-option-row--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else ''"
+                             data-delivery="next_day">
                             <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
                                    t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
                                    class="monta-radio monta-delivery-radio"/>
                             <div class="monta-option-body">
                                 <div class="monta-option-header">
-                                    <span class="monta-option-name">
+                                    <label class="monta-option-name" for="delivery_next_day">
                                         Priority: Next day delivery
                                         <span class="monta-info-badge" title="Order before cut-off time for next business day delivery">i</span>
-                                    </span>
+                                    </label>
                                     <span class="monta-option-price">+ € 1.00</span>
                                 </div>
                                 <div class="monta-option-desc">Next business day — surcharge applies for next day delivery</div>
                             </div>
-                        </label>
+                        </div>
 
                     </div>
                 </div>
 
-                <!-- ══ Section 2: Shipping Packaging ══ -->
-                <div t-if="'monta_packaging_type' in website_sale_order._fields" class="monta-section monta-packaging-container mt-2 mb-4">
-                    <p class="monta-section-title">Choose your shipping packaging</p>
-                    <div class="monta-option-list">
-
-                        <!-- Deposit packaging -->
-                        <label class="monta-option-row border-bottom"
-                               t-att-class="'monta-option-row--active' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else ''"
-                               for="pkg_deposit">
-                            <input type="radio" name="monta_packaging_type" id="pkg_deposit" value="deposit"
-                                   t-att-checked="'checked' if (website_sale_order.monta_packaging_type or 'deposit') == 'deposit' else None"
-                                   class="monta-radio monta-packaging-radio"/>
-                            <div class="monta-option-body">
-                                <div class="monta-option-header">
-                                    <span class="monta-option-name">
-                                        Deposit packaging
-                                        <span class="monta-info-badge" title="Your deposit is returned when packaging is collected">i</span>
-                                    </span>
-                                    <span class="monta-option-price">€ 0.00</span>
-                                </div>
-                                <div class="monta-option-desc">Your deposit is returned when packaging is collected</div>
-                            </div>
-                        </label>
-
-                        <!-- Single-use packaging -->
-                        <label class="monta-option-row"
-                               t-att-class="'monta-option-row--active' if website_sale_order.monta_packaging_type == 'single_use' else ''"
-                               for="pkg_single_use">
-                            <input type="radio" name="monta_packaging_type" id="pkg_single_use" value="single_use"
-                                   t-att-checked="'checked' if website_sale_order.monta_packaging_type == 'single_use' else None"
-                                   class="monta-radio monta-packaging-radio"/>
-                            <div class="monta-option-body">
-                                <div class="monta-option-header">
-                                    <span class="monta-option-name">Single-use packaging</span>
-                                    <span class="monta-option-price">+ € 0.25</span>
-                                </div>
-                                <div class="monta-option-desc">Standard single-use delivery packaging</div>
-                            </div>
-                        </label>
-
-                    </div>
-                </div>
-
-                <!-- ══ Section 3: Pickup Point ══ -->
+                <!-- ══ Pickup Point ══ -->
                 <div class="monta-section monta-pickup-container mt-2 mb-4">
                     <div class="monta-pickup-toggle-row">
                         <input type="checkbox" class="monta-pickup-checkbox" id="monta_use_pickup" name="monta_use_pickup"
@@ -142,9 +99,7 @@
                                 <span class="visually-hidden">Loading...</span>
                             </div>
                         </div>
-
                         <div id="monta_pickup_error" class="alert alert-danger d-none py-2 px-3 small" role="alert"></div>
-
                         <div id="monta_pickup_results" class="monta-pickup-list d-flex flex-column gap-2" style="max-height: 380px; overflow-y: auto;"></div>
                     </div>
                 </div>

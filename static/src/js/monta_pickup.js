@@ -20,15 +20,13 @@ async function rpc(route, params) {
 function initMontaPickup() {
     const speedContainer = document.querySelector('.monta-delivery-speed-container');
     const pickupContainer = document.querySelector('.monta-pickup-container');
-    const packagingContainer = document.querySelector('.monta-packaging-container');
-    if (!speedContainer && !pickupContainer && !packagingContainer) return;
+    if (!speedContainer && !pickupContainer) return;
 
     // Prevent Odoo checkout card-click bubbling inside our sections
-    [speedContainer, pickupContainer, packagingContainer].forEach(el => {
+    [speedContainer, pickupContainer].forEach(el => {
         if (el) el.addEventListener('click', e => e.stopPropagation());
     });
 
-    const deliveryTypeRadios = document.querySelectorAll('input.monta-delivery-radio, input.monta-packaging-radio');
     const togglePickup = document.querySelector('#monta_use_pickup');
     const box = document.querySelector('#monta-pickup-box');
     const btnSearch = document.querySelector('#btn_search_monta_pickup');
@@ -41,44 +39,49 @@ function initMontaPickup() {
     const errorDiv = document.querySelector('#monta_pickup_error');
     const resultsDiv = document.querySelector('#monta_pickup_results');
 
-    // Helper: auto-detect user's address from checkout DOM form inputs if available
+    // ── Auto-detect address from checkout form ──
     function autoDetectUserAddress() {
         const domStreet = document.querySelector('input[name="street"], #street');
         const domHouse = document.querySelector('input[name="street2"], #street2');
         const domZip = document.querySelector('input[name="zip"], #zip');
         const domCity = document.querySelector('input[name="city"], #city');
 
-        if (streetInput && domStreet && domStreet.value && !streetInput.value) {
-            streetInput.value = domStreet.value.trim();
-        }
-        if (houseInput && domHouse && domHouse.value && !houseInput.value) {
-            houseInput.value = domHouse.value.trim();
-        }
-        if (zipInput && domZip && domZip.value && !zipInput.value) {
-            zipInput.value = domZip.value.trim();
-        }
-        if (cityInput && domCity && domCity.value && !cityInput.value) {
-            cityInput.value = domCity.value.trim();
-        }
+        if (streetInput && domStreet && domStreet.value && !streetInput.value) streetInput.value = domStreet.value.trim();
+        if (houseInput && domHouse && domHouse.value && !houseInput.value) houseInput.value = domHouse.value.trim();
+        if (zipInput && domZip && domZip.value && !zipInput.value) zipInput.value = domZip.value.trim();
+        if (cityInput && domCity && domCity.value && !cityInput.value) cityInput.value = domCity.value.trim();
     }
 
     autoDetectUserAddress();
 
-    // ── Delivery Speed: radio change handler ──
-    // Rows are <label> elements wrapping the radio — clicking is handled natively.
-    // We just listen for change to call the backend and sync active classes.
-    const deliveryRadios = document.querySelectorAll('input.monta-delivery-radio');
-    deliveryRadios.forEach(radio => {
+    // ── Delivery Speed: div row click → check radio ──
+    if (speedContainer) {
+        speedContainer.querySelectorAll('.monta-option-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const radio = row.querySelector('input.monta-delivery-radio');
+                if (radio && !radio.checked) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        });
+    }
+
+    // ── Delivery Speed: radio change → call backend ──
+    document.querySelectorAll('input.monta-delivery-radio').forEach(radio => {
         radio.addEventListener('change', async () => {
             if (!radio.checked) return;
             const selectedType = radio.value;
 
-            // Sync active class on all delivery rows
-            document.querySelectorAll('.monta-delivery-speed-container .monta-option-row').forEach(row => {
-                row.classList.toggle('monta-option-row--active', row.querySelector('input.monta-delivery-radio') === radio);
-            });
+            // Sync active class immediately for visual feedback
+            if (speedContainer) {
+                speedContainer.querySelectorAll('.monta-option-row').forEach(row => {
+                    const r = row.querySelector('input.monta-delivery-radio');
+                    row.classList.toggle('monta-option-row--active', r === radio);
+                });
+            }
 
-            // Uncheck pickup if switching to a standard delivery type
+            // Close pickup box if switching to standard delivery
             if (togglePickup && togglePickup.checked) {
                 togglePickup.checked = false;
                 if (box) box.classList.remove('show');
@@ -99,34 +102,7 @@ function initMontaPickup() {
         });
     });
 
-    // ── Packaging: radio change handler ──
-    const packagingRadios = document.querySelectorAll('input.monta-packaging-radio');
-    packagingRadios.forEach(radio => {
-        radio.addEventListener('change', async () => {
-            if (!radio.checked) return;
-            const selectedVal = radio.value;
-
-            // Sync active class on all packaging rows
-            document.querySelectorAll('.monta-packaging-container .monta-option-row').forEach(row => {
-                row.classList.toggle('monta-option-row--active', row.querySelector('input.monta-packaging-radio') === radio);
-            });
-
-            showLoading(true);
-            try {
-                const res = await rpc('/shop/monta/select_packaging_type', { packaging_type: selectedVal });
-                if (res && res.status === 'success') {
-                    window.location.reload();
-                } else {
-                    showLoading(false);
-                }
-            } catch (e) {
-                showLoading(false);
-                console.error('Failed to set packaging type:', e);
-            }
-        });
-    });
-
-    // Section 2: Handle Pickup Point Toggle Checkbox
+    // ── Pickup Point Toggle ──
     if (togglePickup) {
         togglePickup.addEventListener('change', async () => {
             if (togglePickup.checked) {
@@ -140,14 +116,12 @@ function initMontaPickup() {
                 try {
                     togglePickup.disabled = true;
                     showLoading(true);
-                    const res = await rpc('/shop/monta/select_pickup_point', {
-                        shipper_code: false
-                    });
+                    const res = await rpc('/shop/monta/select_pickup_point', { shipper_code: false });
                     if (res && res.status === 'success') {
                         window.location.reload();
                     }
                 } catch (e) {
-                    console.error("Failed to clear pickup point:", e);
+                    console.error('Failed to clear pickup point:', e);
                 } finally {
                     togglePickup.disabled = false;
                     showLoading(false);
@@ -160,14 +134,10 @@ function initMontaPickup() {
         btnSearch.addEventListener('click', performSearch);
     }
 
-    // Trigger search on Enter key inside zip, street, or city inputs
     [streetInput, houseInput, zipInput, cityInput].forEach(input => {
         if (input) {
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    performSearch();
-                }
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); performSearch(); }
             });
         }
     });
@@ -181,7 +151,7 @@ function initMontaPickup() {
         const country = countrySelect ? countrySelect.value : 'NL';
 
         if (!zip && !street && !city) {
-            showError("Please enter an address or zip/postal code.");
+            showError('Please enter an address or zip/postal code.');
             return;
         }
 
@@ -191,28 +161,19 @@ function initMontaPickup() {
 
         try {
             const res = await rpc('/shop/monta/get_pickup_points', {
-                street: street,
-                house_number: houseNumber,
-                zip_code: zip,
-                city: city,
-                country_code: country
+                street, house_number: houseNumber, zip_code: zip, city, country_code: country
             });
-
             showLoading(false);
-
             if (res && res.status === 'success') {
                 const points = res.pickup_points || [];
-                if (points.length === 0) {
-                    showError("No pickup points found near this location.");
-                    return;
-                }
+                if (points.length === 0) { showError('No pickup points found near this location.'); return; }
                 renderPickupPoints(points);
             } else {
-                showError((res && res.message) || "Failed to fetch pickup points.");
+                showError((res && res.message) || 'Failed to fetch pickup points.');
             }
         } catch (e) {
             showLoading(false);
-            showError("An error occurred while fetching pickup points.");
+            showError('An error occurred while fetching pickup points.');
             console.error(e);
         }
     }
@@ -222,21 +183,16 @@ function initMontaPickup() {
         points.forEach(point => {
             const card = document.createElement('div');
             card.className = 'monta-pickup-card d-flex flex-column gap-1';
-            
-            // Format distance (e.g. 1.2 km or 450 m)
+
             let distanceStr = '';
             if (point.distance !== undefined) {
-                if (point.distance >= 1000) {
-                    distanceStr = (point.distance / 1000).toFixed(1) + ' km';
-                } else {
-                    distanceStr = Math.round(point.distance) + ' m';
-                }
+                distanceStr = point.distance >= 1000
+                    ? (point.distance / 1000).toFixed(1) + ' km'
+                    : Math.round(point.distance) + ' m';
             }
 
-            // Price formatted
             const priceFormatted = new Intl.NumberFormat('nl-NL', {
-                style: 'currency',
-                currency: point.currency || 'EUR'
+                style: 'currency', currency: point.currency || 'EUR'
             }).format(point.price);
 
             card.innerHTML = `
@@ -254,12 +210,10 @@ function initMontaPickup() {
                 </div>
             `;
 
-            // Handle card selection
             card.addEventListener('click', async () => {
-                // Disable all cards and radios to prevent double selection
                 document.querySelectorAll('.monta-pickup-card').forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
-                deliveryTypeRadios.forEach(r => r.disabled = true);
+                document.querySelectorAll('input.monta-delivery-radio').forEach(r => r.disabled = true);
                 showLoading(true);
 
                 try {
@@ -275,19 +229,17 @@ function initMontaPickup() {
                         point_code: point.code,
                         price: point.price
                     });
-
                     if (res && res.status === 'success') {
-                        // Reload the checkout page so Odoo updates the payment and delivery summary
                         window.location.reload();
                     } else {
                         showLoading(false);
-                        deliveryTypeRadios.forEach(r => r.disabled = false);
-                        showError((res && res.message) || "Failed to select pickup point.");
+                        document.querySelectorAll('input.monta-delivery-radio').forEach(r => r.disabled = false);
+                        showError((res && res.message) || 'Failed to select pickup point.');
                     }
                 } catch (e) {
                     showLoading(false);
-                    deliveryTypeRadios.forEach(r => r.disabled = false);
-                    showError("An error occurred while selecting the pickup point.");
+                    document.querySelectorAll('input.monta-delivery-radio').forEach(r => r.disabled = false);
+                    showError('An error occurred while selecting the pickup point.');
                     console.error(e);
                 }
             });
@@ -297,33 +249,25 @@ function initMontaPickup() {
     }
 
     function showLoading(show) {
-        if (show) {
-            loading.classList.remove('d-none');
-        } else {
-            loading.classList.add('d-none');
-        }
+        if (!loading) return;
+        loading.classList.toggle('d-none', !show);
     }
 
     function showError(msg) {
+        if (!errorDiv) return;
         errorDiv.textContent = msg;
         errorDiv.classList.remove('d-none');
     }
 
     function hideError() {
+        if (!errorDiv) return;
         errorDiv.classList.add('d-none');
         errorDiv.textContent = '';
     }
 
     function escapeHtml(text) {
         if (!text) return '';
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        return text.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
     }
 }
 
@@ -334,38 +278,40 @@ if (document.readyState === 'loading') {
 }
 
 /**
- * CRITICAL FIX: Our custom radio/checkbox inputs sit inside Odoo's checkout
- * <form>. When the user clicks "Confirm", those field names (monta_delivery_speed,
- * monta_packaging_type, monta_use_pickup) are included in the POST and Odoo's
- * checkout controller rejects the request, blocking order confirmation.
- *
- * Fix: intercept the form submit and clear the `name` attribute from all our
- * custom inputs so they are excluded from the POST body.
+ * CRITICAL: Our custom inputs sit inside Odoo's checkout <form>.
+ * Submitting the form with names like "monta_delivery_speed" or "monta_use_pickup"
+ * causes Odoo's controller to throw an error, blocking order confirmation.
+ * Fix: strip the name attribute from all our inputs just before form submit.
  */
 (function preventMontaFieldsFromBeingSubmitted() {
     const MONTA_SELECTORS = [
         'input.monta-delivery-radio',
-        'input.monta-packaging-radio',
         '#monta_use_pickup',
+        '#monta_pickup_street',
+        '#monta_pickup_house',
+        '#monta_pickup_zip',
+        '#monta_pickup_city',
+        '#monta_pickup_country',
     ];
 
-    function disableMontaInputsForSubmit(form) {
+    function stripMontaNames(form) {
         MONTA_SELECTORS.forEach(sel => {
             form.querySelectorAll(sel).forEach(el => {
                 el.removeAttribute('name');
+                if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+                    el.disabled = true;
+                }
             });
         });
     }
 
     function attachToForms() {
-        // Odoo's checkout form typically has id="o_website_sale_checkout_main_form"
-        // or class "js_website_submit_form". We catch any form on the page.
         document.querySelectorAll('form').forEach(form => {
-            if (form._montaSubmitBound) return;   // attach only once
+            if (form._montaSubmitBound) return;
             form._montaSubmitBound = true;
             form.addEventListener('submit', () => {
-                disableMontaInputsForSubmit(form);
-            }, true);   // capture phase — fires before other submit handlers
+                stripMontaNames(form);
+            }, true); // capture phase — before Odoo's submit handlers
         });
     }
 

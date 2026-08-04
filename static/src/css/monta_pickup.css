@@ -1,17 +1,12 @@
 /* ============================================================
-   Monta Delivery & Packaging Options — Checkout CSS
-   Uses page default font; no overrides on font-family.
+   Monta Delivery Options — Checkout CSS
    ============================================================ */
 
 /* ── Section wrapper ── */
-.monta-section {
-    /* inherits font from page */
-}
-
 .monta-section-title {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
     color: #212529;
     margin: 0 0 8px 0;
@@ -23,22 +18,18 @@
     border-radius: 6px;
     background: #fff;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;   /* stack rows vertically */
 }
 
-/* ── Single option row — <label> wraps radio + content ── */
+/* ── Single option row — div so display:flex works without overrides ── */
 .monta-option-row {
-    display: flex !important;        /* override inline label default */
-    flex-direction: row !important;  /* radio | content in a row */
+    display: flex;
+    flex-direction: row;
     align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
+    gap: 14px;
+    padding: 13px 16px;
     cursor: pointer;
-    margin: 0;                       /* reset label margin */
-    transition: background-color 0.15s ease;
     border-left: 3px solid transparent;
-    width: 100%;
+    transition: background-color 0.15s ease, border-left-color 0.15s ease;
     box-sizing: border-box;
 }
 
@@ -64,6 +55,7 @@
     cursor: pointer;
     position: relative;
     margin: 0;
+    align-self: center;
     transition: border-color 0.15s;
 }
 
@@ -79,7 +71,7 @@
     background-color: #E5007D;
 }
 
-/* ── Option body (label text + price + description) ── */
+/* ── Option body ── */
 .monta-option-body {
     flex: 1;
     min-width: 0;
@@ -87,32 +79,34 @@
 
 .monta-option-header {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     gap: 8px;
 }
 
 .monta-option-name {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: inherit;
     color: #212529;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 5px;
-    flex-wrap: wrap;
+    cursor: pointer;
+    margin: 0;
+    padding: 0;
 }
 
 .monta-option-price {
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: inherit;
     color: #212529;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
 .monta-option-desc {
-    margin-top: 3px;
-    font-size: 0.82rem;
+    margin-top: 2px;
+    font-size: 0.83rem;
     color: #6c757d;
     line-height: 1.4;
 }
@@ -125,21 +119,22 @@
     width: 15px;
     height: 15px;
     border-radius: 50%;
-    border: 1.5px solid #2b7de9;
-    color: #2b7de9;
+    border: 1.5px solid #6c757d;
+    color: #6c757d;
     font-size: 9px;
     font-weight: 700;
     font-style: normal;
     line-height: 1;
     cursor: default;
     flex-shrink: 0;
+    vertical-align: middle;
 }
 
-/* ── Pickup point section ── */
+/* ── Pickup point toggle ── */
 .monta-pickup-toggle-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .monta-pickup-checkbox {
@@ -148,13 +143,14 @@
     flex-shrink: 0;
     cursor: pointer;
     accent-color: #E5007D;
+    margin: 0;
 }
 
 .monta-pickup-toggle-label {
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.72rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.09em;
     color: #E5007D;
     cursor: pointer;
     margin: 0;
@@ -162,8 +158,8 @@
 
 .monta-pickup-box {
     display: none;
-    margin-top: 14px;
-    padding-top: 14px;
+    margin-top: 12px;
+    padding-top: 12px;
     border-top: 1px solid #dee2e6;
 }
 
@@ -184,13 +180,14 @@
     font-weight: 600;
 }
 
-.monta-search-btn:hover {
+.monta-search-btn:hover,
+.monta-search-btn:active {
     background-color: #c8006e;
     border-color: #c8006e;
     color: #fff;
 }
 
-/* ── Pickup point result cards ── */
+/* ── Pickup result cards ── */
 .monta-pickup-card {
     border: 1px solid #dee2e6;
     border-radius: 6px;
@@ -232,11 +229,7 @@
     padding-top: 6px;
 }
 
-.monta-pickup-card-distance {
-    color: #495057;
-    font-weight: 500;
-}
-
+.monta-pickup-card-distance { color: #495057; font-weight: 500; }
 .monta-pickup-card-carrier {
     background: #e9ecef;
     color: #495057;
@@ -245,14 +238,9 @@
     font-size: 0.72rem;
     font-weight: 600;
 }
+.monta-pickup-card-price { font-size: 0.88rem; font-weight: 700; color: #E5007D; }
 
-.monta-pickup-card-price {
-    font-size: 0.88rem;
-    font-weight: 700;
-    color: #E5007D;
-}
-
-/* ── Scrollbar for pickup results ── */
+/* ── Scrollbar ── */
 .monta-pickup-list::-webkit-scrollbar { width: 5px; }
 .monta-pickup-list::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
 .monta-pickup-list::-webkit-scrollbar-thumb { background: #ced4da; border-radius: 4px; }
