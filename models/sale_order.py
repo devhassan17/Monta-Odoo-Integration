@@ -154,19 +154,24 @@ class SaleOrder(models.Model):
 
         if getattr(sudo_self, 'monta_delivery_type', False) == 'next_day':
             if not surcharge_lines:
-                # Find or create the surcharge product
+                # Use the custom product created by the user
                 Product = self.env['product.product'].sudo()
-                product = Product.search([('default_code', '=', 'monta_next_day_surcharge')], limit=1)
+                product = Product.search([('default_code', '=', 'next_day_delivery')], limit=1)
+                
+                # Fallback if they didn't create it or the code doesn't match
                 if not product:
-                    # Find the standard UoM (Units)
+                    product = Product.search([('name', 'ilike', 'Next-day Delivery Monta')], limit=1)
+                
+                if not product:
+                    # Final fallback to create it
                     uom = self.env['uom.uom'].sudo().search(
                         [('category_id.name', '=', 'Unit'), ('name', 'in', ('Unit(s)', 'Units', 'Unit'))],
                         limit=1
                     )
                     product = Product.create({
-                        'name': 'Priority: Next day delivery',
+                        'name': 'Next-day Delivery Monta',
                         'type': 'service',
-                        'default_code': 'monta_next_day_surcharge',
+                        'default_code': 'next_day_delivery',
                         'list_price': 1.00,
                         'sale_ok': True,
                         'purchase_ok': False,
@@ -174,13 +179,13 @@ class SaleOrder(models.Model):
                         'uom_po_id': uom.id if uom else False,
                     })
 
-                # Create the surcharge order line (skip monta sync hooks for draft orders)
+                # Create the surcharge order line
                 line_vals = {
                     'order_id': self.id,
                     'product_id': product.id,
-                    'name': 'Priority: Next day delivery',
+                    'name': product.name,
                     'product_uom_qty': 1.0,
-                    'price_unit': 1.00,
+                    'price_unit': product.list_price,
                     'is_monta_delivery_surcharge': True,
                     'sequence': 998,
                 }
@@ -191,6 +196,18 @@ class SaleOrder(models.Model):
             # Not next_day — remove any existing surcharge lines
             if surcharge_lines:
                 surcharge_lines.sudo().unlink()
+
+    def _check_carrier_quotation(self, force_carrier_id=None, keep_old_carrier=False):
+        """
+        Ensure our delivery surcharge is reapplied when Odoo recalculates the cart.
+        """
+        res = super()._check_carrier_quotation(
+            force_carrier_id=force_carrier_id,
+            keep_old_carrier=keep_old_carrier,
+        )
+        for order in self:
+            order._update_monta_delivery_speed_surcharge()
+        return res
 
     def _prepare_monta_lines(self):
         components = [
