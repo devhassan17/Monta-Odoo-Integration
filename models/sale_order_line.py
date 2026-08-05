@@ -10,10 +10,16 @@ class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"
 
     is_monta_surcharge = fields.Boolean(
-        string="Is Monta Surcharge",
+        string="Is Monta Packaging Surcharge",
         default=False,
         copy=False,
         help="Flag indicating this line represents a Monta packaging surcharge.",
+    )
+    is_monta_delivery_surcharge = fields.Boolean(
+        string="Is Monta Delivery Speed Surcharge",
+        default=False,
+        copy=False,
+        help="Flag indicating this line represents a Monta delivery speed surcharge.",
     )
 
     def _touch_parent_for_monta(self, orders=None):
