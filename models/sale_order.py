@@ -150,18 +150,20 @@ class SaleOrder(models.Model):
     def _update_monta_delivery_speed_surcharge(self):
         self.ensure_one()
         sudo_self = self.sudo()
-        surcharge_lines = sudo_self.order_line.filtered(lambda l: getattr(l, 'is_monta_delivery_surcharge', False))
+        
+        # Find the product first so we can reliably identify the surcharge line
+        Product = self.env['product.product'].sudo()
+        product = Product.search([('default_code', '=', 'next_day_delivery')], limit=1)
+        if not product:
+            product = Product.search([('name', 'ilike', 'Next-day Delivery Monta')], limit=1)
+            
+        if product:
+            surcharge_lines = sudo_self.order_line.filtered(lambda l: l.product_id.id == product.id)
+        else:
+            surcharge_lines = sudo_self.order_line.filtered(lambda l: getattr(l, 'is_monta_delivery_surcharge', False))
 
         if getattr(sudo_self, 'monta_delivery_type', False) == 'next_day':
             if not surcharge_lines:
-                # Use the custom product created by the user
-                Product = self.env['product.product'].sudo()
-                product = Product.search([('default_code', '=', 'next_day_delivery')], limit=1)
-                
-                # Fallback if they didn't create it or the code doesn't match
-                if not product:
-                    product = Product.search([('name', 'ilike', 'Next-day Delivery Monta')], limit=1)
-                
                 if not product:
                     # Final fallback to create it
                     uom = self.env['uom.uom'].sudo().search(
