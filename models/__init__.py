@@ -19,3 +19,4 @@ from . import sku_test_log
 from . import stock_picking
 from . import stock_warehouse_ext
 from . import monta_subscription_sync
+from . import delivery_carrier

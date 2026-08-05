@@ -32,17 +32,11 @@
 /* ── Delivery card active state ── */
 .monta-delivery-card {
     cursor: pointer;
-    transition: border-color 0.15s ease, background-color 0.15s ease;
+    transition: background-color 0.15s ease;
 }
 
 .monta-delivery-card:hover {
-    border-color: #E5007D !important;
-    background-color: #fff8fb !important;
-}
-
-.monta-delivery-card--active {
-    border-color: #E5007D !important;
-    background-color: #fff8fb !important;
+    background-color: #f8f9fa !important;
 }
 
 /* ── Info badge (i) ── */
