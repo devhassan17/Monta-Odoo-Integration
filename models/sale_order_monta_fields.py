@@ -80,6 +80,16 @@ class SaleOrder(models.Model):
              "status if available, otherwise the SO-level Monta status.",
     )
 
+    is_monta_delivery_allowed = fields.Boolean(
+        string="Monta Delivery Allowed",
+        compute="_compute_is_monta_delivery_allowed",
+        store=False,
+    )
+
+    def _compute_is_monta_delivery_allowed(self):
+        for so in self:
+            so.is_monta_delivery_allowed = self.env["monta.config"].is_partner_allowed(so.partner_id)
+
     def _compute_monta_delivery_status(self):
         for so in self:
             # Prefer the most recent Monta-pushed outgoing picking's status

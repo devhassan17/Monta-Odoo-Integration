@@ -62,6 +62,20 @@ class MontaConfig(models.Model):
         help="When enabled, the Route Filter is NOT applied to subscription orders (new subscriptions and renewals). "
              "They will always be pushed to Monta regardless of the route configuration.",
     )
+    # Delivery Options Visibility
+    limit_monta_delivery_users = fields.Boolean(
+        string="Limit Monta Delivery by Customer",
+        default=False,
+        help="If enabled, only selected customers will see Monta delivery options on the website."
+    )
+    allowed_partner_ids = fields.Many2many(
+        "res.partner",
+        "monta_config_partner_rel",
+        "config_id",
+        "partner_id",
+        string="Allowed Customers",
+        help="Only these customers are allowed to see Monta delivery options at checkout."
+    )
 
     # -------------------------
     # Singleton helpers
@@ -98,6 +112,21 @@ class MontaConfig(models.Model):
         if cfg.allowed_company_ids and company and company.id not in cfg.allowed_company_ids.ids:
             raise ValidationError(_("Company '%s' is not allowed in Monta Configuration.") % company.display_name)
         return True
+
+    def is_partner_allowed(self, partner):
+        """Check if a specific partner is allowed to use Monta website delivery options."""
+        cfg = self.get_singleton()
+        if not cfg.enabled:
+            return False
+        if not cfg.limit_monta_delivery_users:
+            return True
+        if not partner:
+            return False
+        # If partner has a parent (company), check the parent as well
+        partner_ids = [partner.id]
+        if partner.parent_id:
+            partner_ids.append(partner.parent_id.id)
+        return bool(cfg.allowed_partner_ids.filtered(lambda p: p.id in partner_ids))
 
     # -------------------------
     # UI Action: always open singleton

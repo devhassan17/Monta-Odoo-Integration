@@ -40,6 +40,11 @@
                             <field name="monta_route_ids" widget="many2many_tags" invisible="enable_route_filter == False"/>
                             <field name="route_filter_skip_subscriptions" widget="boolean_toggle" invisible="enable_route_filter == False"/>
                         </group>
+
+                        <group string="Website Delivery Settings">
+                            <field name="limit_monta_delivery_users" widget="boolean_toggle"/>
+                            <field name="allowed_partner_ids" widget="many2many_tags" invisible="limit_monta_delivery_users == False"/>
+                        </group>
                         
                         <group string="Inbound Settings">
                             <field name="inbound_enable" widget="boolean_toggle"/>

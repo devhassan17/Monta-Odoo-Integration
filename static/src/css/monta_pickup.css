@@ -60,9 +60,7 @@
 /* ── Pickup point box ── */
 .monta-pickup-box {
     display: none;
-    border-top: 1px solid #dee2e6;
-    padding-top: 12px;
-    margin-top: 12px;
+    background-color: #fcfcfc;
 }
 
 .monta-pickup-box.show {
