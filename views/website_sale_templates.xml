@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Delivery Options &amp; Pickup Point Injection">
-        <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="before">
+        <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="after">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields and website_sale_order.is_monta_delivery_allowed">
 
                 <div class="monta-delivery-speed-container mt-4 mb-4">
-                    <h3 class="o_page_header mt8 mb-3" style="text-transform: uppercase; font-weight: bold; font-size: 1.1rem; color: #212529;">Choose your delivery speed</h3>
+                    <h3 class="o_page_header mt8">Choose your delivery speed</h3>
 
                     <div class="border rounded" style="background-color: transparent;">
                         <!-- Standard 2-day -->
