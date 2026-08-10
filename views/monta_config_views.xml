@@ -34,6 +34,7 @@
 
                         <group string="General Settings">
                             <field name="origin"/>
+                            <field name="is_staging_mode" widget="boolean_toggle"/>
                             <field name="allowed_base_urls"/>
                             <field name="allowed_company_ids" widget="many2many_tags"/>
                             <field name="enable_route_filter" widget="boolean_toggle"/>

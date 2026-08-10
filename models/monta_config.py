@@ -25,6 +25,11 @@ class MontaConfig(models.Model):
     enabled = fields.Boolean(string="Global Sync Enabled", default=True, help="Turn off to completely disable all Monta push/sync operations.")
     origin = fields.Char(string="Origin", help="Optional Monta 'Origin' field (send only if set).")
     match_loose = fields.Boolean(string="Loose Matching", default=True)
+    is_staging_mode = fields.Boolean(
+        string="Staging / Test Mode", 
+        default=False,
+        help="If enabled, 'Test ' is automatically prefixed to the Order Number sent to Monta."
+    )
 
     # Companies
     allowed_company_ids = fields.Many2many(

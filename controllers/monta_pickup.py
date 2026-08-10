@@ -138,7 +138,6 @@ class MontaPickupController(http.Controller):
                     'partner_shipping_id': order.partner_id.id,
                     'monta_shipper_code': False,
                     'monta_shipper_options': False,
-                    'monta_delivery_type': 'two_day',
                 })
                 # Re-evaluate delivery carrier
                 carrier = order.carrier_id or request.env['delivery.carrier'].sudo().search([], limit=1)
@@ -188,7 +187,6 @@ class MontaPickupController(http.Controller):
                 'partner_shipping_id': shipping_partner.id,
                 'monta_shipper_code': shipper_code,
                 'monta_shipper_options': json.dumps(shipper_options),
-                'monta_delivery_type': 'pickup',
             })
 
             # 3. Update delivery carrier and price
@@ -254,13 +252,7 @@ class MontaPickupController(http.Controller):
                 'monta_delivery_type': delivery_type,
             }
 
-            # Clear pickup options if switching away from pickup
-            if delivery_type != 'pickup':
-                vals.update({
-                    'monta_shipper_code': False,
-                    'monta_shipper_options': False,
-                    'partner_shipping_id': order.partner_id.id,
-                })
+            # (Removed the block that clears pickup point when changing delivery speed)
 
             if delivery_type in ('next_day', 'one_day'):
                 vals['monta_requested_delivery_date'] = now + timedelta(days=1)
@@ -272,9 +264,8 @@ class MontaPickupController(http.Controller):
             order.write(vals)
 
             # Apply or remove delivery speed surcharge
-            if delivery_type != 'pickup':
-                if hasattr(order, '_update_monta_delivery_speed_surcharge'):
-                    order._update_monta_delivery_speed_surcharge()
+            if hasattr(order, '_update_monta_delivery_speed_surcharge'):
+                order._update_monta_delivery_speed_surcharge()
 
             return {
                 'status': 'success',

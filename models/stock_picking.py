@@ -228,11 +228,14 @@ class StockPicking(models.Model):
 
         so_name = (so.name or "").replace("/", "-")
         
+        cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
+        prefix = "Test " if cfg and cfg.is_staging_mode else ""
+
         # Smart ID: First delivery uses SO name, subsequent use unique ID
         if self._monta_is_first_delivery():
-            webshop_order_id = so.name
+            webshop_order_id = f"{prefix}{so.name}"
         else:
-            webshop_order_id = f"{so_name}-PICK{self.id}"
+            webshop_order_id = f"{prefix}{so_name}-PICK{self.id}"
             
         self.write({"monta_webshop_order_id": webshop_order_id})
         return webshop_order_id
@@ -381,8 +384,12 @@ class StockPicking(models.Model):
             })
             
             # Post success chatter log
+            speed_dict = dict(sale_order._fields['monta_delivery_type'].selection) if sale_order else {}
+            speed_str = speed_dict.get(sale_order.monta_delivery_type, "Standard") if sale_order and sale_order.monta_delivery_type else "Standard"
+            
             msg_success = (
-                f"✅ Monta Integration: Subscription delivery {self.name} is sent to Monta."
+                f"✅ Monta Integration: Subscription delivery {self.name} is sent to Monta "
+                f"with {speed_str}."
             )
             self.message_post(body=msg_success)
             if sale_order:

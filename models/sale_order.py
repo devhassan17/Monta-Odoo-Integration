@@ -346,8 +346,10 @@ class SaleOrder(models.Model):
         invoice_id_digits = re.sub(r"\D", "", self.name or "")
         webshop_factuur_id = int(invoice_id_digits) if invoice_id_digits else 9999
 
+        prefix = "Test " if cfg.is_staging_mode else ""
+
         payload = {
-            "WebshopOrderId": self.name,
+            "WebshopOrderId": f"{prefix}{self.name}",
             "Reference": self.client_order_ref or "",
             "ConsumerDetails": {
                 "DeliveryAddress": addr_delivery,
@@ -500,8 +502,10 @@ class SaleOrder(models.Model):
                     "monta_retry_count": 0,
                 }
             )
+            speed_dict = dict(self._fields['monta_delivery_type'].selection)
+            speed_str = speed_dict.get(self.monta_delivery_type, "Standard") if self.monta_delivery_type else "Standard"
             upsert_snapshot(self.name, "sent", status, body)
-            self.message_post(body="Order sent to Monta successfully.")
+            self.message_post(body=f"Order sent to Monta successfully. (Delivery: {speed_str})")
         else:
             # normal error
             if self.monta_retry_count < 1:
