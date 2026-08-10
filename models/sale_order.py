@@ -369,7 +369,9 @@ class SaleOrder(models.Model):
             payload["ShipperCodes"] = [self.monta_shipper_code]
             if self.monta_shipper_options:
                 try:
-                    payload["ShipperOptions"] = json.loads(self.monta_shipper_options)
+                    parsed_opts = json.loads(self.monta_shipper_options)
+                    if parsed_opts:
+                        payload["ShipperOptions"] = parsed_opts
                 except Exception:
                     pass
         else:

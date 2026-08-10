@@ -101,13 +101,6 @@ class MontaPickupController(http.Controller):
                                 'Code': opt.get('Code'),
                                 'Value': opt_val
                             })
-                    else:
-                        option_code = best_option.get('Code') or 'pakjegemak'
-                        final_options.append({
-                            'ShipperCode': shipper_code,
-                            'Code': option_code,
-                            'Value': details.get('Code')
-                        })
                     
                     price = best_option.get('SellPrice') or 0.0
                     currency = best_option.get('SellPriceCurrency') or 'EUR'
