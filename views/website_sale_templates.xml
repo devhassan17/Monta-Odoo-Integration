@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Delivery Options &amp; Pickup Point Injection">
-        <xpath expr="//t[@t-call='website_sale.billing_address_row']" position="after">
+        <!-- Target the delivery method block to position it under address and above delivery methods. -->
+        <!-- Fallback to oe_cart if delivery_method is not in this view -->
+        <xpath expr="//*[@id='delivery_method'] | //*[hasclass('oe_cart')]/*[last()]" position="before">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields and website_sale_order.is_monta_delivery_allowed">
 
                 <div class="monta-delivery-speed-container mt-4 mb-4">
-                    <h3 class="o_page_header mt8">Choose your delivery speed</h3>
-
-                    <div class="border rounded" style="background-color: transparent;">
+                    
+                    <!-- Delivery Speed Section -->
+                    <h3 class="o_page_header mt8 mb-3" style="text-transform: uppercase; font-weight: bold; font-size: 1.1rem; color: #212529;">Choose your delivery speed</h3>
+                    <div class="border rounded mb-4" style="background-color: transparent;">
                         <!-- Standard 2-day -->
                         <div class="p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom"
-                             t-att-class="'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom monta-delivery-card--active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else 'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom'"
+                             t-att-class="'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom monta-delivery-card--active' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') else 'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom'"
                              data-delivery="two_day" style="cursor: pointer;">
                             <input type="radio" name="monta_delivery_speed" id="delivery_two_day" value="two_day"
-                                   t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') and not website_sale_order.monta_shipper_code else None"
+                                   t-att-checked="'checked' if (website_sale_order.monta_delivery_type or 'two_day') in ('two_day', 'standard') else None"
                                    class="monta-radio monta-delivery-radio" style="flex-shrink: 0;"/>
                             <div class="flex-grow-1">
                                 <div class="d-flex justify-content-between align-items-center">
@@ -28,11 +31,11 @@
                         </div>
 
                         <!-- Priority Next Day -->
-                        <div class="p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom"
-                             t-att-class="'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom monta-delivery-card--active' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else 'p-3 d-flex align-items-center gap-3 monta-delivery-card border-bottom'"
+                        <div class="p-3 d-flex align-items-center gap-3 monta-delivery-card"
+                             t-att-class="'p-3 d-flex align-items-center gap-3 monta-delivery-card monta-delivery-card--active' if website_sale_order.monta_delivery_type == 'next_day' else 'p-3 d-flex align-items-center gap-3 monta-delivery-card'"
                              data-delivery="next_day" style="cursor: pointer;">
                             <input type="radio" name="monta_delivery_speed" id="delivery_next_day" value="next_day"
-                                   t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' and not website_sale_order.monta_shipper_code else None"
+                                   t-att-checked="'checked' if website_sale_order.monta_delivery_type == 'next_day' else None"
                                    class="monta-radio monta-delivery-radio" style="flex-shrink: 0;"/>
                             <div class="flex-grow-1">
                                 <div class="d-flex justify-content-between align-items-center">
@@ -45,20 +48,23 @@
                                 <div class="text-muted mt-1" style="font-size: 0.85rem;">Next business day — surcharge applies for next day delivery</div>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- ══ Pickup Point ══ -->
+                    <!-- Pickup Point Section -->
+                    <h3 class="o_page_header mt8 mb-3" style="text-transform: uppercase; font-weight: bold; font-size: 1.1rem; color: #212529;">Deliver to a pickup point</h3>
+                    <div class="border rounded" style="background-color: transparent;">
                         <div class="monta-pickup-container">
                             <div class="p-3 d-flex align-items-center gap-3 monta-delivery-card"
                                  t-att-class="'p-3 d-flex align-items-center gap-3 monta-delivery-card monta-delivery-card--active' if website_sale_order.monta_shipper_code else 'p-3 d-flex align-items-center gap-3 monta-delivery-card'"
                                  style="cursor: pointer;">
-                                <input type="radio" class="monta-radio monta-pickup-radio" id="monta_use_pickup" name="monta_delivery_speed" value="pickup"
+                                <input type="checkbox" class="monta-checkbox monta-pickup-checkbox" id="monta_use_pickup" name="monta_use_pickup"
                                        t-att-checked="'checked' if website_sale_order.monta_shipper_code else None"
                                        style="flex-shrink: 0;"/>
                                 <div class="flex-grow-1">
                                     <div class="d-flex justify-content-between align-items-center">
                                         <label for="monta_use_pickup" class="mb-0"
                                                style="cursor: pointer; font-weight: 500; font-size: 1rem; color: #212529;">
-                                            Deliver to a pickup point
+                                            Select a pickup point
                                         </label>
                                     </div>
                                     <div class="text-muted mt-1" style="font-size: 0.85rem;">Select a convenient pickup location near you</div>

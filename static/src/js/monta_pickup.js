@@ -81,15 +81,7 @@ function initMontaPickup() {
                 });
             }
 
-            // Close pickup box if switching to standard delivery
-            if (box && box.classList.contains('show')) {
-                box.classList.remove('show');
-                try {
-                    await rpc('/shop/monta/select_pickup_point', { shipper_code: false });
-                } catch (e) {
-                    console.error('Failed to clear pickup point:', e);
-                }
-            }
+            
 
             showLoading(true);
             try {
@@ -109,20 +101,19 @@ function initMontaPickup() {
     // ── Pickup Point Toggle (now a radio button) ──
     if (togglePickup) {
         togglePickup.addEventListener('change', async () => {
-            if (!togglePickup.checked) return;
-
-            // Sync visual active state
-            if (speedContainer) {
-                speedContainer.querySelectorAll('.monta-delivery-card').forEach(row => {
-                    const r = row.querySelector('input[type="radio"]');
-                    row.classList.toggle('monta-delivery-card--active', r === togglePickup);
-                });
-            }
-
-            if (box) box.classList.add('show');
-            autoDetectUserAddress();
-            if (resultsDiv && resultsDiv.children.length === 0) {
-                await performSearch();
+            if (togglePickup.checked) {
+                if (box) box.classList.add('show');
+                autoDetectUserAddress();
+                if (resultsDiv && resultsDiv.children.length === 0) {
+                    await performSearch();
+                }
+            } else {
+                if (box) box.classList.remove('show');
+                try {
+                    await rpc('/shop/monta/select_pickup_point', { shipper_code: false });
+                } catch (e) {
+                    console.error('Failed to clear pickup point:', e);
+                }
             }
         });
     }
