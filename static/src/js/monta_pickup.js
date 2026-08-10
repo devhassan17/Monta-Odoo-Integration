@@ -81,8 +81,6 @@ function initMontaPickup() {
                 });
             }
 
-            
-
             showLoading(true);
             try {
                 const res = await rpc('/shop/monta/select_delivery_type', { delivery_type: selectedType });
