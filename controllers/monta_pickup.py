@@ -88,8 +88,26 @@ class MontaPickupController(http.Controller):
                     shipper_codes = best_option.get('ShipperCodes') or []
                     shipper_code = shipper_codes[0] if shipper_codes else 'PostNL'
                     
-                    # Shipping option code (e.g. pakjegemak or pickuppoint)
-                    option_code = best_option.get('Code') or 'pakjegemak'
+                    raw_options = best_option.get('Options') or []
+                    final_options = []
+                    
+                    if raw_options:
+                        for opt in raw_options:
+                            opt_val = opt.get('Value')
+                            if not opt_val:
+                                opt_val = details.get('Code')
+                            final_options.append({
+                                'ShipperCode': shipper_code,
+                                'Code': opt.get('Code'),
+                                'Value': opt_val
+                            })
+                    else:
+                        option_code = best_option.get('Code') or 'pakjegemak'
+                        final_options.append({
+                            'ShipperCode': shipper_code,
+                            'Code': option_code,
+                            'Value': details.get('Code')
+                        })
                     
                     price = best_option.get('SellPrice') or 0.0
                     currency = best_option.get('SellPriceCurrency') or 'EUR'
@@ -106,7 +124,7 @@ class MontaPickupController(http.Controller):
                         'phone': details.get('Phone') or '',
                         'image_url': details.get('ImageUrl') or '',
                         'shipper_code': shipper_code,
-                        'option_code': option_code,
+                        'options_json': json.dumps(final_options),
                         'price': price,
                         'currency': currency,
                         'opening_times': details.get('OpeningTimes') or []
@@ -125,7 +143,7 @@ class MontaPickupController(http.Controller):
             return {'status': 'error', 'message': 'An unexpected error occurred.'}
 
     @http.route('/shop/monta/select_pickup_point', type='json', auth='public', website=True)
-    def select_pickup_point(self, name=None, street=None, house_number=None, zip=None, city=None, country_code=None, shipper_code=None, option_code=None, point_code=None, price=0.0, **kwargs):
+    def select_pickup_point(self, name=None, street=None, house_number=None, zip=None, city=None, country_code=None, shipper_code=None, options_json=None, price=0.0, **kwargs):
         """Update checkout order with selected pickup point address and monta fields."""
         order = request.website.sale_get_order()
         if not order:
@@ -177,16 +195,19 @@ class MontaPickupController(http.Controller):
                 shipping_partner.sudo().write(partner_vals)
 
             # 2. Update order with shipping partner and shipper options
-            shipper_options = [{
-                "ShipperCode": shipper_code,
-                "Code": option_code,
-                "Value": point_code
-            }]
+            if options_json:
+                shipper_options = options_json
+            else:
+                shipper_options = json.dumps([{
+                    "ShipperCode": shipper_code,
+                    "Code": kwargs.get('option_code') or 'pakjegemak',
+                    "Value": kwargs.get('point_code') or ''
+                }])
 
             order.write({
                 'partner_shipping_id': shipping_partner.id,
                 'monta_shipper_code': shipper_code,
-                'monta_shipper_options': json.dumps(shipper_options),
+                'monta_shipper_options': shipper_options,
             })
 
             # 3. Update delivery carrier and price

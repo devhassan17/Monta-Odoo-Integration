@@ -211,8 +211,7 @@ function initMontaPickup() {
                         city: point.city,
                         country_code: point.country_code,
                         shipper_code: point.shipper_code,
-                        option_code: point.option_code,
-                        point_code: point.code,
+                        options_json: point.options_json,
                         price: point.price
                     });
                     if (res && res.status === 'success') {

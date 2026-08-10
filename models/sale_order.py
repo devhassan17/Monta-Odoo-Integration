@@ -372,17 +372,17 @@ class SaleOrder(models.Model):
                     payload["ShipperOptions"] = json.loads(self.monta_shipper_options)
                 except Exception:
                     pass
-
-        # Next Day, 1-Day & 2-Day Delivery Options
-        from datetime import timedelta
-        if self.monta_delivery_type in ("next_day", "one_day"):
-            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=1))
-            payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
-            payload["DeliveryOptions"] = [{"Code": "nextday" if self.monta_delivery_type == "next_day" else "oneday", "Value": "true"}]
-        elif self.monta_delivery_type == "two_day":
-            req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=2))
-            payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
-            payload["DeliveryOptions"] = [{"Code": "twoday", "Value": "true"}]
+        else:
+            # Next Day, 1-Day & 2-Day Delivery Options
+            from datetime import timedelta
+            if self.monta_delivery_type in ("next_day", "one_day"):
+                req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=1))
+                payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
+                payload["DeliveryOptions"] = [{"Code": "nextday" if self.monta_delivery_type == "next_day" else "oneday", "Value": "true"}]
+            elif self.monta_delivery_type == "two_day":
+                req_dt = self.monta_requested_delivery_date or (fields.Datetime.now() + timedelta(days=2))
+                payload["DeliveryDateRequested"] = fields.Datetime.to_string(req_dt)
+                payload["DeliveryOptions"] = [{"Code": "twoday", "Value": "true"}]
 
         if (cfg.origin or "").strip():
             payload["Origin"] = cfg.origin.strip()
