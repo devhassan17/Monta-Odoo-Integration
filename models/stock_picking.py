@@ -416,7 +416,8 @@ class StockPicking(models.Model):
         # Post API failure chatter log
         msg_err_post = (
             f"❌ Monta Integration: Subscription delivery {self.name} is not sent to Monta "
-            f"due to API error: Status {status} (Reason: {json.dumps(body or {})})"
+            f"due to API error: Status {status} (Reason: {json.dumps(body or {})})\n\n"
+            f"Payload Sent: {json.dumps(payload)}"
         )
         self.message_post(body=msg_err_post)
         if sale_order:
