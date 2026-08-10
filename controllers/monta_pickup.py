@@ -191,11 +191,16 @@ class MontaPickupController(http.Controller):
             if options_json:
                 shipper_options = options_json
             else:
-                shipper_options = json.dumps([{
-                    "ShipperCode": shipper_code,
-                    "Code": kwargs.get('option_code') or 'pakjegemak',
-                    "Value": kwargs.get('point_code') or ''
-                }])
+                fallback_code = kwargs.get('option_code') or 'pakjegemak'
+                # If the fallback code is just the internal rate code (e.g. DHLservicepunt_NL-101311), ignore it!
+                if shipper_code == 'DHLservicepunt' or fallback_code.startswith(shipper_code + '_'):
+                    shipper_options = '[]'
+                else:
+                    shipper_options = json.dumps([{
+                        "ShipperCode": shipper_code,
+                        "Code": fallback_code,
+                        "Value": kwargs.get('point_code') or ''
+                    }])
 
             order.write({
                 'partner_shipping_id': shipping_partner.id,
