@@ -24,8 +24,6 @@ between Odoo and Monta WMS via Monta's API.
         "stock",
         "website_sale",
         "delivery",
-    
-        "website_sale_delivery",
 ],
     "data": [
         "security/ir.model.access.csv",

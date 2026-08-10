@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <template id="monta_pickup_widget_inject" inherit_id="website_sale.payment" name="Monta Delivery Options &amp; Pickup Point Injection">
+    <template id="monta_pickup_widget_inject" inherit_id="website_sale.checkout" name="Monta Delivery Options &amp; Pickup Point Injection">
         <!-- Target the delivery method block to position it under address and above delivery methods. -->
         <!-- Fallback to oe_cart if delivery_method is not in this view -->
-        <xpath expr="//*[@id='delivery_method'] | //*[@id='o_payment_delivery_methods'] | //*[@id='payment_method']" position="before">
+        <xpath expr="(//*[@id='o_delivery_methods'] | //*[@id='delivery_method'] | //t[@t-call='website_sale.checkout_delivery'] | //t[@t-call='website_sale.billing_address_row'])[1]" position="before">
             <t t-if="website_sale_order and 'monta_shipper_code' in website_sale_order._fields and website_sale_order.is_monta_delivery_allowed">
 
                 <div class="monta-delivery-speed-container mt-4 mb-4">
