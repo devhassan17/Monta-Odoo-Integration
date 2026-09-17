@@ -21,6 +21,9 @@ class MontaPickupController(http.Controller):
         if not cfg:
             return {'status': 'error', 'message': 'Monta integration is not configured or disabled.'}
 
+        if not cfg.enable_pickup_points:
+            return {'status': 'error', 'message': 'Pickup points are disabled in configuration.'}
+
         if not cfg.origin:
             _logger.warning("Monta Origin is not set in the configuration.")
             return {'status': 'error', 'message': 'Monta Origin is not configured. Please set the Origin in Monta Configuration.'}
@@ -142,6 +145,10 @@ class MontaPickupController(http.Controller):
         if not order:
             return {'status': 'error', 'message': 'No active sales order.'}
 
+        cfg = order._monta_config() if hasattr(order, '_monta_config') else None
+        if cfg and not cfg.enable_pickup_points and shipper_code:
+            return {'status': 'error', 'message': 'Pickup points are disabled in configuration.'}
+
         try:
             # Revert/Clear if shipper_code is missing
             if not shipper_code:
@@ -261,6 +268,10 @@ class MontaPickupController(http.Controller):
         order = request.website.sale_get_order()
         if not order:
             return {'status': 'error', 'message': 'No active sales order.'}
+
+        cfg = order._monta_config() if hasattr(order, '_monta_config') else None
+        if cfg and delivery_type == 'next_day' and not cfg.enable_next_day_delivery:
+            return {'status': 'error', 'message': 'Next day delivery is disabled in configuration.'}
 
         try:
             from datetime import timedelta

@@ -85,10 +85,24 @@ class SaleOrder(models.Model):
         compute="_compute_is_monta_delivery_allowed",
         store=False,
     )
+    is_monta_next_day_allowed = fields.Boolean(
+        string="Monta Next Day Allowed",
+        compute="_compute_is_monta_delivery_allowed",
+        store=False,
+    )
+    is_monta_pickup_allowed = fields.Boolean(
+        string="Monta Pickup Allowed",
+        compute="_compute_is_monta_delivery_allowed",
+        store=False,
+    )
 
     def _compute_is_monta_delivery_allowed(self):
+        cfg = self.env["monta.config"].get_singleton()
         for so in self:
-            so.is_monta_delivery_allowed = self.env["monta.config"].is_partner_allowed(so.partner_id)
+            partner_allowed = cfg.is_partner_allowed(so.partner_id)
+            so.is_monta_delivery_allowed = partner_allowed
+            so.is_monta_next_day_allowed = partner_allowed and cfg.enable_next_day_delivery
+            so.is_monta_pickup_allowed = partner_allowed and cfg.enable_pickup_points
 
     def _compute_monta_delivery_status(self):
         for so in self:

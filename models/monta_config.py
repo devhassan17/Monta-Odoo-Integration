@@ -81,6 +81,16 @@ class MontaConfig(models.Model):
         string="Allowed Customers",
         help="Only these customers are allowed to see Monta delivery options at checkout."
     )
+    enable_next_day_delivery = fields.Boolean(
+        string="Enable Next Day Delivery",
+        default=True,
+        help="If enabled, Next Day Delivery option will be available to customers at checkout."
+    )
+    enable_pickup_points = fields.Boolean(
+        string="Enable Delivery Points",
+        default=True,
+        help="If enabled, Delivery/Pickup Points option will be available to customers at checkout."
+    )
 
     # -------------------------
     # Singleton helpers

@@ -45,6 +45,8 @@
                         <group string="Website Delivery Settings">
                             <field name="limit_monta_delivery_users" widget="boolean_toggle"/>
                             <field name="allowed_partner_ids" widget="many2many_tags" invisible="limit_monta_delivery_users == False"/>
+                            <field name="enable_next_day_delivery" widget="boolean_toggle"/>
+                            <field name="enable_pickup_points" widget="boolean_toggle"/>
                         </group>
                         
                         <group string="Inbound Settings">
