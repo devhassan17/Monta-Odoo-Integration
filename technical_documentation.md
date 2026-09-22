@@ -1,5 +1,5 @@
 # Monta-Odoo WMS Integration Module: Complete Technical Documentation
-**Version:** 1.1.29  
+**Version:** 1.2.04  
 **Author:** Managemyweb.co  
 **License:** LGPL-3  
 **Compatibility:** Odoo 18 (Enterprise & Community editions)
@@ -25,7 +25,7 @@ Below is a complete description of what every single file in the integration mod
 *   **[`__init__.py`](file:///Users/alihassan/Documents/Github/Monta-Odoo-Integration/__init__.py)**: 
     Root Python initializer that exposes Python sub-packages (`models`, `services`, `utils`) and references installation `hooks`.
 *   **[`__manifest__.py`](file:///Users/alihassan/Documents/Github/Monta-Odoo-Integration/__manifest__.py)**: 
-    The Odoo module manifest declaring metadata, version (`1.1.29`), standard dependencies (`sale_management`, `account`, `portal`, `mrp`, `purchase`, `sale_subscription`, `stock`), post-init and uninstall hooks, price/currency, and references all XML files loaded upon installation.
+    The Odoo module manifest declaring metadata, version (`1.2.04`), standard dependencies (`sale_management`, `account`, `portal`, `mrp`, `purchase`, `sale_subscription`, `stock`), post-init and uninstall hooks, price/currency, and references all XML files loaded upon installation.
 *   **[`hooks.py`](file:///Users/alihassan/Documents/Github/Monta-Odoo-Integration/hooks.py)**: 
     *   `post_init_hook(env)`: Creates the status-sync cron job programmatically and migrates legacy Odoo system parameters (`ir.config_parameter`) into the new unified `monta.config` singleton model.
     *   `uninstall_hook(env)`: Gracefully uninstalls and deletes registered crons on module removal.
