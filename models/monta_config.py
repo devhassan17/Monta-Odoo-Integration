@@ -68,28 +68,31 @@ class MontaConfig(models.Model):
              "They will always be pushed to Monta regardless of the route configuration.",
     )
     # Delivery Options Visibility
-    limit_monta_delivery_users = fields.Boolean(
-        string="Limit Monta Delivery by Customer",
-        default=False,
-        help="If enabled, only selected customers will see Monta delivery options on the website."
-    )
-    allowed_partner_ids = fields.Many2many(
-        "res.partner",
-        "monta_config_partner_rel",
-        "config_id",
-        "partner_id",
-        string="Allowed Customers",
-        help="Only these customers are allowed to see Monta delivery options at checkout."
-    )
     enable_next_day_delivery = fields.Boolean(
         string="Enable Next Day Delivery",
         default=True,
         help="If enabled, Next Day Delivery option will be available to customers at checkout."
     )
+    next_day_allowed_partner_ids = fields.Many2many(
+        "res.partner",
+        "monta_config_next_day_partner_rel",
+        "config_id",
+        "partner_id",
+        string="Allowed Customers (Next Day)",
+        help="If specified, only these customers will see Next Day Delivery. Leave empty to allow all customers."
+    )
     enable_pickup_points = fields.Boolean(
         string="Enable Delivery Points",
         default=True,
         help="If enabled, Delivery/Pickup Points option will be available to customers at checkout."
+    )
+    pickup_allowed_partner_ids = fields.Many2many(
+        "res.partner",
+        "monta_config_pickup_partner_rel",
+        "config_id",
+        "partner_id",
+        string="Allowed Customers (Delivery Points)",
+        help="If specified, only these customers will see Delivery Points. Leave empty to allow all customers."
     )
 
     # -------------------------
@@ -128,12 +131,14 @@ class MontaConfig(models.Model):
             raise ValidationError(_("Company '%s' is not allowed in Monta Configuration.") % company.display_name)
         return True
 
-    def is_partner_allowed(self, partner):
-        """Check if a specific partner is allowed to use Monta website delivery options."""
+    def is_partner_allowed(self, partner, allowed_partners=None):
+        """Check if a specific partner is allowed to use a delivery option.
+        If allowed_partners is empty or None, all customers are allowed.
+        If allowed_partners is set, only selected partners (or parent company) are allowed."""
         cfg = self.get_singleton()
         if not cfg.enabled:
             return False
-        if not cfg.limit_monta_delivery_users:
+        if not allowed_partners:
             return True
         if not partner:
             return False
@@ -141,7 +146,7 @@ class MontaConfig(models.Model):
         partner_ids = [partner.id]
         if partner.parent_id:
             partner_ids.append(partner.parent_id.id)
-        return bool(cfg.allowed_partner_ids.filtered(lambda p: p.id in partner_ids))
+        return bool(allowed_partners.filtered(lambda p: p.id in partner_ids))
 
     # -------------------------
     # UI Action: always open singleton

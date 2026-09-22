@@ -43,10 +43,10 @@
                         </group>
 
                         <group string="Website Delivery Settings">
-                            <field name="limit_monta_delivery_users" widget="boolean_toggle"/>
-                            <field name="allowed_partner_ids" widget="many2many_tags" invisible="limit_monta_delivery_users == False"/>
                             <field name="enable_next_day_delivery" widget="boolean_toggle"/>
+                            <field name="next_day_allowed_partner_ids" widget="many2many_tags" invisible="enable_next_day_delivery == False" placeholder="Leave empty for all customers..."/>
                             <field name="enable_pickup_points" widget="boolean_toggle"/>
+                            <field name="pickup_allowed_partner_ids" widget="many2many_tags" invisible="enable_pickup_points == False" placeholder="Leave empty for all customers..."/>
                         </group>
                         
                         <group string="Inbound Settings">

@@ -21,8 +21,8 @@ class MontaPickupController(http.Controller):
         if not cfg:
             return {'status': 'error', 'message': 'Monta integration is not configured or disabled.'}
 
-        if not cfg.enable_pickup_points:
-            return {'status': 'error', 'message': 'Pickup points are disabled in configuration.'}
+        if not cfg.enable_pickup_points or not cfg.is_partner_allowed(order.partner_id, cfg.pickup_allowed_partner_ids):
+            return {'status': 'error', 'message': 'Pickup points are disabled or not allowed for this customer.'}
 
         if not cfg.origin:
             _logger.warning("Monta Origin is not set in the configuration.")
@@ -146,8 +146,9 @@ class MontaPickupController(http.Controller):
             return {'status': 'error', 'message': 'No active sales order.'}
 
         cfg = order._monta_config() if hasattr(order, '_monta_config') else None
-        if cfg and not cfg.enable_pickup_points and shipper_code:
-            return {'status': 'error', 'message': 'Pickup points are disabled in configuration.'}
+        if cfg and shipper_code:
+            if not cfg.enable_pickup_points or not cfg.is_partner_allowed(order.partner_id, cfg.pickup_allowed_partner_ids):
+                return {'status': 'error', 'message': 'Pickup points are disabled or not allowed for this customer.'}
 
         try:
             # Revert/Clear if shipper_code is missing
@@ -270,8 +271,9 @@ class MontaPickupController(http.Controller):
             return {'status': 'error', 'message': 'No active sales order.'}
 
         cfg = order._monta_config() if hasattr(order, '_monta_config') else None
-        if cfg and delivery_type == 'next_day' and not cfg.enable_next_day_delivery:
-            return {'status': 'error', 'message': 'Next day delivery is disabled in configuration.'}
+        if cfg and delivery_type == 'next_day':
+            if not cfg.enable_next_day_delivery or not cfg.is_partner_allowed(order.partner_id, cfg.next_day_allowed_partner_ids):
+                return {'status': 'error', 'message': 'Next day delivery is disabled or not allowed for this customer.'}
 
         try:
             from datetime import timedelta
