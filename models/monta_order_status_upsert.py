@@ -50,19 +50,20 @@ class MontaOrderStatus(models.Model):
     # Public API
     # -------------------------
     @api.model
-    def upsert_for_order(self, so, **vals):
+    def upsert_for_order(self, so, order_name=None, **vals):
         if not so or not getattr(so, "id", False):
             raise ValueError("upsert_for_order requires a valid sale.order record")
 
+        target_name = order_name or vals.get("order_name") or (so.name if hasattr(so, "name") else "")
         payload = self._normalize_vals(vals)
 
         if "sale_order_id" in self._fields:
             payload["sale_order_id"] = so.id
         if "order_name" in self._fields:
-            payload["order_name"] = so.name
+            payload["order_name"] = target_name
 
         if "order_name" in self._fields:
-            domain = [("order_name", "=", so.name)]
+            domain = [("order_name", "=", target_name)]
         elif "sale_order_id" in self._fields:
             domain = [("sale_order_id", "=", so.id)]
         else:

@@ -139,12 +139,13 @@ class MontaOrderStatus(models.Model):
         return domain, base_vals
 
     @api.model
-    def upsert_for_order(self, so, **vals):
+    def upsert_for_order(self, so, order_name=None, **vals):
         """Existing behavior: snapshot row for normal sale order."""
         if not so or not so.id:
             raise ValueError("upsert_for_order requires a valid sale.order")
 
-        domain, base_vals = self._base_upsert_domain_vals(so.name)
+        target_name = order_name or vals.get("order_name") or so.name
+        domain, base_vals = self._base_upsert_domain_vals(target_name)
 
         base_vals.update(
             {

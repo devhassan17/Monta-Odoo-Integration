@@ -230,10 +230,29 @@ class StockPicking(models.Model):
         
         cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
         prefix = "Test " if cfg and cfg.is_staging_mode else ""
+        base_webshop_id = f"{prefix}{so.name}"
 
-        # Smart ID: First delivery uses SO name, subsequent use unique ID
-        if self._monta_is_first_delivery():
-            webshop_order_id = f"{prefix}{so.name}"
+        # Check if base_webshop_id has already been assigned to another picking of this SO
+        other_picking = self.search([
+            ("sale_id", "=", so.id),
+            ("id", "!=", self.id),
+            "|",
+            ("monta_webshop_order_id", "=", base_webshop_id),
+            ("monta_webshop_order_id", "=", so.name),
+        ], limit=1)
+
+        # Check if base_webshop_id was already sent in Monta Order Status by another picking or process
+        Status = self.env["monta.order.status"].sudo()
+        status_sent = Status.search([
+            ("order_name", "in", [base_webshop_id, so.name]),
+            ("status", "in", ["Sent", "sent"]),
+            ("picking_id", "!=", False),
+            ("picking_id", "!=", self.id),
+        ], limit=1)
+
+        # Smart ID: First delivery uses base_webshop_id ONLY if it hasn't been assigned or sent yet
+        if self._monta_is_first_delivery() and not other_picking and not status_sent:
+            webshop_order_id = base_webshop_id
         else:
             webshop_order_id = f"{prefix}{so_name}-PICK{self.id}"
             
@@ -312,7 +331,11 @@ class StockPicking(models.Model):
         self._monta_ensure_untracked_products()
 
         webshop_order_id = self._monta_make_webshop_order_id(sale_order)
-        is_renewal = not (webshop_order_id == sale_order.name)
+        cfg = self.env["monta.config"].sudo().get_for_company(self.company_id)
+        prefix = "Test " if cfg and cfg.is_staging_mode else ""
+        base_so_webshop_id = f"{prefix}{sale_order.name}"
+
+        is_renewal = not (webshop_order_id in (sale_order.name, base_so_webshop_id))
 
         # Idempotency guard: Monta Status check
         Status = self.env["monta.order.status"].sudo()
@@ -354,7 +377,7 @@ class StockPicking(models.Model):
             )
         else:
             Status.upsert_for_order(
-                sale_order,
+                sale_order, order_name=webshop_order_id,
                 status="Not sent", status_code=0, source="orders",
                 status_raw=json.dumps({"note": "Push initiated"}, ensure_ascii=False)
             )
@@ -375,7 +398,7 @@ class StockPicking(models.Model):
             if is_renewal:
                 Status.upsert_for_renewal(sale_order, self, webshop_order_id, **vals_status)
             else:
-                Status.upsert_for_order(sale_order, **vals_status)
+                Status.upsert_for_order(sale_order, order_name=webshop_order_id, **vals_status)
 
             self.write({
                 "monta_pushed": True,
@@ -411,7 +434,7 @@ class StockPicking(models.Model):
         if is_renewal:
             Status.upsert_for_renewal(sale_order, self, webshop_order_id, **vals_err)
         else:
-            Status.upsert_for_order(sale_order, **vals_err)
+            Status.upsert_for_order(sale_order, order_name=webshop_order_id, **vals_err)
 
         # Post API failure chatter log
         msg_err_post = (
