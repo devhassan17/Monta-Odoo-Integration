@@ -59,3 +59,39 @@ class SaleOrderLine(models.Model):
             _logger.error("[Monta Sync] touch after unlink failed: %s", e, exc_info=True)
         return res
 
+    def _action_launch_stock_rule(self, *args, **kwargs):
+        """Bypass stock rules (prevent picking generation) for subscription orders ONLY in Monta-enabled companies."""
+        sub_lines = self.env['sale.order.line']
+        normal_lines = self.env['sale.order.line']
+        Config = self.env['monta.config'].sudo()
+
+        for line in self:
+            order = line.order_id
+            # Only apply subscription bypass if Monta is enabled for this specific company
+            monta_cfg = Config.get_for_company(order.company_id)
+            if not monta_cfg:
+                normal_lines |= line
+                continue
+
+            f = order._fields
+            is_sub = (
+                ('is_subscription' in f and order.is_subscription)
+                or ('plan_id' in f and bool(order.plan_id))
+                or ('subscription_state' in f and getattr(order, 'subscription_state', '') in ('2_renewal', '3_progress', '4_paused'))
+            )
+            if is_sub:
+                sub_lines |= line
+            else:
+                normal_lines |= line
+
+        if sub_lines:
+            _logger.info(
+                "[Monta SO Hook] Bypassing stock rule generation for subscription SO lines in Monta company: %s",
+                sub_lines.ids
+            )
+
+        if normal_lines:
+            return super(SaleOrderLine, normal_lines)._action_launch_stock_rule(*args, **kwargs)
+
+        return True
+
